@@ -1,0 +1,26 @@
+# Environment stuff
+venv/
+env/
+venv/
+.env/
+.venv/
+
+# Jupyter files
+.ipynb_checkpoints/
+
+# Python bat file
+py.bat
+
+# Pycache
+pycache/
+*.pyc
+*.pyo
+*.pyd
+
+# Env files
+*.env
+*.sqlite3
+
+# Editor/IDE
+.vscode/
+.idea/
