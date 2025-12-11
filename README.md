@@ -28,3 +28,11 @@ venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
+## To Run Streamlit App:
+
+1. Ensure dependencies are installed and run the following command:
+```bash
+streamlit run app.py
+```
+
+2. Open link in browser (http://localhost:8501)
