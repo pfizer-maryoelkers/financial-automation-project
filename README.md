@@ -59,3 +59,18 @@ financial-automation/
 |
 └── README.md
 ```
+
+## Power Automate Integration
+
+While this python script will handle all the complex data processing, we will levereage Power Automate to orchestrate the entire pipeline, resulting in nearly full automation. Power Automate will handle triggering, file movement, and notifications, and Python will handle complex logic and Excel manipulation (which is hard to maintain in Power Automate alone). 
+
+**Full Automation Flow:**
+
+1. Power Automate: Monitors SharePoint for new files, triggers the process, and orchestrates the workflow.
+
+2. Python Script: Handles the heavy data processing—reading the forecast file, mapping months and POs, writing forecast values 
+into the financial template, and saving the updated file.
+
+3. SharePoint (Output Files): The processed template is uploaded back to SharePoint via Power Automate.
+
+4. Notification: Power Automate sends a completion message (via email or Teams) with a link to the updated file.
