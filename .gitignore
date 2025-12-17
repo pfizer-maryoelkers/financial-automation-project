@@ -24,3 +24,6 @@ pycache/
 # Editor/IDE
 .vscode/
 .idea/
+
+# Docs
+inputs_outputs.md
