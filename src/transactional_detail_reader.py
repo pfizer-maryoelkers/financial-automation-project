@@ -42,6 +42,11 @@ class InvoiceActualReader(TransactionalDetailReader):
                     'Feb': {...}
                 }
             }
+
+        Codes for PO Invoice Number:
+            210 - Accrual/Reversal
+            510 - Invoice
+            900 - Reclass
         """
         # 1. Ensure data is loaded
         if self.data is None:
