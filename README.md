@@ -74,3 +74,16 @@ into the financial template, and saving the updated file.
 3. SharePoint (Output Files): The processed template is uploaded back to SharePoint via Power Automate.
 
 4. Notification: Power Automate sends a completion message (via email or Teams) with a link to the updated file.
+
+
+## Transactional Detail File Rules
+
+In order to accurately parse data from the transactional detail file, we need to define a list of classification criteria that can concretely define a row as either an invoice (actual), and accrual, or an accrual reversal. We have defined the rules to be the following:
+
+1. If GL Transaction Number has a prefix of 5, the entry is an actual
+
+2. If GL Transaction Number has a prefix of 2 and the value is positive, the entry is an accrual 
+
+3. If GL Transaction Number has a prefix of 2 and the value is negaive, the entry is an accrual reversal
+
+4. Otherwise, the entry is unclassified and is recorded on a separate sheet

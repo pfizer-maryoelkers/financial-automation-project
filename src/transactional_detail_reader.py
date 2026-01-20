@@ -21,5 +21,24 @@ class TransactionalDetailReader:
             dict: {
                 'PO12345': {'Jan': {'Accrual': 950, 'Actual': 900, 'Reversal': 950}, ...}
             }
+
+        Codes for PO Invoice Number:
+            210 - Accrual/Reversal
+            510 - Invoice
+            900 - Reclass
         """
         # TODO: Implement extraction and aggregation logic
+        pass
+
+    def get_invoice_actuals(self):
+        # TODO: Implement
+        pass
+
+    def get_accruals(self):
+        # TODO: Implement
+        pass
+
+    def get_accrual_reversals(self):
+        # TODO: Implement
+        pass
+

@@ -22,10 +22,20 @@ class ForecastReader:
         """
         Extract PO and monthly forecast values.
         Returns:
-            dict: { 'PO12345': {'Jan': {'Forecast': 1000}, 'Feb': {...}} }
+            dict: { 'PO12345': 
+                {'Jan': 
+                    {'Forecast': 1000, 'Source': source}, 
+                'Feb': 
+                    {'Forecast': 2000, 'Source': source}, 
+                ...
+                } 
+            }
         """
         if self.data is None:
-            raise ValueError("Forecast data not loaded. Call load_forecast() first.")
+            try:
+                self.load_forecast()
+            except:
+                raise ValueError("Forecast data not loaded. Call load_forecast() first.")
 
         # Identify forecast columns (those ending with '- FTotal')
         forecast_cols = [col for col in self.data.columns if col.endswith('- FTotal')]
@@ -51,10 +61,19 @@ class ForecastReader:
         # Build the model
         for po, row in grouped.iterrows():
             po_dict = {}
+            po_df = self.data[self.data['PO #'] == po]  # Original rows for this PO
             for col in forecast_cols:
+                # Getting month
                 month = month_map[col]
+                
+                # Getting forecats value
                 value = row[col] if not pd.isna(row[col]) else 0
-                po_dict[month] = {'Forecast': float(value)}
+                
+                # Find source rows contributing to this forecast
+                source_rows = po_df.loc[po_df[col].notna() & (po_df[col] != 0)].index.tolist()
+                
+                # Adding to po_dict
+                po_dict[month] = {'Forecast': float(value), 'Source': source_rows}
             result[str(po)] = po_dict
 
         return result
