@@ -1,100 +1,135 @@
+from abc import ABC, abstractmethod
 from openpyxl import load_workbook
-from openpyxl.utils import get_column_letter
+from openpyxl.formula.translate import Translator
 
-class TemplateWriter:
-    """Reads a template and builds a header map, then writes forecast data."""
+class TemplateWriterBase(ABC):
+    """
+    Abstract base class for writing data into Excel templates.
+    Defines the interface for all template writers.
+    """
 
-    def __init__(self, template_path: str, sheet_name: str = "Template"):
-        self.template_path = template_path
-        self.sheet_name = sheet_name
-        self.workbook = None
-        self.sheet = None
-        self.header_map = None
-
-    def load_template(self):
-        """Load the workbook and select the desired sheet."""
-        self.workbook = load_workbook(self.template_path)
-        self.sheet = self.workbook[self.sheet_name]
-
-    def parse_headers(self) -> dict:
+    def __init__(self, template_path: str, sheet_name: str = None):
         """
-        Parse header row (row 14) and build a mapping of field names and months to columns.
-        Also applies an AutoFilter so headers are filterable.
+        Initialize the template writer.
+        :param template_path: Path to the Excel template file.
+        :param sheet_name: Optional sheet name to work on.
         """
-        if self.workbook is None or self.sheet is None:
-            self.load_template()
+        self.wb = load_workbook(template_path)
+        self.sheet = self.wb[sheet_name] if sheet_name else self.wb.active
 
-        header_row = 14
-        headers = [cell.value for cell in self.sheet[header_row]]
+    @abstractmethod
+    def parse_template(self):
+        """Parse template structure (headers, column mappings, etc.)."""
+        pass
 
-        categories = ["Forecast", "Actual", "Accrual Reversal", "Accrual"]
-        self.header_map = {cat: {} for cat in categories}
+    @abstractmethod
+    def write_data(self, data: dict):
+        """
+        Write data into the template.
+        :param data: Dictionary of PO data structured by month.
+        """
+        pass
 
-        for col_idx, value in enumerate(headers, start=1):
-            if not value:
-                continue
-            text = str(value)
-            for cat in categories:
-                if text.startswith(cat):
-                    tokens = text.split()
-                    if len(tokens) >= 2:
-                        month = tokens[-1]
-                        m = month[:3]  # Normalize to first 3 letters
-                        self.header_map[cat][m] = col_idx
+    def save(self, output_path: str = "template_output.xlsx"):
+        """
+        Save the workbook to the specified path.
+        :param output_path: Output file path.
+        """
+        self.wb.save(output_path)
 
-        # Apply AutoFilter from column B to last header column
-        last_col = max(idx for idx, val in enumerate(headers, start=1) if val)
-        first_filter_col = get_column_letter(2)  # B
-        last_filter_col = get_column_letter(last_col)
-        self.sheet.auto_filter.ref = f"{first_filter_col}{header_row}:{last_filter_col}{self.sheet.max_row}"
 
-        return self.header_map
+class FinancialTemplateV2Writer(TemplateWriterBase):
+    """
+    Writer for the financial template.
+    Implements logic for writing PO data into the predefined template structure.
+    """
 
-    def _find_first_blank_row(self) -> int:
-        """Find first blank row in column B starting at row 15."""
-        if self.workbook is None or self.sheet is None:
-            self.load_template()
-        row = 15
-        while True:
-            val = self.sheet.cell(row=row, column=2).value
-            if val is None or str(val).strip() == "":
+    # Hardcoded column mapping for months
+    COLUMN_MAP = {
+        'Jan': {'Accrual Reversal': 'J', 'Forecast': 'K', 'Accrual': 'L', 'Actual': 'M'},
+        'Feb': {'Accrual Reversal': 'O', 'Forecast': 'P', 'Accrual': 'Q', 'Actual': 'R'},
+        'Mar': {'Accrual Reversal': 'T', 'Forecast': 'U', 'Accrual': 'V', 'Actual': 'W'},
+        'Apr': {'Accrual Reversal': 'Y', 'Forecast': 'Z', 'Accrual': 'AA', 'Actual': 'AB'},
+        'May': {'Accrual Reversal': 'AD', 'Forecast': 'AE', 'Accrual': 'AF', 'Actual': 'AG'},
+        'Jun': {'Accrual Reversal': 'AI', 'Forecast': 'AJ', 'Accrual': 'AK', 'Actual': 'AL'},
+        'Jul': {'Accrual Reversal': 'AN', 'Forecast': 'AO', 'Accrual': 'AP', 'Actual': 'AQ'},
+        'Aug': {'Accrual Reversal': 'AS', 'Forecast': 'AT', 'Accrual': 'AU', 'Actual': 'AV'},
+        'Sep': {'Accrual Reversal': 'AX', 'Forecast': 'AY', 'Accrual': 'AZ', 'Actual': 'BA'},
+        'Oct': {'Accrual Reversal': 'BC', 'Forecast': 'BD', 'Accrual': 'BE', 'Actual': 'BF'},
+        'Nov': {'Accrual Reversal': 'BH', 'Forecast': 'BI', 'Accrual': 'BJ', 'Actual': 'BK'},
+        'Dec': {'Accrual Reversal': 'BM', 'Forecast': 'BN', 'Accrual': 'BO', 'Actual': 'BP'}
+    }
+
+    HEADER_ROW = 14
+    PO_COLUMN = 'B'
+    START_ROW = 15
+    TEMPLATE_ROW = 20
+
+    def parse_template(self):
+        """
+        Build a lookup of existing POs for update behavior.
+        """
+        self.po_to_row = {}
+        for row in range(self.START_ROW, self.sheet.max_row + 1):
+            val = self.sheet[f"{self.PO_COLUMN}{row}"].value
+            if val and str(val).strip():
+                self.po_to_row[str(val).strip()] = row
+
+    def find_po_row(self, po: str) -> int:
+        """Return row for existing PO or None."""
+        return self.po_to_row.get(str(po).strip())
+
+    def find_next_blank(self) -> int:
+        """Find next blank row starting from START_ROW up to max_row."""
+        for row in range(self.START_ROW, self.sheet.max_row + 1):
+            if not self.sheet[f"{self.PO_COLUMN}{row}"].value:
                 return row
-            row += 1
-
-    def write_forecast(self, data: dict, po_filter: list[str] = None):
+        return None
+    
+    def insert_new_rows(self, num_rows: int):
         """
-        Write forecast values into the template for each PO.
-
-        :param data: dict of PO -> month -> {'Forecast': value}
-        :param po_filter: optional list of PO numbers to include; if None, all POs are written
+        Insert multiple rows below row 20.
+        Each new row copies formulas from row 20 and clears non-formula cells.
         """
-        if self.workbook is None or self.sheet is None:
-            self.load_template()
-        if self.header_map is None:
-            self.parse_headers()
+        source_row = 20  # Template row
+        insert_at = source_row + 1  # Insert below template
+        self.sheet.insert_rows(insert_at, amount=num_rows)
 
-        row = self._find_first_blank_row()
-        for po, month_dict in data.items():
-            # Skip if filter is provided and PO is not in it
-            if po_filter is not None and po not in po_filter:
-                continue
+        # For each inserted row, copy formulas and formatting from row 20
+        for offset in range(num_rows):
+            new_row = insert_at + offset
+            for src_cell, dest_cell in zip(self.sheet[source_row], self.sheet[new_row]):
+                if src_cell.has_style:
+                    dest_cell._style = src_cell._style
+                dest_cell.number_format = src_cell.number_format
+                if src_cell.data_type == 'f':  # formula
+                    translator = Translator(src_cell.value, origin=src_cell.coordinate)
+                    dest_cell.value = translator.translate_formula(dest_cell.coordinate)
+                else:
+                    dest_cell.value = None  # Keep new row blank except formulas
 
-            # Write PO into column B
-            self.sheet.cell(row=row, column=2, value=po)
+    def write_data(self, data: dict):
+        """
+        Pre-allocate rows if needed, then write data.
+        """
+        num_pos = len(data)
+        available_rows = 20 - self.START_ROW  # Rows 15–19
+        extra_rows = max(0, num_pos - available_rows)
 
-            # Write forecast values for each month
-            for month, fields in month_dict.items():
-                m = str(month)[:3]  # Normalize month
-                col = self.header_map.get('Forecast', {}).get(m)
-                if col:
-                    val = fields.get('Forecast', None)
-                    if val is not None:
-                        self.sheet.cell(row=row, column=col, value=val)
-            row += 1
+        # Pre-allocate extra rows if needed
+        if extra_rows > 0:
+            self.insert_new_rows(extra_rows)
 
+        # Write data into blank rows starting at row 15
+        for po, months in data.items():
+            row = self.find_po_row(po)
+            if row is None:
+                row = self.find_next_blank()
+                self.sheet[f"{self.PO_COLUMN}{row}"] = po
+                self.po_to_row[str(po).strip()] = row
 
-    def save(self, out_path: str = None):
-        """Save the workbook to the given path or overwrite the original."""
-        if out_path is None:
-            out_path = self.template_path
-        self.workbook.save(out_path)
+            for month, values in months.items():
+                if month not in self.COLUMN_MAP:
+                    continue
+                for key, col in self.COLUMN_MAP[month].items():
+                    self.sheet[f"{col}{row}"] = values.get(key, 0)
