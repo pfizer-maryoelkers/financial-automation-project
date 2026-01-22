@@ -91,52 +91,35 @@ class InvoiceActualReader(TransactionalDetailReader):
 
         grouped = actuals_df.groupby(['PO Number', 'NormalizedMonth'])['GL Transaction Amount'].sum().reset_index()
 
-
         # 6. Build result dictionary with 'Actual' and 'Source'
         result = {}
 
-        # Sort accruals_df by PO and Accounting Period for chronological processing
-        accruals_df = accruals_df.sort_values(by=['PO Number', 'Accounting Period'])
-
-        for idx, row in accruals_df.iterrows():
+        for _, row in grouped.iterrows():
             po = str(row['PO Number'])
             month = row['NormalizedMonth']
-            amount = row['GL Transaction Amount']
+            value = row['GL Transaction Amount']
+
+            # Find source rows in actuals_df for this PO and month
+            source_rows = actuals_df[
+                (actuals_df['PO Number'] == row['PO Number']) &
+                (actuals_df['NormalizedMonth'] == month)
+            ].index.tolist()
 
             # Initialize PO entry if not exists
             if po not in result:
                 result[po] = {}
 
-            # Initialize month entry if not exists
-            if month not in result[po]:
-                result[po][month] = {
-                    'Accrual': 0.0,
-                    'Accrual Reversal': 0.0,
-                    'Source': [],
-                    'ReversalSource': [],
-                    '2WM': False
-                }
+            # Add month data
+            result[po][month] = {
+                'Actual': float(value),
+                'Source': source_rows
+            }
 
-            if amount > 0:
-                # Accrual
-                result[po][month]['Accrual'] += amount
-                result[po][month]['Source'].append(idx)
-            elif amount < 0:
-                # Reversal
-                result[po][month]['Accrual Reversal'] += amount
-                result[po][month]['ReversalSource'].append(idx)
-
-                # Recursive 2WM logic: check previous month for accrual
-                month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-                prev_month_index = month_order.index(month) - 1
-                if prev_month_index >= 0:
-                    prev_month = month_order[prev_month_index]
-                    if prev_month in result[po] and result[po][prev_month]['Accrual'] > 0:
-                        result[po][prev_month]['2WM'] = True
-
-        # Reorder months for easier debugging
+        # Reordering months for easier debugging:
         month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        
         for po in result:
+            # Sort the inner dict by month_order
             result[po] = {month: result[po][month] for month in month_order if month in result[po]}
 
         return result
