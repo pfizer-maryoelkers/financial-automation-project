@@ -65,14 +65,14 @@ def main():
     result = combine_data(forecast_data, actual_data, accrual_data)
 
     # List of POs you want to write
-    selected_pos = ['9500879389', '9500882917', '9500887310']
+    selected_pos = ['9500879389', '9500882917', '9500887310', '9501014470', '9501014469', '9500921816']
 
     # Filter the result dictionary
     filtered_result = {po: data for po, data in result.items() if po in selected_pos}
     print(f"Filtered data to selcted POs: {selected_pos}\n")
 
     ## Step 3: Writing to template
-    print("Step 3: Writing template output")
+    print("Step 3: Writing template output\n")
     template_writer = FinancialTemplateV2Writer(template_path)
 
     template_writer.parse_template()
