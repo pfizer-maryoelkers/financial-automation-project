@@ -1,9 +1,14 @@
 from src.forecast_reader import ForecastReader
-from src.transactional_detail_reader import TransactionalDetailReader
-from src.template_writer import TemplateWriter
+from src.transactional_detail_reader import InvoiceActualReader, AccrualReader
+from src.template_writer import FinancialTemplateV2Writer
 
 
-# Function to combine forecasts, actuals, and accrual data into one dictionary
+forecast_path = "data/ibm_forecast.xlsx"
+tdf_path = "data/C-TIES AP09 2025.xlsx"
+template_path = "data/Financial Spreadsheet Template v2.xlsx"
+output_path = "data/template_output.xlsx"
+
+# Helper function to combine forecasts, actuals, and accrual data into one JSON formatted dictionary
 def combine_data(forecast, actual, accrual):
     combined = {}
     all_pos = set(forecast.keys()) | set(actual.keys()) | set(accrual.keys())
@@ -25,28 +30,58 @@ def combine_data(forecast, actual, accrual):
                 # Sources can be combined or kept separate if needed
                 # TODO: Add source field and decide how to handle sources
             }
+
+    # Reordering months for easier debugging
+    month_order = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    
+    for po in combined:
+        # Sort the inner dict by month_order
+        combined[po] = {month: combined[po][month] for month in month_order if month in combined[po]}
     return combined
 
 
 
 def main():
-    # --- Step 1: Read the vendor forecast file 
-    forecast_file = "data/ibm_forecast.xlsx" 
-    fr = ForecastReader(forecast_file)
-    fr.load_forecast()
-    forecast_data = fr.get_forecast_data()  # { 'PO': {'Jan': {'Forecast': ...}, ...}, ... }
+    ## Step 1: Initialize readers and load data
+    print("Step 1: Initializing readers and loading data\n")
 
-    # --- Step 2: Load and prepare the template 
-    template_file = "data/Financial Spreadsheet Template v2.xlsx" 
-    tw = TemplateWriter(template_file)
-    tw.parse_headers()  # Builds header map and applies filter on header row
+    forecast_reader = ForecastReader(forecast_path)
+    forecast_reader.load_forecast()
+    forecast_data = forecast_reader.get_forecast_data()
+    print("Loaded forecast data\n")
 
-    # --- Step 3: Write only selected POs
-    selected_pos = ["9500879389", "9500882917"]
-    tw.write_forecast(forecast_data, po_filter=selected_pos)
+    actual_reader = InvoiceActualReader(tdf_path)
+    actual_reader.load_transactional_detail()
+    actual_data = actual_reader.get_transactional_data()
+    print("Loaded actuals data\n")
 
-    # --- Step 4: Save the updated template
-    tw.save("data/completed_financial_template.xlsx")  # Save to a new file
+    accrual_reader = AccrualReader(tdf_path)
+    accrual_reader.load_transactional_detail()
+    accrual_data = accrual_reader.get_transactional_data()
+    print("Loaded accrual data\n")
+
+    ## Step 2: Combining data and filtering POs
+    print("Step 2: Combing data and filtering on selected POs\n")
+    result = combine_data(forecast_data, actual_data, accrual_data)
+
+    # List of POs you want to write
+    selected_pos = ['9500879389', '9500882917', '9500887310']
+
+    # Filter the result dictionary
+    filtered_result = {po: data for po, data in result.items() if po in selected_pos}
+    print(f"Filtered data to selcted POs: {selected_pos}\n")
+
+    ## Step 3: Writing to template
+    print("Step 3: Writing template output")
+    template_writer = FinancialTemplateV2Writer(template_path)
+
+    template_writer.parse_template()
+
+    template_writer.write_data(filtered_result)
+
+    template_writer.save(output_path)
+    print(f"Template saved to {output_path}")
+
 
 if __name__ == "__main__":
     main()
