@@ -79,6 +79,10 @@ def main():
 
     template_writer.write_data(filtered_result)
 
+    # Writing audit sheets
+    template_writer.write_forecast_audit(forecast_reader.data, selected_pos)
+    template_writer.write_transactions_audit(actual_reader.data, selected_pos)
+
     template_writer.save(output_path)
     print(f"Template saved to {output_path}")
 
