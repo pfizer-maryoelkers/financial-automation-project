@@ -158,8 +158,8 @@ dict: { 'PO12345':
         'Forecast': 1000,
         'Actual': 900,
         'Accrual': 950.0,
-        'Accrual Reversal': 0.0,
-        '2WM': True
+        'Accrual Reversal': -950.0,
+        '2WM': False
     ...
     } 
 }
