@@ -269,6 +269,19 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
         po_col_index = columns.index("PO #") + 1  # +1 because Excel is 1-based
         summary_col_index = columns.index("Total Forecast Hours 2025") + 1
 
+        # --- Auto-adjust column widths ---
+        for col_idx, col_name in enumerate(audit_df.columns, start=1):
+            column_letter = get_column_letter(col_idx)
+            max_length = len(str(col_name))
+
+            # compute max length of all cell contents in this column
+            for row_idx in range(2, len(audit_df) + 2):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                if cell_value is not None:
+                    max_length = max(max_length, len(str(cell_value)))
+
+            ws.column_dimensions[column_letter].width = max_length + 2
+
         # Group everything between PO # and summary column (exclusive)
         start_col = po_col_index + 1
         end_col = summary_col_index - 1
@@ -285,13 +298,9 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
         """
         Write a lightweight, trimmed, grouped Transactions Audit sheet.
 
-        Keeps only audit-critical columns:
-        - Key identifiers (visible)
-        - Amounts (visible)
-        - WBS Element (visible)
-        - Essential accounting & transaction metadata (grouped)
-
-        No subtotal rows included.
+        This refactored version simplifies the logic:
+        - Only two groups: visible columns and non-visible columns.
+        - Non-visible columns are grouped into one expandable block.
         """
 
         # --- 1. Normalize PO column ---
@@ -303,16 +312,19 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
         # --- 2. Filter by selected POs ---
         audit_df = transactions_df[transactions_df["PO Number"].isin(selected_pos)].copy()
 
+        # --- 3. Compute Type column ---
         audit_df["Type"] = audit_df.apply(
             lambda row: (
                 "Actual"
                 if str(row["AP Voucher Number"]).startswith("5")
                 else (
                     "Accrual"
-                    if str(row["AP Voucher Number"]).startswith("2") and row["GL Transaction Amount"] > 0
+                    if str(row["AP Voucher Number"]).startswith("2")
+                    and row["GL Transaction Amount"] > 0
                     else (
                         "Reversal"
-                        if str(row["AP Voucher Number"]).startswith("2") and row["GL Transaction Amount"] < 0
+                        if str(row["AP Voucher Number"]).startswith("2")
+                        and row["GL Transaction Amount"] < 0
                         else "Undefined"
                     )
                 )
@@ -320,120 +332,71 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
             axis=1
         )
 
-        # --- 3. Define visible and grouped columns ---
-
-        # Visible columns
+        # --- 4. Define visible columns ---
         visible_cols = [
             "PO Number",
             "Accounting Period",
             "AP Voucher Number",
             "Vendor Name",
             "WBS Element",
-            "GL Line Description",
-            "Description",
-            "GL MAR Corp Amount",
-            "GL Local Amount",
-            "GL BER Corp Amount",
-            "GL Transaction Amount",
-            "Type"
-        ]
-
-        # Group A – Basic accounting context
-        group_a = [
-            "Fiscal Year",
-            "Month",
-            "Planful Date",
-        ]
-
-        # Group B – Transaction identifiers
-        group_b = [
-            "GL Transaction Number",
-            "Document Type",
-            "Value Type",
-            "GL Invoice Number",
             "GL Invoice Date",
             "GL Posting Date",
+            "GL Line Description",
+            "Description",
+            "GL Transaction Amount",
+            "Type",
         ]
 
-        # Group C – Currency metadata
-        group_c = [
-            "Ledger Currency",
-            "Local Currency",
-            "Transaction Currency",
-        ]
+        # --- 5. Determine all non-visible columns automatically ---
+        # Preserve order as it appears in audit_df
+        non_visible = [c for c in audit_df.columns if c not in visible_cols]
 
-        # Group D – Optional account metadata
-        group_d = [
-            "Account*",
-            "Expense Account Code",
-            "Major Code",
-        ]
+        # --- 6. Final column ordering ---
+        final_columns = visible_cols + non_visible
+        audit_df = audit_df[final_columns]
 
-        # Combine final column set in correct order
-        final_columns = (
-            visible_cols
-            + [c for c in group_a if c in transactions_df.columns]
-            + [c for c in group_b if c in transactions_df.columns]
-            + [c for c in group_c if c in transactions_df.columns]
-            + [c for c in group_d if c in transactions_df.columns]
-        )
-
-        # Filter dataframe to only the final trimmed set
-        audit_df = audit_df[[c for c in final_columns if c in audit_df.columns]]
-
-        # --- 4. Create sheet ---
+        # --- 7. Create sheet ---
         ws = self.wb.create_sheet("Transactions Source Data")
 
-        # --- 5. Write header ---
+        # --- 8. Write header ---
         for col_idx, col_name in enumerate(audit_df.columns, start=1):
             ws.cell(row=1, column=col_idx, value=col_name)
 
-        # --- 6. Write data rows ---
+        # --- 9. Write data rows ---
         for row_idx, (_, row) in enumerate(audit_df.iterrows(), start=2):
             for col_idx, value in enumerate(row, start=1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
-        # --- 7. Apply AutoFilter & freeze panes ---
-        ws.auto_filter.ref = ws.dimensions
-        ws.freeze_panes = "A2"
-
-        # --- 8. Column Grouping
-
-        # Build an index map for column name -> Excel column index
+        # --- 10. Build column index map ---
         col_to_idx = {name: idx + 1 for idx, name in enumerate(audit_df.columns)}
 
-        def group_columns(col_list):
-            """Helper to group a contiguous block of columns."""
-            if not col_list:
-                return
-            start = min(col_to_idx[c] for c in col_list if c in col_to_idx)
-            end = max(col_to_idx[c] for c in col_list if c in col_to_idx)
+        # Apply filter to following columns: PO Number, Accounting Period, Type
+        filter_cols = ["PO Number", "Accounting Period", "Type"]
+        max_filter_col = max(col_to_idx[c] for c in filter_cols)
+        last_filter_letter = get_column_letter(max_filter_col)
+
+        ws.auto_filter.ref = f"A1:{last_filter_letter}1"
+
+        # --- 11. Auto-adjust column widths ---
+        for col_idx, col_name in enumerate(audit_df.columns, start=1):
+            column_letter = get_column_letter(col_idx)
+            max_length = len(str(col_name))
+
+            # compute max length of all cell contents in this column
+            for row_idx in range(2, len(audit_df) + 2):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                if cell_value is not None:
+                    max_length = max(max_length, len(str(cell_value)))
+
+            ws.column_dimensions[column_letter].width = max_length + 2
+
+        
+        # --- 12. Group the non-visible columns in a single block ---
+        if non_visible:
+            start = min(col_to_idx[col] for col in non_visible)
+            end   = max(col_to_idx[col] for col in non_visible)
             ws.column_dimensions.group(
                 get_column_letter(start),
                 get_column_letter(end),
                 hidden=True
             )
-
-        # --- Auto-adjust column widths ---
-        for col_idx, column_cells in enumerate(ws.columns, start=1):
-            max_length = 0
-            col_letter = get_column_letter(col_idx)
-
-            for cell in column_cells:
-                try:
-                    cell_value = str(cell.value) if cell.value is not None else ""
-                    if len(cell_value) > max_length:
-                        max_length = len(cell_value)
-                except:
-                    pass
-
-            # Add padding so text isn't perfectly flush
-            adjusted_width = max_length + 2
-            ws.column_dimensions[col_letter].width = adjusted_width
-
-        
-        # Apply grouping blocks
-        group_columns(group_a)
-        group_columns(group_b)
-        group_columns(group_c)
-        group_columns(group_d)
