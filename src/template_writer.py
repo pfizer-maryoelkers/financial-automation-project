@@ -150,7 +150,6 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
         """
 
         # 1. Filter DF to selected POs 
-        # NOTE: Adjust "PO" to the actual column name in your dataframe
         if "PO #" not in forecast_df.columns:
             raise KeyError("Expected 'PO #' column not found in forecast dataframe.")
 
@@ -434,5 +433,3 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
         group_columns(group_b)
         group_columns(group_c)
         group_columns(group_d)
-
-        print("Transactions audit sheet created with grouped columns.")
