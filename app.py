@@ -53,18 +53,12 @@ forecast_file = st.file_uploader("Forecast File (.xlsx)", type=["xlsx"])
 tdf_file = st.file_uploader("Transactional Detail File (.xlsx)", type=["xlsx"])
 
 # -------------------------------
-# PO Selection
+# Uploading Template
 # -------------------------------
-st.subheader("2. Select POs")
+st.subheader("2. Upload Financial Template")
+st.text("Upload template file with POs filled out in column B")
 
-st.text_input("Enter POs (one by one or comma separated):", key="po_input", on_change=add_po)
-
-for po in st.session_state.po_list:
-    c1, c2 = st.columns([0.9, 0.1])
-    c1.write(f"**{po}**")
-    if c2.button("✕", key=f"rm_{po}"):
-        remove_po(po)
-        st.experimental_rerun()
+template_file = st.file_uploader("Template File (.xlsx)", type=["xlsx"])
 
 # -------------------------------
 # Generate Report
@@ -76,8 +70,8 @@ if st.button("Generate Report"):
         st.error("Please upload both required files.")
         st.stop()
 
-    if not st.session_state.po_list:
-        st.error("Please enter at least one PO.")
+    if not template_file:
+        st.error("Please upload financial template.")
         st.stop()
 
     # Area where progress messages appear
@@ -100,11 +94,15 @@ if st.button("Generate Report"):
                 tmp_f.write(forecast_file.getvalue())
                 forecast_path = tmp_f.name
 
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_t:
-                tmp_t.write(tdf_file.getvalue())
-                tdf_path = tmp_t.name
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_tdf:
+                tmp_tdf.write(tdf_file.getvalue())
+                tdf_path = tmp_tdf.name
 
-            template_path = "data/Financial Spreadsheet Template v2.xlsx"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp_temp:
+                tmp_temp.write(template_file.getvalue())
+                template_path = tmp_temp.name
+
+            #template_path = "data/Financial Spreadsheet Template v2.xlsx"
 
             # ----------------------------
             # ETL Steps (with updates)
