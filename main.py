@@ -60,12 +60,14 @@ def main():
     accrual_data = accrual_reader.get_transactional_data()
     print("Loaded accrual data\n")
 
+    template_writer = FinancialTemplateV2Writer(template_path)
+    template_writer.parse_template()
+    selected_pos = template_writer.pos 
+    print("Loaded template data\n")
+
     ## Step 2: Combining data and filtering POs
     print("Step 2: Combing data and filtering on selected POs\n")
     result = combine_data(forecast_data, actual_data, accrual_data)
-
-    # List of POs you want to write
-    selected_pos = ['9500879389', '9500882917', '9500887310', '9501014470', '9501014469', '9500921816']
 
     # Filter the result dictionary
     filtered_result = {po: data for po, data in result.items() if po in selected_pos}
@@ -73,10 +75,6 @@ def main():
 
     ## Step 3: Writing to template
     print("Step 3: Writing template output\n")
-    template_writer = FinancialTemplateV2Writer(template_path)
-
-    template_writer.parse_template()
-
     template_writer.write_data(filtered_result)
 
     # Writing audit sheets

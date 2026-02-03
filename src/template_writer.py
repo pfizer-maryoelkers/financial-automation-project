@@ -17,6 +17,7 @@ class TemplateWriterBase(ABC):
         """
         self.wb = load_workbook(template_path)
         self.sheet = self.wb[sheet_name] if sheet_name else self.wb.active
+        self.pos = []
 
     @abstractmethod
     def parse_template(self):
@@ -75,6 +76,9 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
             val = self.sheet[f"{self.PO_COLUMN}{row}"].value
             if val and str(val).strip():
                 self.po_to_row[str(val).strip()] = row
+        
+        # Create list of POs that we'll be using 
+        self.pos = list(self.po_to_row.keys())
 
     def find_po_row(self, po: str) -> int:
         """Return row for existing PO or None."""

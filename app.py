@@ -14,26 +14,8 @@ from main import (
 # ===============================================
 # Session State
 # ===============================================
-if "po_list" not in st.session_state:
-    st.session_state.po_list = []
-
 if "final_output_path" not in st.session_state:
     st.session_state.final_output_path = None
-
-def add_po():
-    raw = st.session_state.get("po_input", "").strip()
-
-    # Split by commas
-    entries = [po.strip() for po in raw.split(",") if po.strip()]
-
-    # Add each entry individually
-    for po in entries:
-        if po not in st.session_state.po_list:
-            st.session_state.po_list.append(po)
-
-    # Clear input box
-    st.session_state.po_input = ""
-
 
 def remove_po(po):
     st.session_state.po_list.remove(po)
@@ -129,12 +111,12 @@ if st.button("Generate Report"):
             combined = combine_data(forecast_data, actual_data, accrual_data)
 
             update_progress("✓ Filtering POs...")
-            pos = st.session_state.po_list
+            writer = FinancialTemplateV2Writer(template_path)
+            writer.parse_template()
+            pos = writer.pos
             filtered = {po: combined[po] for po in pos if po in combined}
 
             update_progress("✓ Writing template...")
-            writer = FinancialTemplateV2Writer(template_path)
-            writer.parse_template()
             writer.write_data(filtered)
             writer.write_forecast_audit(forecast_reader_data, pos)
             writer.write_transactions_audit(actual_reader_data, pos)
