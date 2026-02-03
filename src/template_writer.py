@@ -135,6 +135,10 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
                 for key, col in self.COLUMN_MAP[month].items():
                     self.sheet[f"{col}{row}"] = values.get(key, 0)
 
+        # Adding PO auto filter
+        last_row = 20 + extra_rows
+        self.sheet.auto_filter.ref = f"{self.PO_COLUMN}{self.HEADER_ROW}:{self.PO_COLUMN}{last_row}"
+
     def write_forecast_audit(self, forecast_df, selected_pos):
         """
         Write a forecast audit sheet containing only the POs
