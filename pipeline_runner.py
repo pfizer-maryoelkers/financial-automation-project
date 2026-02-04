@@ -59,7 +59,7 @@ def run_etl(forecast_path, trans_path, template_path, output_path):
 
     # ----------- Step 4: Combine data -----------
     def combine_data(forecast, actual, accrual):
-        """(same implementation as main.py, moved here for modularity)"""
+        """(same implementation as main.py)"""
         combined = {}
         all_pos = set(forecast.keys()) | set(actual.keys()) | set(accrual.keys())
 
