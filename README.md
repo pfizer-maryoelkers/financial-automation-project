@@ -194,3 +194,10 @@ into the financial template, and saving the updated file.
 3. SharePoint (Output Files): The processed template is uploaded back to SharePoint via Power Automate.
 
 4. Notification: Power Automate sends a completion message (via email or Teams) with a link to the updated file.
+
+
+GL Line Description:
+RC = reclass
+
+-- 
+Doc number starts w/ 9 & Cost Center starts w/ 7 = Travel Expense

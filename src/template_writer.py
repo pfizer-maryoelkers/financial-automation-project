@@ -297,6 +297,29 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
                 hidden=True
             )
 
+    # Helper function to categorize rows in transactional detail file
+    def categorize_row(self, row):
+        '''
+        Returns value for row 'Type' as a string
+
+        '''
+        voucher_number = str(row['AP Voucher Number'])
+        amount = row["GL Transaction Amount"]
+
+        if voucher_number.startswith("5"):
+            return "Actual"
+        elif voucher_number.startswith("2"):
+            if amount > 0:
+                return "Accrual"
+            elif amount < 0:
+                return "Reversal"
+        elif voucher_number.startswith("9"):
+            return "Reclass"
+
+        else:
+            return "Undefined"
+        
+         
 
     def write_transactions_audit(self, transactions_df, selected_pos):
         """
@@ -317,24 +340,26 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
         audit_df = transactions_df[transactions_df["PO Number"].isin(selected_pos)].copy()
 
         # --- 3. Compute Type column ---
-        audit_df["Type"] = audit_df.apply(
-            lambda row: (
-                "Actual"
-                if str(row["AP Voucher Number"]).startswith("5")
-                else (
-                    "Accrual"
-                    if str(row["AP Voucher Number"]).startswith("2")
-                    and row["GL Transaction Amount"] > 0
-                    else (
-                        "Reversal"
-                        if str(row["AP Voucher Number"]).startswith("2")
-                        and row["GL Transaction Amount"] < 0
-                        else "Undefined"
-                    )
-                )
-            ),
-            axis=1
-        )
+        # audit_df["Type"] = audit_df.apply(
+        #     lambda row: (
+        #         "Actual"
+        #         if str(row["AP Voucher Number"]).startswith("5")
+        #         else (
+        #             "Accrual"
+        #             if str(row["AP Voucher Number"]).startswith("2")
+        #             and row["GL Transaction Amount"] > 0
+        #             else (
+        #                 "Reversal"
+        #                 if str(row["AP Voucher Number"]).startswith("2")
+        #                 and row["GL Transaction Amount"] < 0
+        #                 else "Undefined"
+        #             )
+        #         )
+        #     ),
+        #     axis=1
+        # )
+
+        audit_df["Type"] = audit_df.apply(self.categorize_row, axis=1)
 
         # --- 4. Define visible columns ---
         visible_cols = [
@@ -347,6 +372,7 @@ class FinancialTemplateV2Writer(TemplateWriterBase):
             "GL Posting Date",
             "GL Line Description",
             "Description",
+            "Month",
             "GL Transaction Amount",
             "Type",
         ]
