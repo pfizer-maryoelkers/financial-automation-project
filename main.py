@@ -28,7 +28,6 @@ def combine_data(forecast, actual, accrual):
                 'Accrual Reversal': accrual.get(po, {}).get(month, {}).get('Accrual Reversal', 0),
                 '2WM': accrual.get(po, {}).get(month, {}).get('2WM', False),
                 # Sources can be combined or kept separate if needed
-                # TODO: Add source field and decide how to handle sources
             }
 
     # Reordering months for easier debugging
