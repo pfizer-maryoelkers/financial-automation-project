@@ -1,5 +1,5 @@
 """
-pipeline_runner.py
+pa_main.py
 Entry point for running the ETL pipeline from Power Automate Desktop (PAD).
 
 This script:

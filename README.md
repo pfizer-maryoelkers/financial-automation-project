@@ -186,14 +186,17 @@ While this python script will handle all the complex data processing, we will le
 
 **Full Automation Flow:**
 
-1. Power Automate: Monitors SharePoint for new files, triggers the process, and orchestrates the workflow.
+1. User submits form in microsoft teams
+    - This form includes things like input file names (forecast and CTIES), as well as which template to be used
+    - This form triggers a Power Automate flow
 
-2. Python Script: Handles the heavy data processing—reading the forecast file, mapping months and POs, writing forecast values 
-into the financial template, and saving the updated file.
+2. Power Automate gathers files from Microsoft Teams channel via SharePoint.
 
-3. SharePoint (Output Files): The processed template is uploaded back to SharePoint via Power Automate.
+3. Power Automate then calls main.py, using the SharePoint files as input (hosted via Azure).
 
-4. Notification: Power Automate sends a completion message (via email or Teams) with a link to the updated file.
+4. SharePoint (Output Files): The processed template is uploaded back to SharePoint via Power Automate.
+
+5. Notification: Power Automate sends a completion message (via email or Teams) with a link to the updated file.
 
 
 GL Line Description:
