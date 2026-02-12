@@ -4,18 +4,94 @@ import pandas as pd
 class ForecastReader:
     """Reads vendor forecast file and extracts forecast data."""
 
-    def __init__(self, file_path: str, sheet_name="T&M Details"):
+    def __init__(self, file_paths: list):
         """Initialize with the forecast file path."""
-        self.file_path = file_path
-        self.sheet_name = sheet_name
+        self.file_paths = file_paths
         self.data = None
 
-    def load_forecast(self):
-        """Load the forecast Excel file into memory."""
+    def _load_valid_sheet(self, file_path: str):
+        """
+        Attempts to read the first sheet that contains:
+        - A 'PO #' column
+        - At least one forecast column ending in '- FTotal'
+
+        Returns:
+            DataFrame if a valid sheet is found, otherwise None.
+        """
+
         try:
-            self.data = pd.read_excel(self.file_path, sheet_name=self.sheet_name)
+            xls = pd.ExcelFile(file_path)
         except Exception as e:
-            print(e)
+            print(f"Error opening file {file_path}: {e}")
+            return None
+
+        for sheet in xls.sheet_names:
+            try:
+                df = pd.read_excel(xls, sheet_name=sheet)
+            except Exception:
+                continue
+
+            # Verify required columns
+            if "PO #" in df.columns:
+                if any(col.endswith("- FTotal") for col in df.columns):
+                    print(f"Selected sheet '{sheet}' from file {file_path}")
+                    return df  # Found the correct sheet
+
+        print(f"No valid sheet found in file {file_path}.")
+        return None
+
+
+    def load_forecast(self):
+        """
+        Load the forecast Excel file(s) into memory.
+        Assumes self.file_path is always a list of one or more file paths.
+        """
+
+        dfs = []
+        seen = set()           # Track POs already encountered
+        dup_pos_total = set()  # Track POs appearing in later files
+
+        for f in self.file_paths:
+            try:
+                df = self._load_valid_sheet(f)
+                if df is None:
+                    continue  # Skip files without a valid sheet
+
+            except Exception as e:
+                print(f"Error reading file {f}: {e}")
+                continue
+
+            # Ensure the PO column exists
+            if "PO #" not in df.columns:
+                print(f"File {f} is missing the 'PO #' column.")
+                continue
+
+            # Identify POs in this file
+            pos = set(df["PO #"].astype(str))
+
+
+            # Detect duplicates across files
+            intersection = seen.intersection(pos)
+            if intersection:
+                dup_pos_total |= intersection
+                # Drop rows from later files for any duplicated PO
+                df = df[~df["PO #"].isin(intersection)]
+
+            seen |= pos
+            dfs.append(df)
+
+        # Combine all valid DataFrames
+        if dfs:
+            self.data = pd.concat(dfs, ignore_index=True)
+        else:
+            self.data = None
+
+        # Notify user of duplicate POs
+        if dup_pos_total:
+            print(
+                f"\nWARNING: PO(s) {', '.join(map(str, sorted(dup_pos_total)))} "
+                "appear in multiple forecast files. Only the first occurrence was used."
+            )
 
 
     def get_forecast_data(self) -> dict:
