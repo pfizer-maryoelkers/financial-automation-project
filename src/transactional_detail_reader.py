@@ -77,6 +77,7 @@ class TransactionalDetailReader:
 
             self.data = pd.concat(dfs, ignore_index=True)
             self.data["Type"] = self.data.apply(self._categorize_row, axis=1)
+            self.data[self.colmap['po']] = self.data[self.colmap['po']].astype('str') # Change POs to strings
             print("Successfully loaded transactional data from valid sheets.")
 
         except Exception as e:
