@@ -27,7 +27,7 @@ class TemplateWriter:
         # Source sheet params
         self.forecast_source_cols = [
             "PO #",
-            "2025 Forecast total Fee"
+            "2025 Forecast total Fee",
             "Jan 2025 - FTotal",
             "Feb 2025 - FTotal",
             "March 2025 - FTotal",
