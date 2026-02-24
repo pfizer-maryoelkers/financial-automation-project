@@ -78,17 +78,17 @@ class TransactionalDetailReader:
         '''
         Returns value for row 'Type' as a string
         '''
-        voucher_number = str(row[self.colmap["voucher"]])
+        classifier = str(row[self.colmap["classifier"]])
         amount = row[self.colmap["amount"]]
 
-        if voucher_number.startswith("5"):
+        if classifier.startswith("5"):
             return "Actual"
-        elif voucher_number.startswith("2"):
+        elif classifier.startswith("2"):
             if amount > 0:
                 return "Accrual"
             elif amount < 0:
                 return "Reversal"
-        elif voucher_number.startswith("9"):
+        elif classifier.startswith("9"):
             return "Reclass"
         else:
             return "Undefined"

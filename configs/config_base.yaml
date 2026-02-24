@@ -23,7 +23,7 @@ transactional_detail_reader:
     po: "PO Number"
     month: "Month"
     amount: "GL Transaction Amount"
-    voucher: "AP Voucher Number"
+    classifier: "AP Voucher Number"
     type: "Type"
 
 ## Template Writer
