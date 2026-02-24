@@ -1,0 +1,34 @@
+# configs/config_base.yaml
+
+## Forecast Reader
+forecast_reader:
+  file_paths:
+    - "data/2025-11-IBM Forecast.xlsx"
+
+## Transactional Detail Reader
+transactional_detail_reader:
+  file_path: "data/C-TIES AP09 2025.xlsx"
+  
+  required_cols:
+    - "PO Number"
+    - "Month"
+    - "GL Transaction Amount"
+  
+  valid_types:
+    - "Actual"
+    - "Accrual"
+    - "Reversal"
+  
+  colmap:
+    po: "PO Number"
+    month: "Month"
+    amount: "GL Transaction Amount"
+    voucher: "AP Voucher Number"
+    type: "Type"
+
+## Template Writer
+template_writer:
+  file_path: "data/templates/financial_template_v1_2025.xlsx"
+  header_row: 14
+  po_column: "B"
+  dec_acc_reversal_col: "J"
