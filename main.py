@@ -1,53 +1,44 @@
+from src.config_loader import load_config, combine_data
 from src.forecast_reader import ForecastReader
 from src.transactional_detail_reader import TransactionalDetailReader
 from src.template_writer import TemplateWriter
 
+# Loading config file
+config_path = 'configs/config_base.yaml'
+config = load_config(config_path)
 
-forecast_paths = ["data/ibm_forecast.xlsx"]
-tdf_path = "data/C-TIES AP09 2025.xlsx"
-template_path = "data/templates/financial_template_v2_2026.xlsx"
-output_path = "data/template_output.xlsx"
+## Initialize classes
+forecast_reader = ForecastReader(
+    file_paths=config['forecast_reader']['file_paths']
+)
 
-# Helper function to combine forecasts, actuals, and accrual data into one JSON formatted dictionary
-def combine_data(forecast, transactional):
-    combined = {}
+transactional_reader = TransactionalDetailReader(
+    file_path=config['transactional_detail_reader']['file_path'],
+    required_cols=config['transactional_detail_reader']['required_cols'],
+    valid_types=config['transactional_detail_reader']['valid_types'],
+    colmap=config['transactional_detail_reader']['colmap']
+)
 
-    # All PO numbers that exist in either dataset
-    all_pos = set(forecast.keys()) | set(transactional.keys())
+template_writer = TemplateWriter(
+    file_path=config['template_writer']['file_path'],
+    header_row=config['template_writer']['header_row'],
+    po_column=config['template_writer']['po_column'],
+    dec_acc_reversal_col=config['template_writer']['dec_acc_reversal_col']
+)
 
-    months_list = [
-        "Jan","Feb","Mar","Apr","May","Jun",
-        "Jul","Aug","Sep","Oct","Nov","Dec"
-    ]
-
-    for po in all_pos:
-        combined[po] = {}
-
-        for month in months_list:
-            f = forecast.get(po, {}).get(month, {})
-            t = transactional.get(po, {}).get(month, {})
-
-            combined[po][month] = {
-                "Forecast": f.get("Forecast", 0),
-                "Actual": t.get("Actual", 0),
-                "Accrual": t.get("Accrual", 0),
-                "Accrual Reversal": t.get("Reversal", 0)
-            }
-
-    return combined
+# Output path
+output_path = 'data/templates/output_test.xlsx'
 
 
 def main():
     ## Step 1: Initialize readers and load data
     print("Step 1: Initializing readers and loading data\n")
 
-    fr = ForecastReader(forecast_paths)
-    forecast_data = fr.get_forecast_data()
+    forecast_data = forecast_reader.get_forecast_data()
     print("Loaded forecast data\n")
 
 
-    tdr = TransactionalDetailReader(tdf_path)
-    transactional_data = tdr.get_transactional_data()
+    transactional_data = transactional_reader.get_transactional_data()
     print("Loaded transactional data\n")
 
     ## Step 2: Combining data and filtering POs
@@ -57,13 +48,12 @@ def main():
 
     ## Step 3: Writing to template
     print("Step 3: Writing template output\n")
-    tw = TemplateWriter(template_path)
-    tw.write_data(combined)
-    tw.write_forecast_source_sheet(fr.data)
-    tw.write_transactional_source_sheet(tdr.data)
+    template_writer.write_data(combined)
+    template_writer.write_forecast_source_sheet(forecast_reader.data)
+    template_writer.write_transactional_source_sheet(transactional_reader.data)
     print("Loaded template data\n")
 
-    tw.wb.save(output_path)
+    template_writer.wb.save(output_path)
     print(f"Template saved to {output_path}")
 
 

@@ -6,13 +6,13 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 
 class TemplateWriter:
 
-    def __init__(self, file_path: str):
+    def __init__(self, file_path, header_row, po_column, dec_acc_reversal_col):
         self.wb = load_workbook(file_path)
         self.sheet = self.wb.active
 
         # Configs for template
-        self.header_row = 14    # Header row
-        self.po_column = 'B'    # Col where POs are entered
+        self.header_row = header_row    # Header row
+        self.po_column = po_column    # Col where POs are entered
 
 
         # Cost centers, WBS codes, PO numbers, and their associated rows
@@ -21,7 +21,7 @@ class TemplateWriter:
         self.pos = self.get_existing_pos()
 
         # Column map (dynamically created starting with Dec Accrual Reversal)
-        self.dec_acc_reversal_col = 'N' # Col where first data entry exists
+        self.dec_acc_reversal_col = dec_acc_reversal_col # Col where first data entry exists
         self.column_map = self.get_column_map(starting_col=self.dec_acc_reversal_col)
 
         # Source sheet params

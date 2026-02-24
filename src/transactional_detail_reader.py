@@ -18,30 +18,19 @@ class TransactionalDetailReader:
     
     """
 
-    def __init__(self, file_path: str):
-        """Initialize with the transactional detail file path."""
+    def __init__(self, file_path, required_cols, valid_types, colmap):
+        """Initialize with the transactional detail file path.
+        
+        See config_base.yaml for default parameters
+        """
         self.file_path = file_path
         self.data = None
 
-        self.required_cols = {
-            'PO Number', 
-            'Month', 
-            'GL Transaction Amount'
-         } # Required columns for loading a valid sheet
+        self.required_cols = set(required_cols) # Required columns for loading a valid sheet
         
-        self.valid_types =  [
-            'Actual', 
-            'Accrual', 
-            'Reversal'
-        ] # Valid types for reading (currently support Actuals, Accruals, Reversals) - open to extension
+        self.valid_types = valid_types # Valid types for reading (currently support Actuals, Accruals, Reversals) - open to extension
 
-        self.colmap = {
-            "po": "PO Number",
-            "month": "Month",
-            "amount": "GL Transaction Amount",
-            "voucher": "AP Voucher Number",
-            "type": "Type"
-        } # Column map for standardized writing. Can change values for dynamic column names
+        self.colmap = colmap # Column map for standardized writing. Can change values for dynamic column names
 
         self.month_map = {
             1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
