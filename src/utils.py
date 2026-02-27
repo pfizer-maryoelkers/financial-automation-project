@@ -1,4 +1,6 @@
 import yaml
+import base64
+import io
 
 def load_config(config_path='configs/config_base.yaml'):
     """Load and merge YAML configs.
@@ -37,3 +39,10 @@ def combine_data(forecast, transactional):
             }
 
     return combined
+
+def convert_base64(bytes_string: str):
+    # Converts string of bytes to Excel like object for pd/openpyxl to read
+    decoded_bytes = base64.b64decode(bytes_string)
+    excel_file_like_object = io.BytesIO(decoded_bytes)
+    return excel_file_like_object
+

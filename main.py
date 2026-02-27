@@ -1,11 +1,22 @@
-from src.config_loader import load_config, combine_data
+import sys
+from src.utils import load_config, combine_data, convert_base64
 from src.forecast_reader import ForecastReader
 from src.transactional_detail_reader import TransactionalDetailReader
 from src.template_writer import TemplateWriter
 
 # Loading config file
 config_path = 'configs/config_base.yaml'
+base64 = False
 config = load_config(config_path)
+
+if base64:
+    #  if file paths in base64 format, convert bytes to Excel like objects
+    for idx, _ in enumerate(config['forecast_reader']['file_paths']):
+        config['forecast_reader']['file_paths'][idx] = convert_base64(config['forecast_reader']['file_paths'][idx])
+
+    config['transactional_detail_reader']['file_path'] = convert_base64(config['transactional_detail_reader']['file_path'])
+    config['template_writer']['file_path'] = convert_base64(config['template_writer']['file_path'])
+
 
 ## Initialize classes
 forecast_reader = ForecastReader(

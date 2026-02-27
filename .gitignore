@@ -32,3 +32,5 @@ prompts.md
 # Pipeline runner (for power automate)
 # pipeline_runner.py
 power_automate.md
+bytes.*
+config_base_bytes.yaml
