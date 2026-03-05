@@ -27,6 +27,7 @@ financial-automation/
 │   ├── forecast_reader.py       # Reads vendor forecast file
 │   ├── template_writer.py       # Writes data into template
 │   ├── transactional_detail_reader.py  # Reads transactional detail file
+│   ├── utils.py       # contains a few miscellaneous helper functions
 |
 |── main.py                  # Orchestrates the pipeline
 |
