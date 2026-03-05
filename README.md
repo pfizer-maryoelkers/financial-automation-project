@@ -67,76 +67,80 @@ This class reads vendor forecast files and stores forecast data in a dictionary 
 ```
 dict: { 'PO12345': 
     {'Jan': 
-        {'Forecast': 1000, 'Source': [row_indices]}, 
+        {'Forecast': 1000}, 
     'Feb': 
-        {'Forecast': 2000, 'Source': [row_indices]}, 
+        {'Forecast': 2000}, 
     ...
     } 
 }
 ```
-Note: Source refers to the row number in the forecast file from which the forecast value was pulled from. This is later used for auditability purposes.
 
+Parameters: 
+- file_paths -> list of file paths or byte strings (supported multiple)
 
-### TransactionalDetailReader
+Returns:
+- dict
 
-This is a base class with the following two subclasses:
+### Transactional Detail Reader
 
-1. **InvoiceActualReader**: Reads transactional detail file and stores invoice actual data:
-```
-dict: {
-    'PO12345': {
-        'Jan': {'Actual': 900, 'Source': [row_indices]},
-        'Feb': {...},
-        ...
-    },
-    ...
-}
-```
-2. **AccrualReader**: Extracts PO, monthly accruals, and monthly accrual reversals, including a 2WM boolean value 
+This class reads a singular transactional detail file and extracts accruals, actuals, and reversals.
 
+Includes the following methods:
+- load_transactional_detail_file(): Loads CTIES file into singular dataframe
+- _categorize_row(): internal method that categorizes row type as actual, accrual, etc.
+This method is where we define the logic for adding the 'Type' column - can be extended in the future
+- get_transactional_data(): reads dataframe and filters data, returns dict of data we need
+
+Returns a dictionary in the following format:
 ```
 dict: {
     'PO12345': {
         'Jan': {
+            'Actual': 900
             'Accrual': 950.0,
             'Accrual Reversal': 0.0,
-            'Source': [indices_for_accrual],
-            'ReversalSource': [indices_for_reversal],
-            '2WM': True
         },
         'Feb': {
-            'Accrual': 1000.0,
-            'Accrual Reversal': -950.0,
-            'Source': [indices_for_accrual],
-            'ReversalSource': [indices_for_reversal],
-            '2WM': False
-        },
+            'Actual': 800
+            'Accrual': 1050.0,
+            'Accrual Reversal': -950,
+        }
         ...
-    },
+    }
     ...
 }
 ```
+
+Parameters:
+- file_path -> path or byte string
+- required_cols -> list that defines the columns required for a valid sheet. Some CTIES files have multiple sheets, so this parameter helps dynamically identify which sheets to use
+- valid_types -> list that defined supported types of transactions. For example Actual, Accrual, Reversal, etc. are supported types of transactions.
+- colmap -> dict that normalizes column names. For example, dict['po'] may equal 'PO Number', 'PO #', etc. depending on config
+
+Returns;
+- dict
 
 **Transactional Detail File Rules:**
 
 In order to accurately parse data from the transactional detail file, we have defined a list of classification criteria that can concretely define a row as either an invoice (actual), and accrual, or an accrual reversal. We have defined the rules to be the following:
 
-1. If AP Voucher Number has a prefix of 5, the entry is an actual
+1. If colmap['classifier] has a prefix of 5, the entry is an actual
 
-2. If AP Voucher Number has a prefix of 2 and the value is positive, the entry is an accrual 
+2. If colmap['classifier] has a prefix of 2 and the value is positive, the entry is an accrual 
 
-3. If AP Voucher Number has a prefix of 2 and the value is negaive, the entry is an accrual reversal
+3. If colmap['classifier] has a prefix of 2 and the value is negative, the entry is an accrual reversal
 
-4. Otherwise, the entry is unclassified and is recorded on a separate sheet
+4. If colmap['classifier] has a prefix of 9, then entry is a reclass
+
+5. Otherwise, the entry is undefined
 
 ## 2. Aggregators (Transform):
 
-When we initially read the data, we have 3 separate dictionaries:
+When we initially read the data, we have 2 separate dictionaries:
 1. Forecast dict
-2. Invoice Actual dict
-3. Accrual/Accrual Reversal dict
+2. Transactional Detail dict
 
-This data needs to be aggregated to a singular JSON formatted dictionary so that it can be easily passed to our template writer. We do so with a helper function in main.py:
+This data needs to be aggregated to a singular JSON formatted dictionary so that it can be easily passed to our template writer. We do so with a helper function in utils.py:
 
 ```python
 #  Function to combine forecasts, actuals, and accrual data into one JSON formatted dictionary
@@ -153,13 +157,11 @@ dict: { 'PO12345':
         'Actual': 900,
         'Accrual': 950.0,
         'Accrual Reversal': 0.0,
-        '2WM': True
     'Feb': 
         'Forecast': 1000,
         'Actual': 900,
         'Accrual': 950.0,
         'Accrual Reversal': -950.0,
-        '2WM': False
     ...
     } 
 }
@@ -171,11 +173,18 @@ This aggregated dictionary includes forecasts, actuals, accruals, and reversals 
 
 ### Template Writer
 
-We have defined an abstract base class TempalateWriter which gives a framework for writing to specific templates. We have implemented the following subclass:
+This class reads an input template, parses the existing data, and appends the new data to the template. This class leverages both openpyxl and pandas for data manipulation/writing. 
 
-**FinancialTemplateV2Writer:** Template writer based on 'Financial Spreadsheet Template v2.xlsx'
+Parameters:
+- file_path -> file path to input template with POs and formatting
+- header_row -> this is the row where data entry starts, generally row 14 but can be configured
+- po_column -> this is the column where POs are entered, generally column B but can be configured
+- dec_acc_reversal_col -> column where December Accrual Reversal exists. This is the very first data entry cell, so we use it as a reference point to build a map for the rest of the data writing
 
-This class takes in a singular dictionary of data and writes to an output excel sheet, preserving the formatting in the specific template.
+This class includes the following key methods:
+- write_data -> this method writes data to the main sheet
+- write_forecast_source_sheet -> this method writes forecast data to a new sheet so that the main sheet can be easily audited. It is a trimmed down version of the actual forecast file
+- write_transactional_source_sheet -> similarly, we write the transactional data to a seperate source sheet so that values can be easily audited.
 
 --------
 
@@ -186,21 +195,17 @@ While this python script will handle all the complex data processing, we will le
 
 **Full Automation Flow:**
 
-1. User submits form in microsoft teams
-    - This form includes things like input file names (forecast and CTIES), as well as which template to be used
-    - This form triggers a Power Automate flow
+1. User submits Microsoft Form
+    - This form includes 3 file uploads - Forecast File(s), Transactional Detail File, Template
 
-2. Power Automate gathers files from Microsoft Teams channel via SharePoint.
+2. Power Automate gathers files from OneDrive after form is submitted
 
-3. Power Automate then calls main.py, using the SharePoint files as input (hosted via Azure).
+3. Power Automate converts files to base63 encoded strings
 
-4. SharePoint (Output Files): The processed template is uploaded back to SharePoint via Power Automate.
+4. The base64 excel files are passed over HTTPS as a JSON object which is taken in as input to main.py (hosted on Azure)
 
-5. Notification: Power Automate sends a completion message (via email or Teams) with a link to the updated file.
+5. main.py is called and outputs the completed template as a base64 encoded string
 
+6. This string is then passed back to Power Automate and uploaded to OneDrive/Sharepoint
 
-GL Line Description:
-RC = reclass
-
--- 
-Doc number starts w/ 9 & Cost Center starts w/ 7 = Travel Expense
+7. Power Automate sends a completion message (via email or Teams) with a link to the updated file.
