@@ -77,7 +77,7 @@ dict: { 'PO12345':
 ```
 
 Parameters: 
-- file_paths -> list of file paths or byte strings (supported multiple)
+- file_paths -> list of file paths or byte strings (supports multiple)
 
 Returns:
 - dict
@@ -145,7 +145,7 @@ This data needs to be aggregated to a singular JSON formatted dictionary so that
 
 ```python
 #  Function to combine forecasts, actuals, and accrual data into one JSON formatted dictionary
-def combine_data(forecast, actual, accrual):
+def combine_data(forecast, transactional):
     return combined_data
 ```
 
@@ -182,10 +182,13 @@ Parameters:
 - po_column -> this is the column where POs are entered, generally column B but can be configured
 - dec_acc_reversal_col -> column where December Accrual Reversal exists. This is the very first data entry cell, so we use it as a reference point to build a map for the rest of the data writing
 
-This class includes the following key methods:
+Key methods:
 - write_data -> this method writes data to the main sheet
 - write_forecast_source_sheet -> this method writes forecast data to a new sheet so that the main sheet can be easily audited. It is a trimmed down version of the actual forecast file
 - write_transactional_source_sheet -> similarly, we write the transactional data to a seperate source sheet so that values can be easily audited.
+
+Returns:
+- Updated template excel file w/ filled in data and source sheets. Returns as either excel file or as byte string.
 
 --------
 ## YAML Configuration
