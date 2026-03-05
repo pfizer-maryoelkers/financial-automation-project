@@ -187,6 +187,48 @@ This class includes the following key methods:
 - write_transactional_source_sheet -> similarly, we write the transactional data to a seperate source sheet so that values can be easily audited.
 
 --------
+## YAML Configuration
+
+For increased flexibility, we have added YAML support for configurations for each class. This way, the user can easily update configs depending on the format of the forecast files, transactional detail files, and template files. Below is an example YAML config file:
+
+```yaml
+## Forecast Reader
+forecast_reader:
+  file_paths:
+    - "data/2025-11-IBM Forecast.xlsx"
+
+## Transactional Detail Reader
+transactional_detail_reader:
+  file_path: "data/C-TIES AP09 2025.xlsx"
+  
+  required_cols:
+    - "PO Number"
+    - "Month"
+    - "GL Transaction Amount"
+  
+  valid_types:
+    - "Actual"
+    - "Accrual"
+    - "Reversal"
+  
+  colmap:
+    po: "PO Number"
+    month: "Month"
+    amount: "GL Transaction Amount"
+    classifier: "AP Voucher Number"
+    type: "Type"
+
+## Template Writer
+template_writer:
+  file_path: "data/templates/financial_template_v1_2025.xlsx"
+  header_row: 14
+  po_column: "B"
+  dec_acc_reversal_col: "J"
+
+```
+This YAML template includes all of the parameters that can possibly change depending on the inputs. Updating one of these parameters here ensures that the pipeline will run smoothly with varying configurations.
+
+--------
 
 
 ## Power Automate Integration
