@@ -246,7 +246,7 @@ While this python script will handle all the complex data processing, we will le
 
 2. Power Automate gathers files from OneDrive after form is submitted
 
-3. Power Automate converts files to base63 encoded strings
+3. Power Automate converts files to base64 encoded strings
 
 4. The base64 excel files are passed over HTTPS as a JSON object which is taken in as input to main.py (hosted on Azure)
 

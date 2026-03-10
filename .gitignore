@@ -28,6 +28,7 @@ pycache/
 # Docs
 inputs_outputs.md
 prompts.md
+README.pdf
 
 # Pipeline runner (for power automate)
 # pipeline_runner.py
