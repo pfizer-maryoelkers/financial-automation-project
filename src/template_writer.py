@@ -213,10 +213,11 @@ class TemplateWriter:
 
                 # Loop through metrics (Forecast, Actual, Accrual, Accrual Reversal)
                 for metric, col_letter in self.column_map[month].items():
-                    value = metrics.get(metric)
-
-                    # Write the value (could be None or numeric)
-                    self.sheet[f"{col_letter}{row}"] = value
+                    cell = self.sheet[f"{col_letter}{row}"]
+                    # Only write if cell is blank
+                    if cell.value is None or str(cell.value).strip() == "":
+                        value = metrics.get(metric)
+                        cell.value = value
 
 
 

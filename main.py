@@ -9,6 +9,9 @@ config_path = 'configs/config_kinjal_test.yaml'
 base64 = False 
 config = load_config(config_path)
 
+# Output path
+output_path = 'data/templates/output_test_no_notes.xlsx'
+
 if base64:
     #  if file paths in base64 format, convert bytes to Excel like objects
     for idx, _ in enumerate(config['forecast_reader']['file_paths']):
@@ -37,8 +40,6 @@ template_writer = TemplateWriter(
     dec_acc_reversal_col=config['template_writer']['dec_acc_reversal_col']
 )
 
-# Output path
-output_path = 'data/templates/output_test.xlsx'
 
 
 def main():
