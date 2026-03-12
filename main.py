@@ -5,8 +5,8 @@ from src.transactional_detail_reader import TransactionalDetailReader
 from src.template_writer import TemplateWriter
 
 # Loading config file
-config_path = 'configs/config_base.yaml'
-base64 = False
+config_path = 'configs/config_kinjal_test.yaml'
+base64 = False 
 config = load_config(config_path)
 
 if base64:

@@ -57,7 +57,7 @@ class TemplateWriter:
             "GL Line Description",
             "Description",
             "Month",
-            "GL Transaction Amount",
+            "AP02",
             "Type"
         ]
 
@@ -79,11 +79,19 @@ class TemplateWriter:
         self.pos = {}
         row = self.header_row + 1 # Starting at row below header row
 
-        while True:
+        # Find stop_row
+        stop_row = None
+        for search_row in range(1, self.sheet.max_row + 1):
+            if self.sheet[f"A{search_row}"].value == "Previous Period Invoices":
+                stop_row = search_row - 1
+                break
+
+
+        while row < stop_row:
             cell = self.sheet[f"{self.po_column}{row}"].value
 
-            if cell is None or str(cell).strip() == "":
-                break  # stop at the first blank cell
+            # if cell is None or str(cell).strip() == "":
+            #     break  # stop at the first blank cell
 
             # Normalize PO value
             po = str(cell).strip()
@@ -119,32 +127,34 @@ class TemplateWriter:
 
         return col_map
 
+
+    ##NOTE: I think we can remove this helper function - but keeping here in case we need to add it back.
     
     ## Methods to write data to sheet
-    def _insert_new_rows(self, num_rows):
-        """
-        Helper function to insert new data entry rows.
-        Since template only has 2 rows dedicated for data entry, this function is needed we have more than 2 POs to write.
-        """
-        source_row = self.header_row + 2  # Template row
-        insert_at = source_row + 1  # Insert below template
+    # def _insert_new_rows(self, num_rows):
+    #     """
+    #     Helper function to insert new data entry rows.
+    #     Since template only has 2 rows dedicated for data entry, this function is needed we have more than 2 POs to write.
+    #     """
+    #     source_row = self.header_row + 2  # Template row
+    #     insert_at = source_row + 1  # Insert below template
 
-        self.sheet.insert_rows(insert_at, amount=num_rows)
+    #     self.sheet.insert_rows(insert_at, amount=num_rows)
 
-        # For each inserted row, copy formulas and formatting from source row
-        for offset in range(num_rows):
-            new_row = insert_at + offset
-            for src_cell, dest_cell in zip(self.sheet[source_row], self.sheet[new_row]):
-                if src_cell.has_style:
-                    dest_cell._style = src_cell._style
-                dest_cell.number_format = src_cell.number_format
-                if src_cell.data_type == 'f':  # formula
-                    translator = Translator(src_cell.value, origin=src_cell.coordinate)
-                    dest_cell.value = translator.translate_formula(dest_cell.coordinate)
-                else:
-                    dest_cell.value = None  # Keep new row blank except formulas
+    #     # For each inserted row, copy formulas and formatting from source row
+    #     for offset in range(num_rows):
+    #         new_row = insert_at + offset
+    #         for src_cell, dest_cell in zip(self.sheet[source_row], self.sheet[new_row]):
+    #             if src_cell.has_style:
+    #                 dest_cell._style = src_cell._style
+    #             dest_cell.number_format = src_cell.number_format
+    #             if src_cell.data_type == 'f':  # formula
+    #                 translator = Translator(src_cell.value, origin=src_cell.coordinate)
+    #                 dest_cell.value = translator.translate_formula(dest_cell.coordinate)
+    #             else:
+    #                 dest_cell.value = None  # Keep new row blank except formulas
 
-        print(f"Inserted {num_rows} blank rows.\n")
+    #     print(f"Inserted {num_rows} blank rows.\n")
         
 
     def write_data(self, data:dict):
@@ -173,12 +183,14 @@ class TemplateWriter:
             }
 
         '''
-        num_pos = len(self.pos)
-        extra_rows = max(0, num_pos - 2)
+        #NOTE: this logic relies on depracted _insert_blank_rows() method above. 
 
-        # Pre-allocate extra rows if needed
-        if extra_rows > 0:
-            self._insert_new_rows(extra_rows)
+        # num_pos = len(self.pos)
+        # extra_rows = max(0, num_pos - 2)
+
+        # # Pre-allocate extra rows if needed
+        # if extra_rows > 0:
+        #     self._insert_new_rows(extra_rows)
 
 
         for po, row in self.pos.items():
