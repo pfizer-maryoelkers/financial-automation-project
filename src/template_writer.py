@@ -6,7 +6,16 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 
 class TemplateWriter:
 
-    def __init__(self, file_path, header_row, po_column, dec_acc_reversal_col):
+    def __init__(self, 
+                 file_path, 
+                 header_row, 
+                 po_column, 
+                 dec_acc_reversal_col, 
+                 forecast_source_cols,
+                 forecast_sum_exclude_cols,
+                 transactional_source_cols
+        ):
+        
         self.wb = load_workbook(file_path)
         self.sheet = self.wb.active
 
@@ -25,43 +34,9 @@ class TemplateWriter:
         self.column_map = self.get_column_map(starting_col=self.dec_acc_reversal_col)
 
         # Source sheet params
-        self.forecast_source_cols = [
-            "PO #",
-            "2025 Forecast total Fee",
-            "Jan 2026 - FTotal",
-            "Feb 2026 - FTotal",
-            "March 2026 - FTotal",
-            "April 2026 - FTotal",
-            "May 2026 - FTotal",
-            "June 2026 - FTotal",
-            "July 2026 - FTotal",
-            "Aug 2026 - FTotal",
-            "Sep 2026 - FTotal",
-            "Oct 2026 - FTotal",
-            "Nov 2026 - FTotal",
-            "Dec 2026 - FTotal"
-        ]
-
-        self.forecast_sum_exclude_cols = [
-            "PO #"
-        ]
-
-        self.transactional_source_cols = [
-            "PO Number",
-            "Accounting Period",
-            "AP Voucher Number",
-            "Vendor Name",
-            "WBS Element",
-            "GL Invoice Date",
-            "GL Posting Date",
-            "GL Line Description",
-            "Description",
-            "Month",
-            "AP02",
-            "AP03",
-            "Type"
-        ]
-
+        self.forecast_source_cols = forecast_source_cols
+        self.forecast_sum_exclude_cols = forecast_sum_exclude_cols
+        self.transactional_source_cols = transactional_source_cols
 
 
     ## Methods to get existing cost centers, WBS codes, and POs from input template sheet
@@ -229,8 +204,21 @@ class TemplateWriter:
         if "PO #" not in forecast_df.columns:
             raise KeyError("Expected 'PO #' column not found in forecast dataframe.")
 
-        forecast_df["PO #"] = forecast_df["PO #"].astype(str)
+        forecast_df["PO #"] = (
+            forecast_df["PO #"]
+            .apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
+        )        
         filtered_df = forecast_df[forecast_df["PO #"].isin(self.pos.keys())]
+
+        # print("======== DEBUG ========")
+        # print("POs:")
+        # print(self.pos.keys())
+        # print("\n")
+        # print("Forecast DF POs:")
+        # print(forecast_df["PO #"])
+        # print("\n Filtered DF:")
+        # print(filtered_df)
+        # print("======== END DEBUG ========")
 
         visible_cols = [c for c in self.forecast_source_cols if c in filtered_df.columns]
         hidden_cols = [c for c in filtered_df.columns if c not in visible_cols]

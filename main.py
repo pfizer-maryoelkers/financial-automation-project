@@ -5,7 +5,7 @@ from src.transactional_detail_reader import TransactionalDetailReader
 from src.template_writer import TemplateWriter
 
 # Loading config file
-config_path = 'configs/config_kinjal_test.yaml'
+config_path = 'configs/config_base.yaml'
 base64 = False 
 config = load_config(config_path)
 
@@ -37,7 +37,10 @@ template_writer = TemplateWriter(
     file_path=config['template_writer']['file_path'],
     header_row=config['template_writer']['header_row'],
     po_column=config['template_writer']['po_column'],
-    dec_acc_reversal_col=config['template_writer']['dec_acc_reversal_col']
+    dec_acc_reversal_col=config['template_writer']['dec_acc_reversal_col'],
+    forecast_source_cols=config['template_writer']['forecast_source_cols'],
+    forecast_sum_exclude_cols=config['template_writer']['forecast_sum_exclude_cols'],
+    transactional_source_cols=config['template_writer']['transactional_source_cols']
 )
 
 
@@ -61,7 +64,6 @@ def main():
     print("Step 3: Writing template output\n")
     template_writer.write_data(combined)
     
-    print(forecast_reader.data)
     template_writer.write_forecast_source_sheet(forecast_reader.data)
     template_writer.write_transactional_source_sheet(transactional_reader.data)
     print("Loaded template data\n")

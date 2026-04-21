@@ -55,7 +55,11 @@ class ForecastReader:
             try:
                 df = self._load_valid_sheet(f)
                 if df is None:
-                    continue  # Skip files without a valid sheet
+                    continue
+                # Clean PO # column immediately after load
+                df["PO #"] = df["PO #"].apply(
+                    lambda x: str(int(float(x))) if str(x).replace('.', '', 1).isdigit() else str(x)
+                )
 
             except Exception as e:
                 print(f"Error reading file {f}: {e}")
