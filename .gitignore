@@ -35,3 +35,8 @@ README.pdf
 power_automate.md
 bytes.*
 config_base_bytes.yaml
+
+# Data
+data/forecasts
+data/templates
+data/transactional

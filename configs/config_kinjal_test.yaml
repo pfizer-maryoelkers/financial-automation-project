@@ -3,11 +3,11 @@
 ## Forecast Reader
 forecast_reader:
   file_paths:
-    - "data/forecasts/2026-Feb-IBM Forecast_AP02.xlsx"
+    - "data/forecasts/Other_Vendors_Forecasts.xlsx"
 
 ## Transactional Detail Reader
 transactional_detail_reader:
-  file_path: "data/transactional/AP02_ActualsConsolidated for Owen Testing.xlsx"
+  file_path: "data/transactional/TIES AP03 2026.xlsx"
   
   required_cols:
     - "PO Number"
@@ -22,7 +22,7 @@ transactional_detail_reader:
   colmap:
     po: "PO Number"
     month: "Month"
-    amount: "AP02"
+    amount: "AP03"
     classifier: "AP Voucher Number"
     type: "Type"
 

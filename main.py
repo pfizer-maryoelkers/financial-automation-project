@@ -10,7 +10,7 @@ base64 = False
 config = load_config(config_path)
 
 # Output path
-output_path = 'data/templates/output_test_no_notes.xlsx'
+output_path = 'data/templates/template_AP03.xlsx'
 
 if base64:
     #  if file paths in base64 format, convert bytes to Excel like objects
@@ -49,7 +49,6 @@ def main():
     forecast_data = forecast_reader.get_forecast_data()
     print("Loaded forecast data\n")
 
-
     transactional_data = transactional_reader.get_transactional_data()
     print("Loaded transactional data\n")
 
@@ -61,6 +60,8 @@ def main():
     ## Step 3: Writing to template
     print("Step 3: Writing template output\n")
     template_writer.write_data(combined)
+    
+    print(forecast_reader.data)
     template_writer.write_forecast_source_sheet(forecast_reader.data)
     template_writer.write_transactional_source_sheet(transactional_reader.data)
     print("Loaded template data\n")

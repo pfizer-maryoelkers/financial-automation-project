@@ -28,18 +28,18 @@ class TemplateWriter:
         self.forecast_source_cols = [
             "PO #",
             "2025 Forecast total Fee",
-            "Jan 2025 - FTotal",
-            "Feb 2025 - FTotal",
-            "March 2025 - FTotal",
-            "April 2025 - FTotal",
-            "May 2025 - FTotal",
-            "June 2025 - FTotal",
-            "July 2025 - FTotal",
-            "Aug 2025 - FTotal",
-            "Sep 2025 - FTotal",
-            "Oct 2025 - FTotal",
-            "Nov 2025 - FTotal",
-            "Dec 2025 - FTotal"
+            "Jan 2026 - FTotal",
+            "Feb 2026 - FTotal",
+            "March 2026 - FTotal",
+            "April 2026 - FTotal",
+            "May 2026 - FTotal",
+            "June 2026 - FTotal",
+            "July 2026 - FTotal",
+            "Aug 2026 - FTotal",
+            "Sep 2026 - FTotal",
+            "Oct 2026 - FTotal",
+            "Nov 2026 - FTotal",
+            "Dec 2026 - FTotal"
         ]
 
         self.forecast_sum_exclude_cols = [
@@ -58,6 +58,7 @@ class TemplateWriter:
             "Description",
             "Month",
             "AP02",
+            "AP03",
             "Type"
         ]
 
@@ -183,7 +184,7 @@ class TemplateWriter:
             }
 
         '''
-        #NOTE: this logic relies on depracted _insert_blank_rows() method above. 
+        #NOTE: this logic relies on depracated _insert_blank_rows() method above. 
 
         # num_pos = len(self.pos)
         # extra_rows = max(0, num_pos - 2)
