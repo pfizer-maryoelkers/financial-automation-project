@@ -3,11 +3,12 @@
 ## Forecast Reader
 forecast_reader:
   file_paths:
-    - "data/2025-11-IBM Forecast.xlsx"
+    - "data/forecasts/Other_Vendors_Forecasts.xlsx"
+    - "data/forecasts/2026-Feb-IBM Forecast_AP02.xlsx"
 
 ## Transactional Detail Reader
 transactional_detail_reader:
-  file_path: "data/C-TIES AP09 2025.xlsx"
+  file_path: "data/transactional/TIES AP03 2026.xlsx"
   
   required_cols:
     - "PO Number"
@@ -22,13 +23,46 @@ transactional_detail_reader:
   colmap:
     po: "PO Number"
     month: "Month"
-    amount: "GL Transaction Amount"
+    amount: "AP03"
     classifier: "AP Voucher Number"
     type: "Type"
 
 ## Template Writer
 template_writer:
-  file_path: "data/templates/financial_template_v1_2025.xlsx"
-  header_row: 14
+  file_path: "data/templates/financial_template_v2_2026.xlsx"
+  header_row: 15
   po_column: "B"
-  dec_acc_reversal_col: "J"
+  dec_acc_reversal_col: "N"
+  
+  forecast_source_cols:
+    - "PO #"
+    - "Jan 2026 - FTotal"
+    - "Feb 2026 - FTotal"
+    - "March 2026 - FTotal"
+    - "April 2026 - FTotal"
+    - "May 2026 - FTotal"
+    - "June 2026 - FTotal"
+    - "July 2026 - FTotal"
+    - "Aug 2026 - FTotal"
+    - "Sep 2026 - FTotal"
+    - "Oct 2026 - FTotal"
+    - "Nov 2026 - FTotal"
+    - "Dec 2026 - FTotal"
+
+  forecast_sum_exclude_cols:
+    - "PO #"
+
+  transactional_source_cols:
+    - "PO Number"
+    - "Accounting Period"
+    - "AP Voucher Number"
+    - "Vendor Name"
+    - "WBS Element"
+    - "GL Invoice Date"
+    - "GL Posting Date"
+    - "GL Line Description"
+    - "Description"
+    - "Month"
+    - "AP02"
+    - "AP03"
+    - "Type"
