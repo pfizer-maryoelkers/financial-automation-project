@@ -42,8 +42,12 @@ class TemplateWriter:
 
         # Source sheet params
         self.forecast_source_cols = forecast_source_cols
-        self.forecast_sum_exclude_cols = forecast_sum_exclude_cols
+        # self.forecast_sum_exclude_cols = forecast_sum_exclude_cols #TODO: remove
         self.transactional_source_cols = transactional_source_cols
+
+        # PO columns
+        self.forecast_po_col = self.forecast_source_cols[0]
+        self.transactional_po_col = self.transactional_source_cols[0]
 
     ## Methods to get existing cost centers, WBS codes, and POs from input template sheet
     def get_existing_cost_centers(self):
@@ -204,14 +208,14 @@ class TemplateWriter:
     def write_forecast_source_sheet(self, forecast_df):
         # Method to write forecast source sheet. 
         # Filter to template POs
-        if "PO #" not in forecast_df.columns:
-            raise KeyError("Expected 'PO #' column not found in forecast dataframe.")
+        if self.forecast_po_col not in forecast_df.columns:
+            raise KeyError(f"Expected {self.forecast_po_col} column not found in forecast dataframe.")
 
-        forecast_df["PO #"] = (
-            forecast_df["PO #"]
+        forecast_df[self.forecast_po_col] = (
+            forecast_df[self.forecast_po_col]
             .apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
         )        
-        filtered_df = forecast_df[forecast_df["PO #"].isin(self.pos.keys())]
+        filtered_df = forecast_df[forecast_df[self.forecast_po_col].isin(self.pos.keys())]
 
         # print("======== DEBUG ========")
         # print("POs:")
@@ -244,7 +248,7 @@ class TemplateWriter:
         ws.cell(row=total_row, column=1, value="PO Total")
 
         for col_idx, col_name in enumerate(source_df.columns, start=1):
-            if col_name in visible_cols and col_name not in self.forecast_sum_exclude_cols:
+            if col_name in visible_cols and col_name != self.forecast_po_col:
                 letter = get_column_letter(col_idx)
                 formula = f"=SUBTOTAL(9,{letter}{data_start}:{letter}{data_end})"
                 ws.cell(row=total_row, column=col_idx, value=formula)
@@ -273,11 +277,11 @@ class TemplateWriter:
     def write_transactional_source_sheet(self, transactions_df):
         # Method to write transactional detail source sheet
         # Filter to POs present in the template
-        if "PO Number" not in transactions_df.columns:
-            raise KeyError("Expected 'PO Number' column not found in transactional dataframe.")
+        if self.transactional_po_col not in transactions_df.columns:
+            raise KeyError(f"Expected {self.transactional_po_col} column not found in transactional dataframe.")
 
-        transactions_df["PO Number"] = transactions_df["PO Number"].astype(str)
-        source_df = transactions_df[transactions_df["PO Number"].isin(self.pos.keys())]
+        transactions_df[self.transactional_po_col] = transactions_df[self.transactional_po_col].astype(str)
+        source_df = transactions_df[transactions_df[self.transactional_po_col].isin(self.pos.keys())]
 
         visible_cols = [c for c in self.transactional_source_cols if c in source_df.columns]
         hidden_cols = [c for c in source_df.columns if c not in visible_cols]
