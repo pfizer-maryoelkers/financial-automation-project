@@ -42,7 +42,6 @@ class TemplateWriter:
 
         # Source sheet params
         self.forecast_source_cols = forecast_source_cols
-        # self.forecast_sum_exclude_cols = forecast_sum_exclude_cols #TODO: remove
         self.transactional_source_cols = transactional_source_cols
 
         # PO columns
@@ -75,9 +74,6 @@ class TemplateWriter:
 
         while row < stop_row:
             cell = self.sheet[f"{self.po_column}{row}"].value
-
-            # if cell is None or str(cell).strip() == "":
-            #     break  # stop at the first blank cell
 
             # Normalize PO value
             po = str(cell).strip()
@@ -113,36 +109,6 @@ class TemplateWriter:
 
         return col_map
 
-
-    ##NOTE: I think we can remove this helper function - but keeping here in case we need to add it back.
-    
-    ## Methods to write data to sheet
-    # def _insert_new_rows(self, num_rows):
-    #     """
-    #     Helper function to insert new data entry rows.
-    #     Since template only has 2 rows dedicated for data entry, this function is needed we have more than 2 POs to write.
-    #     """
-    #     source_row = self.header_row + 2  # Template row
-    #     insert_at = source_row + 1  # Insert below template
-
-    #     self.sheet.insert_rows(insert_at, amount=num_rows)
-
-    #     # For each inserted row, copy formulas and formatting from source row
-    #     for offset in range(num_rows):
-    #         new_row = insert_at + offset
-    #         for src_cell, dest_cell in zip(self.sheet[source_row], self.sheet[new_row]):
-    #             if src_cell.has_style:
-    #                 dest_cell._style = src_cell._style
-    #             dest_cell.number_format = src_cell.number_format
-    #             if src_cell.data_type == 'f':  # formula
-    #                 translator = Translator(src_cell.value, origin=src_cell.coordinate)
-    #                 dest_cell.value = translator.translate_formula(dest_cell.coordinate)
-    #             else:
-    #                 dest_cell.value = None  # Keep new row blank except formulas
-
-    #     print(f"Inserted {num_rows} blank rows.\n")
-        
-
     def write_data(self, data:dict):
         '''
         Writes data to template.
@@ -169,15 +135,6 @@ class TemplateWriter:
             }
 
         '''
-        #NOTE: this logic relies on depracated _insert_blank_rows() method above. 
-
-        # num_pos = len(self.pos)
-        # extra_rows = max(0, num_pos - 2)
-
-        # # Pre-allocate extra rows if needed
-        # if extra_rows > 0:
-        #     self._insert_new_rows(extra_rows)
-
 
         for po, row in self.pos.items():
 
@@ -216,16 +173,6 @@ class TemplateWriter:
             .apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
         )        
         filtered_df = forecast_df[forecast_df[self.forecast_po_col].isin(self.pos.keys())]
-
-        # print("======== DEBUG ========")
-        # print("POs:")
-        # print(self.pos.keys())
-        # print("\n")
-        # print("Forecast DF POs:")
-        # print(forecast_df["PO #"])
-        # print("\n Filtered DF:")
-        # print(filtered_df)
-        # print("======== END DEBUG ========")
 
         visible_cols = [c for c in self.forecast_source_cols if c in filtered_df.columns]
         hidden_cols = [c for c in filtered_df.columns if c not in visible_cols]
