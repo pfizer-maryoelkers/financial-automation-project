@@ -7,9 +7,11 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 class TemplateWriter:
 
     def __init__(self, 
-                 file_path, 
+                 file_path,
+                 output_path,
+                 overwrite,
                  header_row, 
-                 po_column, 
+                 po_column,
                  dec_acc_reversal_col, 
                  forecast_source_cols,
                  forecast_sum_exclude_cols,
@@ -18,6 +20,11 @@ class TemplateWriter:
         
         self.wb = load_workbook(file_path)
         self.sheet = self.wb.active
+
+        self.output_path = output_path
+
+        # Overwrites previous months data if true
+        self.overwrite = overwrite
 
         # Configs for template
         self.header_row = header_row    # Header row
@@ -37,7 +44,6 @@ class TemplateWriter:
         self.forecast_source_cols = forecast_source_cols
         self.forecast_sum_exclude_cols = forecast_sum_exclude_cols
         self.transactional_source_cols = transactional_source_cols
-
 
     ## Methods to get existing cost centers, WBS codes, and POs from input template sheet
     def get_existing_cost_centers(self):
@@ -171,9 +177,6 @@ class TemplateWriter:
 
         for po, row in self.pos.items():
 
-            # Always write the PO itself
-            self.sheet[f"{self.po_column}{row}"] = po
-
             # If PO is not found in the data → leave row blank and print
             if po not in data:
                 print(f"PO '{po}' found in template but not in source data. Leaving blank.")
@@ -190,8 +193,8 @@ class TemplateWriter:
                 # Loop through metrics (Forecast, Actual, Accrual, Accrual Reversal)
                 for metric, col_letter in self.column_map[month].items():
                     cell = self.sheet[f"{col_letter}{row}"]
-                    # Only write if cell is blank
-                    if cell.value is None or str(cell.value).strip() == "":
+                    # If overwrite is True, write to cells. Otherwise only write if cell is blank
+                    if self.overwrite or cell.value is None or str(cell.value).strip() == "":
                         value = metrics.get(metric)
                         cell.value = value
 
@@ -311,3 +314,12 @@ class TemplateWriter:
                 get_column_letter(end_idx),
                 hidden=True
             )
+
+
+    def save(self):
+        """Saves the workbook to the output path."""
+        try:
+            self.wb.save(self.output_path)
+            print(f"Workbook saved to: {self.output_path}")
+        except Exception as e:
+            raise Exception(f"Failed to save workbook: {e}")

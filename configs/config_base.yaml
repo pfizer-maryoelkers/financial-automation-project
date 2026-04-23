@@ -1,39 +1,55 @@
 # configs/config_base.yaml
 
+# ============================
 ## Forecast Reader
 forecast_reader:
   file_paths:
     - "data/forecasts/Other_Vendors_Forecasts.xlsx"
     - "data/forecasts/2026-Feb-IBM Forecast_AP02.xlsx"
 
+# ============================
+
 ## Transactional Detail Reader
 transactional_detail_reader:
   file_path: "data/transactional/TIES AP03 2026.xlsx"
   
+  # Columns required for a valid sheet
   required_cols:
     - "PO Number"
     - "Month"
     - "GL Transaction Amount"
   
+  # Supported Types - need to add Reclass, etc.
   valid_types:
-    - "Actual"
+    - "Actual"  
     - "Accrual"
     - "Reversal"
   
+  # Column map - standardized column names
   colmap:
     po: "PO Number"
     month: "Month"
-    amount: "AP03"
-    classifier: "AP Voucher Number"
+    amount: "GL BER Corp Amount"
+    classifier: "AP Voucher Number"   # Column that defines type (Actual, Accrual, Reversal, etc.)
     type: "Type"
+
+# ============================
 
 ## Template Writer
 template_writer:
-  file_path: "data/templates/financial_template_v2_2026.xlsx"
+  file_path: "data/templates/Ram 2026_Owen Testing.xlsx"
+  output_path: "data/templates/template_AP03_overwrite.xlsx"
+
+  overwrite: True # if true, overwrites previous months data (dault false)
+
+  # Template specific configs - tells system where to begin writing data
   header_row: 15
   po_column: "B"
   dec_acc_reversal_col: "N"
   
+
+  ## Source info. Tells which columns to include on source sheets
+  # Forecast source columns:
   forecast_source_cols:
     - "PO #"
     - "Jan 2026 - FTotal"
@@ -49,9 +65,11 @@ template_writer:
     - "Nov 2026 - FTotal"
     - "Dec 2026 - FTotal"
 
+  # Excluding PO column from being summed (Forecast source)
   forecast_sum_exclude_cols:
     - "PO #"
 
+  # Transactional source columns:
   transactional_source_cols:
     - "PO Number"
     - "Accounting Period"
@@ -62,7 +80,10 @@ template_writer:
     - "GL Posting Date"
     - "GL Line Description"
     - "Description"
+    - "GL Transaction Amount"
+    - "GL BER Corp Amount"
     - "Month"
+    - "AP01"
     - "AP02"
     - "AP03"
     - "Type"
