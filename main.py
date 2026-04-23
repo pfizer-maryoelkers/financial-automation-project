@@ -10,7 +10,7 @@ base64 = False
 config = load_config(config_path)
 
 # Output path
-output_path = 'data/templates/template_AP03.xlsx'
+output_path = 'data/templates/template_AP03_with_notes.xlsx'
 
 if base64:
     #  if file paths in base64 format, convert bytes to Excel like objects
@@ -23,7 +23,8 @@ if base64:
 
 ## Initialize classes
 forecast_reader = ForecastReader(
-    file_paths=config['forecast_reader']['file_paths']
+    file_paths=config['forecast_reader']['file_paths'],
+    po_col=config['forecast_reader']['po_col']
 )
 
 transactional_reader = TransactionalDetailReader(
@@ -35,6 +36,8 @@ transactional_reader = TransactionalDetailReader(
 
 template_writer = TemplateWriter(
     file_path=config['template_writer']['file_path'],
+    output_path=config['template_writer']['output_path'],
+    overwrite=config['template_writer']['overwrite'],
     header_row=config['template_writer']['header_row'],
     po_column=config['template_writer']['po_column'],
     dec_acc_reversal_col=config['template_writer']['dec_acc_reversal_col'],
@@ -46,6 +49,7 @@ template_writer = TemplateWriter(
 
 
 def main():
+    print(f"============")
     ## Step 1: Initialize readers and load data
     print("Step 1: Initializing readers and loading data\n")
 
@@ -68,8 +72,8 @@ def main():
     template_writer.write_transactional_source_sheet(transactional_reader.data)
     print("Loaded template data\n")
 
-    template_writer.wb.save(output_path)
-    print(f"Template saved to {output_path}")
+    template_writer.save()
+    print(f"============")
 
 
 if __name__ == "__main__":

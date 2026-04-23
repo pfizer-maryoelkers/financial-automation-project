@@ -7,9 +7,11 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 class TemplateWriter:
 
     def __init__(self, 
-                 file_path, 
+                 file_path,
+                 output_path,
+                 overwrite,
                  header_row, 
-                 po_column, 
+                 po_column,
                  dec_acc_reversal_col, 
                  forecast_source_cols,
                  forecast_sum_exclude_cols,
@@ -18,6 +20,11 @@ class TemplateWriter:
         
         self.wb = load_workbook(file_path)
         self.sheet = self.wb.active
+
+        self.output_path = output_path
+
+        # Overwrites previous months data if true
+        self.overwrite = overwrite
 
         # Configs for template
         self.header_row = header_row    # Header row
@@ -35,9 +42,11 @@ class TemplateWriter:
 
         # Source sheet params
         self.forecast_source_cols = forecast_source_cols
-        self.forecast_sum_exclude_cols = forecast_sum_exclude_cols
         self.transactional_source_cols = transactional_source_cols
 
+        # PO columns
+        self.forecast_po_col = self.forecast_source_cols[0]
+        self.transactional_po_col = self.transactional_source_cols[0]
 
     ## Methods to get existing cost centers, WBS codes, and POs from input template sheet
     def get_existing_cost_centers(self):
@@ -65,9 +74,6 @@ class TemplateWriter:
 
         while row < stop_row:
             cell = self.sheet[f"{self.po_column}{row}"].value
-
-            # if cell is None or str(cell).strip() == "":
-            #     break  # stop at the first blank cell
 
             # Normalize PO value
             po = str(cell).strip()
@@ -103,36 +109,6 @@ class TemplateWriter:
 
         return col_map
 
-
-    ##NOTE: I think we can remove this helper function - but keeping here in case we need to add it back.
-    
-    ## Methods to write data to sheet
-    # def _insert_new_rows(self, num_rows):
-    #     """
-    #     Helper function to insert new data entry rows.
-    #     Since template only has 2 rows dedicated for data entry, this function is needed we have more than 2 POs to write.
-    #     """
-    #     source_row = self.header_row + 2  # Template row
-    #     insert_at = source_row + 1  # Insert below template
-
-    #     self.sheet.insert_rows(insert_at, amount=num_rows)
-
-    #     # For each inserted row, copy formulas and formatting from source row
-    #     for offset in range(num_rows):
-    #         new_row = insert_at + offset
-    #         for src_cell, dest_cell in zip(self.sheet[source_row], self.sheet[new_row]):
-    #             if src_cell.has_style:
-    #                 dest_cell._style = src_cell._style
-    #             dest_cell.number_format = src_cell.number_format
-    #             if src_cell.data_type == 'f':  # formula
-    #                 translator = Translator(src_cell.value, origin=src_cell.coordinate)
-    #                 dest_cell.value = translator.translate_formula(dest_cell.coordinate)
-    #             else:
-    #                 dest_cell.value = None  # Keep new row blank except formulas
-
-    #     print(f"Inserted {num_rows} blank rows.\n")
-        
-
     def write_data(self, data:dict):
         '''
         Writes data to template.
@@ -159,20 +135,8 @@ class TemplateWriter:
             }
 
         '''
-        #NOTE: this logic relies on depracated _insert_blank_rows() method above. 
-
-        # num_pos = len(self.pos)
-        # extra_rows = max(0, num_pos - 2)
-
-        # # Pre-allocate extra rows if needed
-        # if extra_rows > 0:
-        #     self._insert_new_rows(extra_rows)
-
 
         for po, row in self.pos.items():
-
-            # Always write the PO itself
-            self.sheet[f"{self.po_column}{row}"] = po
 
             # If PO is not found in the data → leave row blank and print
             if po not in data:
@@ -190,8 +154,8 @@ class TemplateWriter:
                 # Loop through metrics (Forecast, Actual, Accrual, Accrual Reversal)
                 for metric, col_letter in self.column_map[month].items():
                     cell = self.sheet[f"{col_letter}{row}"]
-                    # Only write if cell is blank
-                    if cell.value is None or str(cell.value).strip() == "":
+                    # If overwrite is True, write to cells. Otherwise only write if cell is blank
+                    if self.overwrite or cell.value is None or str(cell.value).strip() == "":
                         value = metrics.get(metric)
                         cell.value = value
 
@@ -201,24 +165,14 @@ class TemplateWriter:
     def write_forecast_source_sheet(self, forecast_df):
         # Method to write forecast source sheet. 
         # Filter to template POs
-        if "PO #" not in forecast_df.columns:
-            raise KeyError("Expected 'PO #' column not found in forecast dataframe.")
+        if self.forecast_po_col not in forecast_df.columns:
+            raise KeyError(f"Expected {self.forecast_po_col} column not found in forecast dataframe.")
 
-        forecast_df["PO #"] = (
-            forecast_df["PO #"]
+        forecast_df[self.forecast_po_col] = (
+            forecast_df[self.forecast_po_col]
             .apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
         )        
-        filtered_df = forecast_df[forecast_df["PO #"].isin(self.pos.keys())]
-
-        # print("======== DEBUG ========")
-        # print("POs:")
-        # print(self.pos.keys())
-        # print("\n")
-        # print("Forecast DF POs:")
-        # print(forecast_df["PO #"])
-        # print("\n Filtered DF:")
-        # print(filtered_df)
-        # print("======== END DEBUG ========")
+        filtered_df = forecast_df[forecast_df[self.forecast_po_col].isin(self.pos.keys())]
 
         visible_cols = [c for c in self.forecast_source_cols if c in filtered_df.columns]
         hidden_cols = [c for c in filtered_df.columns if c not in visible_cols]
@@ -241,7 +195,7 @@ class TemplateWriter:
         ws.cell(row=total_row, column=1, value="PO Total")
 
         for col_idx, col_name in enumerate(source_df.columns, start=1):
-            if col_name in visible_cols and col_name not in self.forecast_sum_exclude_cols:
+            if col_name in visible_cols and col_name != self.forecast_po_col:
                 letter = get_column_letter(col_idx)
                 formula = f"=SUBTOTAL(9,{letter}{data_start}:{letter}{data_end})"
                 ws.cell(row=total_row, column=col_idx, value=formula)
@@ -270,11 +224,11 @@ class TemplateWriter:
     def write_transactional_source_sheet(self, transactions_df):
         # Method to write transactional detail source sheet
         # Filter to POs present in the template
-        if "PO Number" not in transactions_df.columns:
-            raise KeyError("Expected 'PO Number' column not found in transactional dataframe.")
+        if self.transactional_po_col not in transactions_df.columns:
+            raise KeyError(f"Expected {self.transactional_po_col} column not found in transactional dataframe.")
 
-        transactions_df["PO Number"] = transactions_df["PO Number"].astype(str)
-        source_df = transactions_df[transactions_df["PO Number"].isin(self.pos.keys())]
+        transactions_df[self.transactional_po_col] = transactions_df[self.transactional_po_col].astype(str)
+        source_df = transactions_df[transactions_df[self.transactional_po_col].isin(self.pos.keys())]
 
         visible_cols = [c for c in self.transactional_source_cols if c in source_df.columns]
         hidden_cols = [c for c in source_df.columns if c not in visible_cols]
@@ -311,3 +265,12 @@ class TemplateWriter:
                 get_column_letter(end_idx),
                 hidden=True
             )
+
+
+    def save(self):
+        """Saves the workbook to the output path."""
+        try:
+            self.wb.save(self.output_path)
+            print(f"Workbook saved to: {self.output_path}")
+        except Exception as e:
+            raise Exception(f"Failed to save workbook: {e}")

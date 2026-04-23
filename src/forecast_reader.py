@@ -4,15 +4,16 @@ import pandas as pd
 class ForecastReader:
     """Reads vendor forecast file and extracts forecast data."""
 
-    def __init__(self, file_paths: list):
+    def __init__(self, file_paths: list, po_col):
         """Initialize with the forecast file path."""
         self.file_paths = file_paths
         self.data = None
+        self.po_col = po_col
 
     def _load_valid_sheet(self, file_path: str):
         """
         Attempts to read the first sheet that contains:
-        - A 'PO #' column
+        - A 'self.po_col' column
         - At least one forecast column ending in '- FTotal'
 
         Returns:
@@ -32,7 +33,7 @@ class ForecastReader:
                 continue
 
             # Verify required columns
-            if "PO #" in df.columns:
+            if self.po_col in df.columns:
                 if any(col.endswith("- FTotal") for col in df.columns):
                     print(f"Selected sheet '{sheet}' from file {file_path}")
                     return df  # Found the correct sheet
@@ -57,7 +58,7 @@ class ForecastReader:
                 if df is None:
                     continue
                 # Clean PO # column immediately after load
-                df["PO #"] = df["PO #"].apply(
+                df[self.po_col] = df[self.po_col].apply(
                     lambda x: str(int(float(x))) if str(x).replace('.', '', 1).isdigit() else str(x)
                 )
 
@@ -66,12 +67,12 @@ class ForecastReader:
                 continue
 
             # Ensure the PO column exists
-            if "PO #" not in df.columns:
-                print(f"File {f} is missing the 'PO #' column.")
+            if self.po_col not in df.columns:
+                print(f"File {f} is missing the self.po_col column.")
                 continue
 
             # Identify POs in this file
-            pos = set(df["PO #"].astype(str))
+            pos = set(df[self.po_col].astype(str))
 
 
             # Detect duplicates across files
@@ -79,7 +80,7 @@ class ForecastReader:
             if intersection:
                 dup_pos_total |= intersection
                 # Drop rows from later files for any duplicated PO
-                df = df[~df["PO #"].isin(intersection)]
+                df = df[~df[self.po_col].isin(intersection)]
 
             seen |= pos
             dfs.append(df)
@@ -136,12 +137,12 @@ class ForecastReader:
         result = {}
 
         # Group by PO and sum forecast values across rows (multiple resources per PO)
-        grouped = self.data.groupby('PO #')[forecast_cols].sum()
+        grouped = self.data.groupby(self.po_col)[forecast_cols].sum()
 
         # Build the model
         for po, row in grouped.iterrows():
             po_dict = {}
-            po_df = self.data[self.data['PO #'] == po]  # Original rows for this PO
+            po_df = self.data[self.data[self.po_col] == po]  # Original rows for this PO
             for col in forecast_cols:
                 # Getting month
                 month = month_map[col]
