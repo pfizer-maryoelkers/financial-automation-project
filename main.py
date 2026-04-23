@@ -23,7 +23,8 @@ if base64:
 
 ## Initialize classes
 forecast_reader = ForecastReader(
-    file_paths=config['forecast_reader']['file_paths']
+    file_paths=config['forecast_reader']['file_paths'],
+    po_col=config['forecast_reader']['po_col']
 )
 
 transactional_reader = TransactionalDetailReader(

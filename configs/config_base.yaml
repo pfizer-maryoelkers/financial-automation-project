@@ -6,6 +6,7 @@ forecast_reader:
   file_paths:
     - "data/forecasts/Other_Vendors_Forecasts.xlsx"
     - "data/forecasts/2026-Feb-IBM Forecast_AP02.xlsx"
+  po_col: "PO #"  # PO column identifier
 
 # ============================
 
@@ -38,9 +39,8 @@ transactional_detail_reader:
 ## Template Writer
 template_writer:
   file_path: "data/templates/Ram 2026_Owen Testing.xlsx"
-  output_path: "data/templates/template_AP03_overwrite.xlsx"
-
-  overwrite: True # if true, overwrites previous months data (dault false)
+  output_path: "data/templates/template_AP03.xlsx"
+  overwrite: False # if true, overwrites previous months data (dault false)
 
   # Template specific configs - tells system where to begin writing data
   header_row: 15
