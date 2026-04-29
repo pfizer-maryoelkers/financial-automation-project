@@ -14,7 +14,6 @@ class TemplateWriter:
                  po_column,
                  dec_acc_reversal_col, 
                  forecast_source_cols,
-                 forecast_sum_exclude_cols,
                  transactional_source_cols
         ):
         

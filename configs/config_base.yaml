@@ -1,6 +1,7 @@
 # configs/config_base.yaml
 
 # ============================
+
 ## Forecast Reader
 forecast_reader:
   file_paths:
@@ -36,15 +37,27 @@ transactional_detail_reader:
 
 # ============================
 
+## Template Reader
+template_reader:
+  file_path: "data/templates/Ram 2026_Owen Testing.xlsx"
+  header_row: 16
+  po_col: "B"
+  po_stop_marker: "Previous Period Invoices"  
+  cost_center_col: "A"
+  cost_center_start_row: 9
+  
+
+# ============================
+
 ## Template Writer
 template_writer:
-  file_path: "data/templates/Ram 2026_Owen Testing.xlsx"
+  # file_path: "data/templates/Ram 2026_Owen Testing.xlsx" # - same as template reader, handled in main
   output_path: "data/templates/template_AP03.xlsx"
   overwrite: False # if true, overwrites previous months data (dault false)
 
   # Template specific configs - tells system where to begin writing data
-  header_row: 15
-  po_column: "B"
+  # header_row: 15 # - same as template reader, handled in main
+  # po_column: "B" # - same as template reader, handled in main
   dec_acc_reversal_col: "N"
   
 
