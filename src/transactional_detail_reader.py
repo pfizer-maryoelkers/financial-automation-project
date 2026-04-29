@@ -124,6 +124,8 @@ class TransactionalDetailReader:
             self.colmap["po"],
             self.colmap["month"],
             self.colmap["amount"],
+            self.colmap["cost_center"],
+            self.colmap["wbs"],
             self.colmap["type"]
         ]
 
@@ -142,12 +144,14 @@ class TransactionalDetailReader:
         # Filter valid transaction types using instance variable self.valid_types
         data_copy = data_copy[data_copy[self.colmap["type"]].isin(self.valid_types)]
 
-        # Group by PO / Month / Type
+        # Group by PO / Month / Type / Cost Center / WBS
         grouped = (
             data_copy.groupby([
                 self.colmap["po"],
                 self.colmap["month"],
-                self.colmap["type"]
+                self.colmap["type"],
+                self.colmap["cost_center"],  # ← add
+                self.colmap["wbs"]           # ← add
             ])[self.colmap["amount"]]
             .sum()
             .reset_index()
@@ -161,6 +165,8 @@ class TransactionalDetailReader:
             month_num = row[self.colmap["month"]]
             type_name = row[self.colmap["type"]]
             value = row[self.colmap["amount"]]
+            cost_center = str(row[self.colmap["cost_center"]]).strip()  # ← add
+            wbs = str(row[self.colmap["wbs"]]).strip()                  # ← add
 
             # Actual values belong to prior month
             if month_num == 1:
@@ -171,10 +177,12 @@ class TransactionalDetailReader:
             # Accruals/reversals belong to current month
             accrual_month = self.month_map.get(month_num)
 
-            # Initialize PO
+            # Initialize PO - now includes cost_center and wbs
             if po not in result:
-                result[po] = {}
-
+                result[po] = {
+                    "cost_center": cost_center,  # add cost center
+                    "wbs": wbs                   # add wbs
+                }
             # Initialize month bucket
             if type_name == "Actual" and actual_month not in result[po]:
                 result[po][actual_month] = {
@@ -203,9 +211,13 @@ class TransactionalDetailReader:
 
         for po in result:
             result[po] = {
-                month: result[po][month]
-                for month in month_order
-                if month in result[po]
+                "cost_center": result[po]["cost_center"],  # ← preserve
+                "wbs": result[po]["wbs"],                  # ← preserve
+                **{
+                    month: result[po][month]
+                    for month in month_order
+                    if month in result[po]
+                }
             }
 
         return result

@@ -33,6 +33,8 @@ transactional_detail_reader:
     month: "Month"
     amount: "GL BER Corp Amount"
     classifier: "AP Voucher Number"   # Column that defines type (Actual, Accrual, Reversal, etc.)
+    cost_center: "Cost Center*"  # Cost Center column
+    wbs: "WBS Element"          # WBS column
     type: "Type"
 
 # ============================
