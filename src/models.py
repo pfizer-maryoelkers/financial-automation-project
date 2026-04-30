@@ -1,7 +1,8 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Counter, Optional
 from enum import Enum
 import pandas as pd
+from collections import Counter
 
 @dataclass
 class MonthlyMetrics:
@@ -40,9 +41,16 @@ class ExceptionEntry:
     po: Optional[str] = None
     wbs: Optional[str] = None
     cost_center: Optional[str] = None
-    detail: Optional[str] = None
 @dataclass
 class ExceptionLog:
     entries: list[ExceptionEntry] = field(default_factory=list)
     def log(self, exception_type: ExceptionType, **kwargs):
         self.entries.append(ExceptionEntry(exception_type=exception_type, **kwargs))
+
+    def summary(self):
+        counts = Counter(e.exception_type.value for e in self.entries)
+        if counts:
+            for exc_type, count in counts.items():
+                print(f"  {exc_type}: {count}")
+        else:
+            print("  No exceptions logged.")

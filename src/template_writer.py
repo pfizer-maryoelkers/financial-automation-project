@@ -295,6 +295,24 @@ class TemplateWriter:
             )
 
 
+    
+    def write_exception_sheet(self, exception_log):
+        ws = self.wb.create_sheet("Exceptions")
+        # Header
+        headers = ['Cost Center', 'WBS', 'PO', 'Exception Type', 'Row Index']
+        for col_idx, header in enumerate(headers, start=1):
+            ws.cell(row=1, column=col_idx, value=header)
+        # Entries
+        for row_idx, entry in enumerate(exception_log.entries, start=2):
+            ws.cell(row=row_idx, column=1, value=entry.cost_center)
+            ws.cell(row=row_idx, column=2, value=entry.wbs)
+            ws.cell(row=row_idx, column=3, value=entry.po)
+            ws.cell(row=row_idx, column=4, value=entry.exception_type.value)
+            ws.cell(row=row_idx, column=5, value=entry.row_index)
+        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = "A2"
+        
+    
     def save(self):
         """Saves the workbook to the output path."""
         try:
@@ -302,3 +320,4 @@ class TemplateWriter:
             print(f"Workbook saved to: {self.output_path}")
         except Exception as e:
             raise Exception(f"Failed to save workbook: {e}")
+        

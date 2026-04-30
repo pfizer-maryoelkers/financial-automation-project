@@ -67,15 +67,13 @@ def main():
     template_writer.write_hierarchy(hierarchy, pos=template_reader.pos)
     template_writer.write_forecast_source_sheet(forecast_reader.data)
     template_writer.write_transactional_source_sheet(transactional_reader.data)
-    template_writer.save()
-    ## Step 4: Print exception summary
+
+    ## Step 4: Exception summary
     print("Step 4: Exception summary\n")
-    if exception_log.entries:
-        for entry in exception_log.entries:
-            print(entry)
-    else:
-        print("No exceptions logged.")
-    print("============")
-    
+    exception_log.summary()
+    template_writer.write_exception_sheet(exception_log)
+    template_writer.save()
+
+
 if __name__ == "__main__":
     main()
