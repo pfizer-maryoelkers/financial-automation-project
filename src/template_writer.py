@@ -158,6 +158,35 @@ class TemplateWriter:
                         value = metrics.get(metric)
                         cell.value = value
 
+    def write_hierarchy(self, hierarchy: dict, pos: dict[str, int]):
+        '''
+        Writes hierarchy to template.
+        Iterates CostCenter -> WBSCode -> PO and writes MonthlyMetrics to correct cells.
+        Only writes to blank cells unless overwrite=True.
+        '''
+        for cc_id, cost_center in hierarchy.items():
+            for wbs_code, wbs in cost_center.wbs_codes.items():
+                for po_number, po in wbs.pos.items():
+                    # Skip if PO not in template
+                    if po_number not in pos:
+                        print(f"PO '{po_number}' not found in template. Skipping.")
+                        continue
+                    row = pos[po_number]
+                    for month, metrics in po.monthly_data.items():
+                        if month not in self.column_map:
+                            continue
+                        month_cols = self.column_map[month]
+                        values = {
+                            'Accrual Reversal': metrics.accrual_reversal,
+                            'Forecast': metrics.forecast,
+                            'Accrual': metrics.accrual,
+                            'Actual': metrics.actual
+                        }
+                        for metric, col_letter in month_cols.items():
+                            cell = self.sheet[f"{col_letter}{row}"]
+                            if self.overwrite or cell.value is None or str(cell.value).strip() == "":
+                                cell.value = values.get(metric)
+
 
 
     ## Methods to write source sheets

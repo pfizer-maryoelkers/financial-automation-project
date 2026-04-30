@@ -127,8 +127,4 @@ def build_hierarchy(
                 exception_log.log(ExceptionType.MISSING_FORECAST, po=po, wbs=wbs, cost_center=cc_id)
         result[cc_id] = cost_center
     
-    # Step 4: Flag any POs in forecast not found in hierarchy
-    for po in forecast_data:
-        if po not in seen_pos:
-            exception_log.log(ExceptionType.UNMATCHED_PO, po=po)
     return result

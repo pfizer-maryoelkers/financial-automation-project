@@ -32,7 +32,6 @@ class ExceptionType(Enum):
     MISSING_WBS = "MISSING_WBS"
     MISSING_PO = "MISSING_PO"
     MISSING_FORECAST = "MISSING_FORECAST"
-    UNMATCHED_PO = "UNMATCHED_PO"
     DUPLICATE_PO = "DUPLICATE_PO"
 @dataclass
 class ExceptionEntry:
