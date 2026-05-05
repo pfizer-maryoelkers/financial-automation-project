@@ -1,17 +1,20 @@
-# financial-automation-project
-This repository contains an end-to-end ETL pipeline for automating financial data processing. This project automates the process of populating a Financial Spreadsheet Template with forecast data from vendor files and actual data from a C-TIES file.
+# Financial Automation Project
 
-## Key Inputs:
+An end-to-end ETL pipeline for automating financial data processing. This project automates the process of populating a Financial Spreadsheet Template with forecast data from vendor files and actual data from a C-TIES transactional detail file, with comprehensive exception tracking and data quality validation.
 
-1. Vendor Forecast File: Contains monthly forecasted fees for each PO.
+## Key Inputs
 
-2. Transactional Detail File (C-TIES): Actuals, accruals, reversals by accounting period.
+1. **Vendor Forecast File(s)**: Contains monthly forecasted fees for each PO
+2. **Transactional Detail File (C-TIES)**: Actuals, accruals, and reversals by accounting period
+3. **Financial Spreadsheet Template**: Target file with PO structure and formatting
 
-3. Financial Spreadsheet Template: Target file for writing data.
+## Key Outputs
 
-## Key Outputs:
-
-1. Populated Financial Spreadsheet Template: Populated with data from the two input spreadsheets (forecasts, accruals, actuals) 
+1. **Populated Financial Spreadsheet Template**: Main sheet with forecast, actual, accrual, and reversal data
+2. **Forecast Source Data Sheet**: Audit trail for forecast data
+3. **Transactions Source Data Sheet**: Audit trail for transactional data
+4. **Exceptions Sheet**: Detailed log of data quality issues with full source context
+5. **Exceptions Summary Sheet**: High-level overview of exceptions by type and cost center
 
 ## Project Strucure:
 
@@ -50,16 +53,15 @@ Below is a flowchart to visualize the full flow of the pipeline:
 
 ![Flowchart](data/flowchart.png)
 
-## Key Components:
+## Key Components
 
-The components can be grouped into three categories:
+The pipeline follows an ETL (Extract, Transform, Load) architecture:
 
-1. Readers (Extract)
-2. Aggregators (Transform)
-3. Writers (Load)
+1. **Readers (Extract)**: Load data from source files
+2. **Transformers (Transform)**: Build hierarchy and validate data quality
+3. **Writers (Load)**: Generate output workbook with data and reports
 
-## 1. Readers (Extract):
-
+## 1. Readers (Extract)
 
 ### ForecastReader
 
@@ -76,13 +78,13 @@ dict: { 'PO12345':
 }
 ```
 
-Parameters: 
-- file_paths -> list of file paths or byte strings (supports multiple)
+**Parameters:**
+- `file_paths`: List of file paths (supports multiple forecast files)
+- `po_col`: Column name for PO numbers
 
-Returns:
-- dict
+**Returns:** Dictionary with PO → Month → Forecast structure
 
-### Transactional Detail Reader
+### TransactionalDetailReader
 
 This class reads a singular transactional detail file and extracts accruals, actuals, and reversals.
 
@@ -112,14 +114,17 @@ dict: {
 }
 ```
 
-Parameters:
-- file_path -> path or byte string
-- required_cols -> list that defines the columns required for a valid sheet. Some CTIES files have multiple sheets, so this parameter helps dynamically identify which sheets to use
-- valid_types -> list that defined supported types of transactions. For example Actual, Accrual, Reversal, etc. are supported types of transactions.
-- colmap -> dict that normalizes column names. For example, dict['po'] may equal 'PO Number', 'PO #', etc. depending on config
+**Parameters:**
+- `file_path`: Path to C-TIES file
+- `required_cols`: Columns required for valid sheet detection
+- `valid_types`: Supported transaction types (Actual, Accrual, Reversal)
+- `colmap`: Column name mappings for flexibility
 
-Returns;
-- dict
+**Returns:** Dictionary with PO → Month → Transaction data
+
+**Key Methods:**
+- `get_transactional_data()`: Returns aggregated transaction data
+- `get_hierarchy_map()`: Returns row-level mapping for hierarchy building
 
 **Transactional Detail File Rules:**
 
@@ -135,123 +140,248 @@ In order to accurately parse data from the transactional detail file, we have de
 
 5. Otherwise, the entry is undefined
 
-## 2. Aggregators (Transform):
+### TemplateReader
 
-When we initially read the data, we have 2 separate dictionaries:
-1. Forecast dict
-2. Transactional Detail dict
+Reads the template structure to extract cost centers and PO numbers.
 
-This data needs to be aggregated to a singular JSON formatted dictionary so that it can be easily passed to our template writer. We do so with a helper function in utils.py:
+**Parameters:**
+- `file_path`: Path to template file
+- `header_row`: Row where data entry begins
+- `po_col`: Column containing PO numbers
+- `cost_center_col`: Column containing cost center IDs
 
-```python
-#  Function to combine forecasts, actuals, and accrual data into one JSON formatted dictionary
-def combine_data(forecast, transactional):
-    return combined_data
-```
+**Returns:** Cost center list and PO mapping
 
-This function outputs a dictionary like the following:
+## 2. Transformers (Transform)
 
-```
-dict: { 'PO12345': 
-    {'Jan': 
-        'Forecast': 1000,
-        'Actual': 900,
-        'Accrual': 950.0,
-        'Accrual Reversal': 0.0,
-    'Feb': 
-        'Forecast': 1000,
-        'Actual': 900,
-        'Accrual': 950.0,
-        'Accrual Reversal': -950.0,
-    ...
-    } 
-}
-```
-This aggregated dictionary includes forecasts, actuals, accruals, and reversals in one place -- making it easier to write to our output file.
+### Hierarchy Building (`build_hierarchy` in utils.py)
+
+The core transformation step that:
+1. Organizes data into Cost Center → WBS → PO hierarchy
+2. Validates data quality and tracks exceptions
+3. Combines forecast and transactional data
+
+**Exception Detection:**
+
+The system tracks five types of exceptions (in priority order):
+
+1. **MISSING_WBS_AND_PO**: Both WBS code and PO number are missing
+2. **MISSING_WBS**: WBS code is missing
+3. **MISSING_PO**: PO number is missing
+4. **DUPLICATE_WBS**: WBS code appears under multiple cost centers (all occurrences logged)
+5. **DUPLICATE_PO**: PO appears under multiple WBS/cost center combinations
+
+**Data Models:**
+
+The system uses dataclasses for type safety:
+- `CostCenter`: Contains WBS codes
+- `WBSCode`: Contains POs and cost center reference
+- `PO`: Contains monthly metrics (forecast, actual, accrual, reversal)
+- `ExceptionEntry`: Captures exception details with full source context
 
 
-## 3. Writers (Load):
+## 3. Writers (Load)
 
-### Template Writer
+### TemplateWriter
 
-This class reads an input template, parses the existing data, and appends the new data to the template. This class leverages both openpyxl and pandas for data manipulation/writing. 
+Writes data to the template and generates audit/exception sheets.
 
-Parameters:
-- file_path -> file path to input template with POs and formatting
-- header_row -> this is the row where data entry starts, generally row 14 but can be configured
-- po_column -> this is the column where POs are entered, generally column B but can be configured
-- dec_acc_reversal_col -> column where December Accrual Reversal exists. This is the very first data entry cell, so we use it as a reference point to build a map for the rest of the data writing
+**Parameters:**
+- `file_path`: Input template path
+- `output_path`: Output file path
+- `overwrite`: Whether to overwrite existing data
+- `header_row`: Data entry start row
+- `po_column`: PO column letter
+- `dec_acc_reversal_col`: First data entry column (reference point)
 
-Key methods:
-- write_data -> this method writes data to the main sheet
-- write_forecast_source_sheet -> this method writes forecast data to a new sheet so that the main sheet can be easily audited. It is a trimmed down version of the actual forecast file
-- write_transactional_source_sheet -> similarly, we write the transactional data to a seperate source sheet so that values can be easily audited.
+**Key Methods:**
 
-Returns:
-- Updated template excel file w/ filled in data and source sheets. Returns as either excel file or as byte string.
+1. `write_hierarchy()`: Writes financial data to main template
+2. `write_forecast_source_sheet()`: Creates forecast audit trail
+3. `write_transactional_source_sheet()`: Creates transaction audit trail
+4. `write_exception_sheet()`: Creates detailed exception log with:
+   - Visible columns: Cost Center, WBS, PO, Exception Type, Source Row, Month, Amount, Type
+   - Hidden columns: Full source row data (grouped and collapsible)
+5. `write_exception_summary_sheet()`: Creates executive summary with:
+   - Exception counts by type (with percentages)
+   - Exception breakdown by cost center
 
---------
-## YAML Configuration
+**Output Sheets (in order):**
+1. Main Template (populated with data)
+2. Forecast Source Data
+3. Transactions Source Data
+4. Exceptions (detailed log)
+5. Exceptions Summary (high-level overview)
 
-For increased flexibility, we have added YAML support for configurations for each class. This way, the user can easily update configs depending on the format of the forecast files, transactional detail files, and template files. Below is an example YAML config file:
+## Configuration Management
+
+The pipeline uses YAML configuration files for flexibility. This allows easy adaptation to different file formats and structures without code changes.
+
+**Configuration Structure:**
 
 ```yaml
-## Forecast Reader
+# Template configuration (shared between reader and writer)
+template:
+  file_path: "data/templates/Ram 2026_Owen Testing.xlsx"
+  header_row: 16
+  po_col: "B"
+  po_stop_marker: "Previous Period Invoices"
+  cost_center_col: "A"
+  cost_center_start_row: 9
+
+# Forecast reader configuration
 forecast_reader:
   file_paths:
-    - "data/2025-11-IBM Forecast.xlsx"
+    - "data/forecasts/Other_Vendors_Forecasts.xlsx"
+    - "data/forecasts/2026-Feb-IBM Forecast_AP02.xlsx"
+  po_col: "PO #"
 
-## Transactional Detail Reader
+# Transactional detail reader configuration
 transactional_detail_reader:
-  file_path: "data/C-TIES AP09 2025.xlsx"
-  
+  file_path: "data/transactional/TIES AP03 2026.xlsx"
   required_cols:
     - "PO Number"
     - "Month"
     - "GL Transaction Amount"
-  
   valid_types:
     - "Actual"
     - "Accrual"
     - "Reversal"
-  
   colmap:
     po: "PO Number"
     month: "Month"
-    amount: "GL Transaction Amount"
+    amount: "GL BER Corp Amount"
     classifier: "AP Voucher Number"
+    cost_center: "Cost Center*"
+    wbs: "WBS Element"
     type: "Type"
 
-## Template Writer
+# Template writer configuration
 template_writer:
-  file_path: "data/templates/financial_template_v1_2025.xlsx"
-  header_row: 14
-  po_column: "B"
-  dec_acc_reversal_col: "J"
-
+  output_path: "data/templates/template_AP03.xlsx"
+  overwrite: False
+  dec_acc_reversal_col: "N"
+  forecast_source_cols:
+    - "PO #"
+    - "Jan 2026 - FTotal"
+    - "Feb 2026 - FTotal"
+    # ... (monthly columns)
+  transactional_source_cols:
+    - "PO Number"
+    - "Accounting Period"
+    - "AP Voucher Number"
+    - "Vendor Name"
+    - "WBS Element"
+    # ... (additional audit columns)
 ```
-This YAML template includes all of the parameters that can possibly change depending on the inputs. Updating one of these parameters here ensures that the pipeline will run smoothly with varying configurations.
 
---------
+**Key Configuration Sections:**
+- `template`: Template file structure and layout
+- `forecast_reader`: Forecast file paths and column mappings
+- `transactional_detail_reader`: C-TIES file structure and validation rules
+- `template_writer`: Output settings and source sheet columns
 
+## Usage
+
+### Running the Pipeline
+
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the pipeline
+python main.py
+```
+
+### Output
+
+The pipeline generates a workbook with:
+1. **Main Template**: Populated with forecast, actual, accrual, and reversal data
+2. **Forecast Source Data**: Audit trail for forecast values
+3. **Transactions Source Data**: Audit trail for transactional values
+4. **Exceptions**: Detailed exception log with full source context
+5. **Exceptions Summary**: Executive overview of data quality issues
+
+### Exception Analysis
+
+**Start with the Summary:**
+1. Open "Exceptions Summary" sheet
+2. Review exception counts by type
+3. Identify cost centers with issues
+
+**Drill into Details:**
+1. Open "Exceptions" sheet
+2. Use filters to focus on specific issues
+3. Expand hidden columns for full source data
+4. Use "Source Row" to trace back to original file
 
 ## Power Automate Integration
 
-While this python script will handle all the complex data processing, we will levereage Power Automate to orchestrate the entire pipeline, resulting in nearly full automation. Power Automate will handle triggering, file movement, and notifications, and Python will handle complex logic and Excel manipulation (which is hard to maintain in Power Automate alone). 
+The Python pipeline integrates with Power Automate for end-to-end automation:
 
-**Full Automation Flow:**
+**Automation Flow:**
 
-1. User submits Microsoft Form
-    - This form includes 3 file uploads - Forecast File(s), Transactional Detail File, Template
+1. **Trigger**: User submits Microsoft Form with file uploads
+   - Forecast file(s)
+   - Transactional detail file
+   - Template file
 
-2. Power Automate gathers files from OneDrive after form is submitted
+2. **File Processing**: Power Automate converts files to base64 strings
 
-3. Power Automate converts files to base64 encoded strings
+3. **Pipeline Execution**: Files passed to Python script (hosted on Azure)
 
-4. The base64 excel files are passed over HTTPS as a JSON object which is taken in as input to main.py (hosted on Azure)
+4. **Output Generation**: Python returns completed workbook as base64
 
-5. main.py is called and outputs the completed template as a base64 encoded string
+5. **File Storage**: Power Automate uploads to OneDrive/SharePoint
 
-6. This string is then passed back to Power Automate and uploaded to OneDrive/Sharepoint
+6. **Notification**: User receives completion message with file link
 
-7. Power Automate sends a completion message (via email or Teams) with a link to the updated file.
+**Benefits:**
+- Fully automated workflow
+- No manual file handling
+- Audit trail maintained
+- Exception reports for data quality monitoring
+
+## Recent Enhancements
+
+### Exception Tracking System (May 2026)
+
+Major improvements to exception detection and reporting:
+
+**New Exception Types:**
+- `MISSING_WBS_AND_PO`: Detects rows missing both identifiers
+- `DUPLICATE_WBS`: Flags WBS codes owned by multiple cost centers
+
+**Enhanced Exception Data:**
+- Full source row context for every exception
+- Month, amount, and transaction type captured
+- All transactional columns available (grouped/hidden)
+
+**New Reporting:**
+- Exceptions Summary sheet with executive overview
+- Exception counts by type and cost center
+- Improved column naming ("Source Row" vs "Row Index")
+
+**Removed:**
+- `MISSING_FORECAST` exception (no longer tracked)
+
+See `IMPLEMENTATION_SUMMARY.md` and `QUICK_REFERENCE.md` for detailed documentation.
+
+## Documentation
+
+- **README.md** (this file): Project overview and architecture
+- **EXCEPTIONS_ENHANCEMENT_PLAN.md**: Detailed implementation plan for exception system
+- **IMPLEMENTATION_SUMMARY.md**: Complete change summary and testing guide
+- **QUICK_REFERENCE.md**: Quick guide for using exception reports
+
+## Contributing
+
+When making changes:
+1. Update relevant configuration in `configs/`
+2. Follow existing code patterns and type hints
+3. Update documentation as needed
+4. Test with sample data before deployment
+
+## License
+
+Internal Pfizer project - All rights reserved

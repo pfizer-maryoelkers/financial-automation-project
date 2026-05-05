@@ -296,20 +296,145 @@ class TemplateWriter:
 
 
     
-    def write_exception_sheet(self, exception_log):
+    def write_exception_sheet(self, exception_log, transactional_df):
         ws = self.wb.create_sheet("Exceptions")
-        # Header
-        headers = ['Cost Center', 'WBS', 'PO', 'Exception Type', 'Row Index']
-        for col_idx, header in enumerate(headers, start=1):
+        
+        # Define visible columns
+        visible_headers = [
+            'Cost Center', 'WBS', 'PO', 'Exception Type',
+            'Source Row', 'Month', 'Amount', 'Type'
+        ]
+        
+        # Get all transactional columns for hidden section
+        # Exclude columns already shown in visible section
+        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type'}
+        hidden_headers = [col for col in transactional_df.columns if col not in excluded_cols]
+        
+        all_headers = visible_headers + hidden_headers
+        
+        # Write headers
+        for col_idx, header in enumerate(all_headers, start=1):
             ws.cell(row=1, column=col_idx, value=header)
-        # Entries
+        
+        # Write data rows
         for row_idx, entry in enumerate(exception_log.entries, start=2):
+            # Visible columns
             ws.cell(row=row_idx, column=1, value=entry.cost_center)
             ws.cell(row=row_idx, column=2, value=entry.wbs)
             ws.cell(row=row_idx, column=3, value=entry.po)
             ws.cell(row=row_idx, column=4, value=entry.exception_type.value)
             ws.cell(row=row_idx, column=5, value=entry.row_index)
+            ws.cell(row=row_idx, column=6, value=entry.month)
+            ws.cell(row=row_idx, column=7, value=entry.amount)
+            ws.cell(row=row_idx, column=8, value=entry.transaction_type)
+            
+            # Hidden columns (full source row data)
+            if entry.source_row_data:
+                for col_idx_hidden, col_name in enumerate(hidden_headers, start=9):
+                    ws.cell(row=row_idx, column=col_idx_hidden,
+                           value=entry.source_row_data.get(col_name))
+        
+        # Apply formatting
         ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = "A2"
+        
+        # Auto-size visible columns
+        for col_idx in range(1, len(visible_headers) + 1):
+            letter = get_column_letter(col_idx)
+            max_len = len(str(all_headers[col_idx - 1]))
+            for row_idx in range(2, len(exception_log.entries) + 2):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                if cell_value is not None:
+                    max_len = max(max_len, len(str(cell_value)))
+            ws.column_dimensions[letter].width = min(max_len + 2, 50)
+        
+        # Group and hide supplementary columns
+        if hidden_headers:
+            start_idx = len(visible_headers) + 1
+            end_idx = len(all_headers)
+            ws.column_dimensions.group(
+                get_column_letter(start_idx),
+                get_column_letter(end_idx),
+                hidden=True
+            )
+
+    def write_exception_summary_sheet(self, exception_log):
+        """Create a summary sheet showing exception counts by type and by cost center"""
+        ws = self.wb.create_sheet("Exceptions Summary")
+        
+        # Get summary data
+        summary_by_type = exception_log.summary_by_type()
+        summary_by_cc = exception_log.summary_by_cost_center()
+        
+        current_row = 1
+        
+        # Section 1: Summary by Exception Type
+        ws.cell(row=current_row, column=1, value="Exceptions Summary by Type")
+        ws.cell(row=current_row, column=1).font = ws.cell(row=current_row, column=1).font.copy(bold=True, size=14)
+        current_row += 2
+        
+        # Headers for type summary
+        ws.cell(row=current_row, column=1, value="Exception Type")
+        ws.cell(row=current_row, column=2, value="Count")
+        ws.cell(row=current_row, column=3, value="% of Total")
+        for col in range(1, 4):
+            ws.cell(row=current_row, column=col).font = ws.cell(row=current_row, column=col).font.copy(bold=True)
+        current_row += 1
+        
+        # Data rows for type summary
+        type_start_row = current_row
+        for exc_type, count in sorted(summary_by_type['counts'].items()):
+            ws.cell(row=current_row, column=1, value=exc_type)
+            ws.cell(row=current_row, column=2, value=count)
+            percentage = summary_by_type['percentages'][exc_type]
+            ws.cell(row=current_row, column=3, value=f"{percentage:.1f}%")
+            current_row += 1
+        
+        # Total row for type summary
+        ws.cell(row=current_row, column=1, value="TOTAL")
+        ws.cell(row=current_row, column=2, value=summary_by_type['total'])
+        ws.cell(row=current_row, column=3, value="100.0%")
+        for col in range(1, 4):
+            ws.cell(row=current_row, column=col).font = ws.cell(row=current_row, column=col).font.copy(bold=True)
+        current_row += 3
+        
+        # Section 2: Summary by Cost Center
+        ws.cell(row=current_row, column=1, value="Exceptions Summary by Cost Center")
+        ws.cell(row=current_row, column=1).font = ws.cell(row=current_row, column=1).font.copy(bold=True, size=14)
+        current_row += 2
+        
+        # Get all exception types for column headers
+        all_exception_types = sorted(set(summary_by_type['counts'].keys()))
+        
+        # Headers for cost center summary
+        ws.cell(row=current_row, column=1, value="Cost Center")
+        ws.cell(row=current_row, column=2, value="Total")
+        for idx, exc_type in enumerate(all_exception_types, start=3):
+            ws.cell(row=current_row, column=idx, value=exc_type)
+        for col in range(1, len(all_exception_types) + 3):
+            ws.cell(row=current_row, column=col).font = ws.cell(row=current_row, column=col).font.copy(bold=True)
+        current_row += 1
+        
+        # Data rows for cost center summary
+        for cc, data in sorted(summary_by_cc.items()):
+            ws.cell(row=current_row, column=1, value=cc)
+            ws.cell(row=current_row, column=2, value=data['total'])
+            for idx, exc_type in enumerate(all_exception_types, start=3):
+                count = data['by_type'].get(exc_type, 0)
+                ws.cell(row=current_row, column=idx, value=count if count > 0 else '')
+            current_row += 1
+        
+        # Auto-size columns
+        for col_idx in range(1, len(all_exception_types) + 3):
+            letter = get_column_letter(col_idx)
+            max_len = 10
+            for row_idx in range(1, current_row):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                if cell_value is not None:
+                    max_len = max(max_len, len(str(cell_value)))
+            ws.column_dimensions[letter].width = min(max_len + 2, 50)
+        
+        # Freeze panes at row 2 for first section
         ws.freeze_panes = "A2"
         
     

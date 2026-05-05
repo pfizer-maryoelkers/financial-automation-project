@@ -60,7 +60,8 @@ def main():
         hierarchy_map=hierarchy_map,
         transactional_data=transactional_data,
         forecast_data=forecast_data,
-        exception_log=exception_log
+        exception_log=exception_log,
+        transactional_df=transactional_reader.data
     )
     ## Step 3: Write to template
     print("Step 3: Writing template output\n")
@@ -68,10 +69,11 @@ def main():
     template_writer.write_forecast_source_sheet(forecast_reader.data)
     template_writer.write_transactional_source_sheet(transactional_reader.data)
 
-    ## Step 4: Exception summary
-    print("Step 4: Exception summary\n")
+    ## Step 4: Exception reporting
+    print("Step 4: Writing exception reports\n")
     exception_log.summary()
-    template_writer.write_exception_sheet(exception_log)
+    template_writer.write_exception_sheet(exception_log, transactional_reader.data)
+    template_writer.write_exception_summary_sheet(exception_log)
     template_writer.save()
 
 
