@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Counter, Optional
+from typing import Optional
 from enum import Enum
 import pandas as pd
 from collections import Counter
@@ -85,5 +85,29 @@ class ExceptionLog:
             if exc_type not in result[cc]['by_type']:
                 result[cc]['by_type'][exc_type] = 0
             result[cc]['by_type'][exc_type] += 1
+        
+        return result
+    
+    def summary_by_month(self) -> dict:
+        """Returns count of exceptions by month, with breakdowns by type and cost center"""
+        result = {}
+        for entry in self.entries:
+            month = entry.month or 'Unknown'
+            if month not in result:
+                result[month] = {'total': 0, 'by_type': {}, 'by_cost_center': {}}
+            
+            result[month]['total'] += 1
+            
+            # By exception type
+            exc_type = entry.exception_type.value
+            if exc_type not in result[month]['by_type']:
+                result[month]['by_type'][exc_type] = 0
+            result[month]['by_type'][exc_type] += 1
+            
+            # By cost center
+            cc = entry.cost_center or 'Unknown'
+            if cc not in result[month]['by_cost_center']:
+                result[month]['by_cost_center'][cc] = 0
+            result[month]['by_cost_center'][cc] += 1
         
         return result

@@ -55,6 +55,8 @@ def main():
     print("Loaded transactional data\n")
     ## Step 2: Build hierarchy
     print("Step 2: Building hierarchy\n")
+    # At this point, transactional_reader.data is guaranteed to be loaded
+    assert transactional_reader.data is not None, "Transactional data should be loaded"
     hierarchy = build_hierarchy(
         cost_centers=template_reader.cost_centers,
         hierarchy_map=hierarchy_map,
@@ -72,6 +74,7 @@ def main():
     ## Step 4: Exception reporting
     print("Step 4: Writing exception reports\n")
     exception_log.summary()
+    template_writer.write_exception_data_sheet(exception_log)
     template_writer.write_exception_sheet(exception_log, transactional_reader.data)
     template_writer.write_exception_summary_sheet(exception_log)
     template_writer.save()
