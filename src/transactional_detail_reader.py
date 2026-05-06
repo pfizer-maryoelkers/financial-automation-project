@@ -93,23 +93,25 @@ class TransactionalDetailReader:
         else:
             return "Undefined"
 
-    def get_transactional_data(self):
+    def get_transactional_data(self) -> dict:
         '''
         Method that gets transactional data from C-TIES file. 
-        Extracts all rows, categorizes them, and a returns a dict w/ actuals and accruals:
-
+        Extracts all rows, categorizes them, and returns a dict w/ actuals and accruals.
+        Aggregates by PO / month.
         Returns:
             dict: {
                 'PO12345': {
+                    'cost_center': '1234',
+                    'wbs': 'IT-CT123',
                     'Jan': {
-                        'Actual': 900
+                        'Actual': 900,
                         'Accrual': 950.0,
-                        'Accrual Reversal': 0.0,
+                        'Reversal': 0.0,
                     },
                     'Feb': {
-                        'Actual': 800
+                        'Actual': 800,
                         'Accrual': 1050.0,
-                        'Accrual Reversal': -950,
+                        'Reversal': -950,
                     }
                     ...
                 }
@@ -117,64 +119,62 @@ class TransactionalDetailReader:
             }
         '''
         # Load and preprocess (categorization happens during load)
-        self.load_transactional_detail_file()
-
-        # Filter to only the columns needed, using instance variables
+        if self.data is None:
+            self.load_transactional_detail_file()
+        # Filter to only the columns needed
         cols = [
             self.colmap["po"],
             self.colmap["month"],
             self.colmap["amount"],
+            self.colmap["cost_center"],
+            self.colmap["wbs"],
             self.colmap["type"]
         ]
-
         missing = [c for c in cols if c not in self.data.columns]
         if missing:
-            raise ValueError(f"Missing required columns: {missing}") # Check for missing cols
-
+            raise ValueError(f"Missing required columns: {missing}")
         data_copy = self.data[cols].copy()
-
         # Ensure amount column is numeric
         data_copy[self.colmap["amount"]] = pd.to_numeric(
             data_copy[self.colmap["amount"]],
             errors='coerce'
         )
-
-        # Filter valid transaction types using instance variable self.valid_types
+        # Filter valid transaction types
         data_copy = data_copy[data_copy[self.colmap["type"]].isin(self.valid_types)]
-
-        # Group by PO / Month / Type
+        # Group by PO / Month / Type / Cost Center / WBS
         grouped = (
             data_copy.groupby([
                 self.colmap["po"],
                 self.colmap["month"],
-                self.colmap["type"]
+                self.colmap["type"],
+                self.colmap["cost_center"],
+                self.colmap["wbs"]
             ])[self.colmap["amount"]]
             .sum()
             .reset_index()
         )
-
         # Build results
         result = {}
-
         for _, row in grouped.iterrows():
             po = row[self.colmap["po"]]
             month_num = row[self.colmap["month"]]
             type_name = row[self.colmap["type"]]
             value = row[self.colmap["amount"]]
-
+            cost_center = str(row[self.colmap["cost_center"]]).strip()
+            wbs = str(row[self.colmap["wbs"]]).strip()
             # Actual values belong to prior month
             if month_num == 1:
                 actual_month = "Dec"
             else:
                 actual_month = self.month_map.get(month_num - 1)
-
             # Accruals/reversals belong to current month
             accrual_month = self.month_map.get(month_num)
-
             # Initialize PO
             if po not in result:
-                result[po] = {}
-
+                result[po] = {
+                    "cost_center": cost_center,
+                    "wbs": wbs
+                }
             # Initialize month bucket
             if type_name == "Actual" and actual_month not in result[po]:
                 result[po][actual_month] = {
@@ -188,24 +188,79 @@ class TransactionalDetailReader:
                     "Accrual": 0,
                     "Reversal": 0
                 }
-
             # Assign value
             if type_name == "Actual":
                 result[po][actual_month][type_name] = value
             else:
                 result[po][accrual_month][type_name] = value
-
-        # Sort months for readability
+        # Sort months for readability, preserve cost_center and wbs
         month_order = [
-            "Jan","Feb","Mar","Apr","May","Jun",
-            "Jul","Aug","Sep","Oct","Nov","Dec"
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
         ]
-
         for po in result:
             result[po] = {
-                month: result[po][month]
-                for month in month_order
-                if month in result[po]
+                "cost_center": result[po]["cost_center"],
+                "wbs": result[po]["wbs"],
+                **{
+                    month: result[po][month]
+                    for month in month_order
+                    if month in result[po]
+                }
             }
-
+        return result
+    
+    
+    def get_hierarchy_map(self) -> dict:
+        """
+        Returns a mapping of every row in the transactional file,
+        keyed by row index. Ensures every row is accounted for.
+        Used for hierarchy building and exception tracking.
+        Returns:
+            dict: {
+                45: { 'po': 'PO1234', 'cost_center': '1234', 'wbs': 'IT-CT123' },
+                46: { 'po': None,     'cost_center': '2345', 'wbs': None },
+                ...
+            }
+        """
+        if self.data is None:
+            self.load_transactional_detail_file()
+        # Validate columns exist before iterating
+        required = [self.colmap["po"], self.colmap["wbs"], self.colmap["cost_center"]]
+        missing_cols = [c for c in required if c not in self.data.columns]
+        if missing_cols:
+            raise ValueError(f"Missing required columns for hierarchy map: {missing_cols}")
+        # Placeholder values to treat as missing
+        MISSING_VALUES = {'', 'none', 'nan', '#'}
+        result = {}
+        for idx, row in self.data.iterrows():
+            po = row[self.colmap["po"]]
+            wbs = row[self.colmap["wbs"]]
+            cost_center = row[self.colmap["cost_center"]]
+            # Normalize PO
+            po = str(po).strip() if pd.notna(po) else None
+            if po and po.lower() in MISSING_VALUES:
+                po = None
+            # Normalize WBS
+            wbs = str(wbs).strip() if pd.notna(wbs) else None
+            if wbs and wbs.lower() in MISSING_VALUES:
+                wbs = None
+            # Normalize cost center
+            cost_center = str(cost_center).strip() if pd.notna(cost_center) else None
+            if cost_center and cost_center.lower() in MISSING_VALUES:
+                cost_center = None
+            result[idx] = {
+                'po': po,
+                'cost_center': cost_center,
+                'wbs': wbs
+            }
+        # Ensure no rows were dropped
+        assert len(result) == len(self.data), (
+            f"Row count mismatch: expected {len(self.data)} rows, "
+            f"got {len(result)}. Some rows may have been lost."
+        )
+        print(f"Hierarchy map built: {len(result)} rows processed.")
+        print(f"  - Missing PO:          {sum(1 for v in result.values() if v['po'] is None)}")
+        print(f"  - Missing WBS:         {sum(1 for v in result.values() if v['wbs'] is None)}")
+        print(f"  - Missing Cost Center: {sum(1 for v in result.values() if v['cost_center'] is None)}")
         return result

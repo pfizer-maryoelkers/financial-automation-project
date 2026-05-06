@@ -29,6 +29,10 @@ pycache/
 inputs_outputs.md
 prompts.md
 README.pdf
+REFACTOR_PLAN.md
+
+# Archive folder (session documentation)
+archive/
 
 # Pipeline runner (for power automate)
 # pipeline_runner.py

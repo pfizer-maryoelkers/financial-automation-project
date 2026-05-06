@@ -1,6 +1,21 @@
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.worksheet.worksheet import Worksheet
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.styles import Font
+import pandas as pd
+from src.models import CostCenter, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType
+
+
+def month_sort_key(month_str):
+    """Convert month string to sortable key for proper chronological ordering"""
+    month_order = {
+        'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
+        'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
+        'Unknown': 13
+    }
+    return month_order.get(month_str, 13)
 
 
 
@@ -14,12 +29,13 @@ class TemplateWriter:
                  po_column,
                  dec_acc_reversal_col, 
                  forecast_source_cols,
-                 forecast_sum_exclude_cols,
                  transactional_source_cols
         ):
         
         self.wb = load_workbook(file_path)
-        self.sheet = self.wb.active
+        self.sheet: Worksheet = self.wb.active  # type: ignore[assignment]
+        if self.sheet is None:
+            raise ValueError(f"Could not load active sheet from {file_path}")
 
         self.output_path = output_path
 
@@ -159,6 +175,35 @@ class TemplateWriter:
                         value = metrics.get(metric)
                         cell.value = value
 
+    def write_hierarchy(self, hierarchy: dict, pos: dict[str, int]):
+        '''
+        Writes hierarchy to template.
+        Iterates CostCenter -> WBSCode -> PO and writes MonthlyMetrics to correct cells.
+        Only writes to blank cells unless overwrite=True.
+        '''
+        for cc_id, cost_center in hierarchy.items():
+            for wbs_code, wbs in cost_center.wbs_codes.items():
+                for po_number, po in wbs.pos.items():
+                    # Skip if PO not in template
+                    if po_number not in pos:
+                        print(f"PO '{po_number}' not found in template. Skipping.")
+                        continue
+                    row = pos[po_number]
+                    for month, metrics in po.monthly_data.items():
+                        if month not in self.column_map:
+                            continue
+                        month_cols = self.column_map[month]
+                        values = {
+                            'Accrual Reversal': metrics.accrual_reversal,
+                            'Forecast': metrics.forecast,
+                            'Accrual': metrics.accrual,
+                            'Actual': metrics.actual
+                        }
+                        for metric, col_letter in month_cols.items():
+                            cell = self.sheet[f"{col_letter}{row}"]
+                            if self.overwrite or cell.value is None or str(cell.value).strip() == "":
+                                cell.value = values.get(metric)
+
 
 
     ## Methods to write source sheets
@@ -267,6 +312,226 @@ class TemplateWriter:
             )
 
 
+    
+    def write_exception_sheet(self, exception_log, transactional_df):
+        ws = self.wb.create_sheet("Exceptions")
+        
+        # Define visible columns (Month moved to position 4 for better visibility)
+        visible_headers = [
+            'Cost Center', 'Month', 'WBS', 'PO',
+            'Exception Type', 'Source Row', 'Amount', 'Type'
+        ]
+        
+        # Get all transactional columns for hidden section
+        # Exclude columns already shown in visible section
+        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type'}
+        hidden_headers = [col for col in transactional_df.columns if col not in excluded_cols]
+        
+        all_headers = visible_headers + hidden_headers
+        
+        # Write headers
+        for col_idx, header in enumerate(all_headers, start=1):
+            ws.cell(row=1, column=col_idx, value=header)
+        
+        # Write data rows
+        for row_idx, entry in enumerate(exception_log.entries, start=2):
+            # Visible columns (updated order with Month at position 4)
+            ws.cell(row=row_idx, column=1, value=entry.cost_center)
+            ws.cell(row=row_idx, column=2, value=entry.month)
+            ws.cell(row=row_idx, column=3, value=entry.wbs)
+            ws.cell(row=row_idx, column=4, value=entry.po)
+            ws.cell(row=row_idx, column=5, value=entry.exception_type.value)
+            ws.cell(row=row_idx, column=6, value=entry.row_index)
+            ws.cell(row=row_idx, column=7, value=entry.amount)
+            ws.cell(row=row_idx, column=8, value=entry.transaction_type)
+            
+            # Hidden columns (full source row data)
+            if entry.source_row_data:
+                for col_idx_hidden, col_name in enumerate(hidden_headers, start=9):
+                    ws.cell(row=row_idx, column=col_idx_hidden,
+                           value=entry.source_row_data.get(col_name))
+        
+        # Apply formatting
+        ws.auto_filter.ref = ws.dimensions
+        ws.freeze_panes = "A2"
+        
+        # Auto-size visible columns
+        for col_idx in range(1, len(visible_headers) + 1):
+            letter = get_column_letter(col_idx)
+            max_len = len(str(all_headers[col_idx - 1]))
+            for row_idx in range(2, len(exception_log.entries) + 2):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                if cell_value is not None:
+                    max_len = max(max_len, len(str(cell_value)))
+            ws.column_dimensions[letter].width = min(max_len + 2, 50)
+        
+        # Group and hide supplementary columns
+        if hidden_headers:
+            start_idx = len(visible_headers) + 1
+            end_idx = len(all_headers)
+            ws.column_dimensions.group(
+                get_column_letter(start_idx),
+                get_column_letter(end_idx),
+                hidden=True
+            )
+
+    def write_exception_data_sheet(self, exception_log):
+        """Write raw exception data to hidden sheet for formula reference"""
+        ws = self.wb.create_sheet("Exception_Data")
+        
+        # Headers
+        headers = ['Cost Center', 'WBS', 'PO', 'Exception Type', 'Month', 'Amount', 'Type']
+        for col_idx, header in enumerate(headers, start=1):
+            ws.cell(row=1, column=col_idx, value=header)
+            ws.cell(row=1, column=col_idx).font = Font(bold=True)
+        
+        # Data rows
+        for row_idx, entry in enumerate(exception_log.entries, start=2):
+            ws.cell(row=row_idx, column=1, value=entry.cost_center or '')
+            ws.cell(row=row_idx, column=2, value=entry.wbs or '')
+            ws.cell(row=row_idx, column=3, value=entry.po or '')
+            ws.cell(row=row_idx, column=4, value=entry.exception_type.value)
+            ws.cell(row=row_idx, column=5, value=entry.month or '')
+            ws.cell(row=row_idx, column=6, value=entry.amount)
+            ws.cell(row=row_idx, column=7, value=entry.transaction_type or '')
+        
+        # Hide the sheet
+        ws.sheet_state = 'hidden'
+    
+    def write_exception_summary_sheet(self, exception_log):
+        """Create a summary sheet with interactive month filter showing exception counts by type and by cost center"""
+        ws = self.wb.create_sheet("Exceptions Summary")
+        
+        # Get summary data for getting unique values
+        summary_by_type = exception_log.summary_by_type()
+        summary_by_cc = exception_log.summary_by_cost_center()
+        
+        # Get all unique exception types and cost centers
+        all_exception_types = sorted(set(summary_by_type['counts'].keys()))
+        all_cost_centers = sorted(set(summary_by_cc.keys()))
+        
+        # Get all unique months from exception data (ensure they are strings)
+        all_months = sorted(set(str(entry.month) for entry in exception_log.entries if entry.month), key=month_sort_key)
+        
+        current_row = 1
+        
+        # Add Month Filter Dropdown
+        ws.cell(row=current_row, column=1, value="Filter by Month:")
+        ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
+        
+        # Create dropdown list (ensure all values are strings)
+        month_options = ["All Months"] + [str(m) for m in all_months]
+        dv = DataValidation(type="list", formula1=f'"{",".join(month_options)}"', allow_blank=False)
+        dv.add(ws['B1'])
+        ws.add_data_validation(dv)
+        
+        # Set default value
+        ws['B1'] = "All Months"
+        ws['B1'].font = Font(size=11)
+        
+        # Define named range for the filter cell
+        from openpyxl.workbook.defined_name import DefinedName
+        defined_name = DefinedName('MonthFilter', attr_text=f"'{ws.title}'!$B$1")
+        self.wb.defined_names['MonthFilter'] = defined_name
+        
+        current_row += 2
+        
+        # Section 1: Summary by Exception Type (with dynamic formulas)
+        ws.cell(row=current_row, column=1, value="Exceptions Summary by Type")
+        ws.cell(row=current_row, column=1).font = Font(bold=True, size=14)
+        current_row += 2
+        
+        # Headers for type summary
+        ws.cell(row=current_row, column=1, value="Exception Type")
+        ws.cell(row=current_row, column=2, value="Count")
+        ws.cell(row=current_row, column=3, value="% of Total")
+        for col in range(1, 4):
+            ws.cell(row=current_row, column=col).font = Font(bold=True)
+        current_row += 1
+        
+        # Data rows for type summary with formulas
+        type_start_row = current_row
+        for exc_type in all_exception_types:
+            ws.cell(row=current_row, column=1, value=exc_type)
+            
+            # Count formula: IF MonthFilter="All Months", count all, else count for specific month
+            count_formula = (
+                f'=IF(MonthFilter="All Months",'
+                f'COUNTIF(Exception_Data!$D:$D,"{exc_type}"),'
+                f'COUNTIFS(Exception_Data!$D:$D,"{exc_type}",Exception_Data!$E:$E,MonthFilter))'
+            )
+            ws.cell(row=current_row, column=2, value=count_formula)
+            
+            # Percentage formula
+            pct_formula = f'=IF(SUM($B${type_start_row}:$B${type_start_row + len(all_exception_types) - 1})=0,0,B{current_row}/SUM($B${type_start_row}:$B${type_start_row + len(all_exception_types) - 1})*100)'
+            ws.cell(row=current_row, column=3, value=pct_formula)
+            ws.cell(row=current_row, column=3).number_format = '0.0"%"'
+            
+            current_row += 1
+        
+        # Total row for type summary
+        ws.cell(row=current_row, column=1, value="TOTAL")
+        ws.cell(row=current_row, column=1).font = Font(bold=True)
+        total_formula = f'=SUM(B{type_start_row}:B{current_row - 1})'
+        ws.cell(row=current_row, column=2, value=total_formula)
+        ws.cell(row=current_row, column=2).font = Font(bold=True)
+        ws.cell(row=current_row, column=3, value='100.0%')
+        ws.cell(row=current_row, column=3).font = Font(bold=True)
+        current_row += 3
+        
+        # Section 2: Summary by Cost Center (with dynamic formulas)
+        ws.cell(row=current_row, column=1, value="Exceptions Summary by Cost Center")
+        ws.cell(row=current_row, column=1).font = Font(bold=True, size=14)
+        current_row += 2
+        
+        # Headers for cost center summary
+        ws.cell(row=current_row, column=1, value="Cost Center")
+        ws.cell(row=current_row, column=2, value="Total")
+        for idx, exc_type in enumerate(all_exception_types, start=3):
+            ws.cell(row=current_row, column=idx, value=exc_type)
+        for col in range(1, len(all_exception_types) + 3):
+            ws.cell(row=current_row, column=col).font = Font(bold=True)
+        current_row += 1
+        
+        # Data rows for cost center summary with formulas
+        cc_start_row = current_row
+        for cc in all_cost_centers:
+            ws.cell(row=current_row, column=1, value=cc)
+            
+            # Total formula for this cost center
+            total_formula = (
+                f'=IF(MonthFilter="All Months",'
+                f'COUNTIF(Exception_Data!$A:$A,"{cc}"),'
+                f'COUNTIFS(Exception_Data!$A:$A,"{cc}",Exception_Data!$E:$E,MonthFilter))'
+            )
+            ws.cell(row=current_row, column=2, value=total_formula)
+            
+            # Count by exception type
+            for idx, exc_type in enumerate(all_exception_types, start=3):
+                type_formula = (
+                    f'=IF(MonthFilter="All Months",'
+                    f'COUNTIFS(Exception_Data!$A:$A,"{cc}",Exception_Data!$D:$D,"{exc_type}"),'
+                    f'COUNTIFS(Exception_Data!$A:$A,"{cc}",Exception_Data!$D:$D,"{exc_type}",Exception_Data!$E:$E,MonthFilter))'
+                )
+                ws.cell(row=current_row, column=idx, value=type_formula)
+            
+            current_row += 1
+        
+        # Auto-size columns
+        max_cols = max(len(all_exception_types) + 3, 10)
+        for col_idx in range(1, max_cols):
+            letter = get_column_letter(col_idx)
+            max_len = 10
+            for row_idx in range(1, current_row):
+                cell_value = ws.cell(row=row_idx, column=col_idx).value
+                if cell_value is not None and not str(cell_value).startswith('='):
+                    max_len = max(max_len, len(str(cell_value)))
+            ws.column_dimensions[letter].width = min(max_len + 2, 50)
+        
+        # Freeze panes at row 4 (below filter and title)
+        ws.freeze_panes = "A4"
+        
+    
     def save(self):
         """Saves the workbook to the output path."""
         try:
@@ -274,3 +539,4 @@ class TemplateWriter:
             print(f"Workbook saved to: {self.output_path}")
         except Exception as e:
             raise Exception(f"Failed to save workbook: {e}")
+        
