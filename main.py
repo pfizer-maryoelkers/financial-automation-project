@@ -68,8 +68,8 @@ def main():
     ## Step 3: Write to template
     print("Step 3: Writing template output\n")
     template_writer.write_hierarchy(hierarchy, pos=template_reader.pos)
-    template_writer.write_forecast_source_sheet(forecast_reader.data)
-    template_writer.write_transactional_source_sheet(transactional_reader.data)
+    template_writer.write_forecast_source_sheet(forecast_reader.data, pos=template_reader.pos)
+    template_writer.write_transactional_source_sheet(transactional_reader.data, pos=template_reader.pos)
 
     ## Step 4: Exception reporting
     print("Step 4: Writing exception reports\n")

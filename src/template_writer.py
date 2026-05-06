@@ -50,7 +50,6 @@ class TemplateWriter:
         # Cost centers, WBS codes, PO numbers, and their associated rows
         self.cost_centers = {}
         self.wbs_codes = {}
-        self.pos = self.get_existing_pos()
 
         # Column map (dynamically created starting with Dec Accrual Reversal)
         self.dec_acc_reversal_col = dec_acc_reversal_col # Col where first data entry exists
@@ -64,43 +63,6 @@ class TemplateWriter:
         self.forecast_po_col = self.forecast_source_cols[0]
         self.transactional_po_col = self.transactional_source_cols[0]
 
-    ## Methods to get existing cost centers, WBS codes, and POs from input template sheet
-    def get_existing_cost_centers(self):
-        # Gets existing cost centers (if exists)
-        # TODO: implement
-        pass
-
-    def get_existing_wbs(self):
-        # Gets existing WBS codes (if exists)
-        # TODO: implement
-        pass
-    
-    def get_existing_pos(self):
-        # Gets existing POs in the template
-        self.pos = {}
-        row = self.header_row + 1 # Starting at row below header row
-
-        # Find stop_row
-        stop_row = None
-        for search_row in range(1, self.sheet.max_row + 1):
-            if self.sheet[f"A{search_row}"].value == "Previous Period Invoices":
-                stop_row = search_row - 1
-                break
-
-
-        while row < stop_row:
-            cell = self.sheet[f"{self.po_column}{row}"].value
-
-            # Normalize PO value
-            po = str(cell).strip()
-
-            # Store mapping PO → row
-            self.pos[po] = row
-
-            row += 1
-        
-        return self.pos
-    
     def get_column_map(self, starting_col):
         months = [
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -124,56 +86,6 @@ class TemplateWriter:
             col_index += 1
 
         return col_map
-
-    def write_data(self, data:dict):
-        '''
-        Writes data to template.
-
-        Expects data dict in format:
-
-            dict: {
-                'PO12345': {
-                    'Jan': {
-                        'Forecast': 1050,
-                        'Actual': 900
-                        'Accrual': 950.0,
-                        'Accrual Reversal': 0.0,
-                    },
-                    'Feb': {
-                        'Forecast': 950,
-                        'Actual': 800
-                        'Accrual': 1050.0,
-                        'Accrual Reversal': -950,
-                    }
-                    ...
-                }
-                ...
-            }
-
-        '''
-
-        for po, row in self.pos.items():
-
-            # If PO is not found in the data → leave row blank and print
-            if po not in data:
-                print(f"PO '{po}' found in template but not in source data. Leaving blank.")
-                continue
-
-            # Write PO into the sheet (if the blank template expects it)
-            self.sheet[f"{self.po_column}{row}"] = po
-
-            # Loop through months for this PO
-            for month, metrics in data[po].items():
-                if month not in self.column_map:
-                    continue  # ignore unexpected months
-
-                # Loop through metrics (Forecast, Actual, Accrual, Accrual Reversal)
-                for metric, col_letter in self.column_map[month].items():
-                    cell = self.sheet[f"{col_letter}{row}"]
-                    # If overwrite is True, write to cells. Otherwise only write if cell is blank
-                    if self.overwrite or cell.value is None or str(cell.value).strip() == "":
-                        value = metrics.get(metric)
-                        cell.value = value
 
     def write_hierarchy(self, hierarchy: dict, pos: dict[str, int]):
         '''
@@ -207,7 +119,7 @@ class TemplateWriter:
 
 
     ## Methods to write source sheets
-    def write_forecast_source_sheet(self, forecast_df):
+    def write_forecast_source_sheet(self, forecast_df, pos: dict[str, int]):
         # Method to write forecast source sheet. 
         # Filter to template POs
         if self.forecast_po_col not in forecast_df.columns:
@@ -216,8 +128,8 @@ class TemplateWriter:
         forecast_df[self.forecast_po_col] = (
             forecast_df[self.forecast_po_col]
             .apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
-        )        
-        filtered_df = forecast_df[forecast_df[self.forecast_po_col].isin(self.pos.keys())]
+        )
+        filtered_df = forecast_df[forecast_df[self.forecast_po_col].isin(pos.keys())]
 
         visible_cols = [c for c in self.forecast_source_cols if c in filtered_df.columns]
         hidden_cols = [c for c in filtered_df.columns if c not in visible_cols]
@@ -266,14 +178,14 @@ class TemplateWriter:
                 hidden=True
             )
 
-    def write_transactional_source_sheet(self, transactions_df):
+    def write_transactional_source_sheet(self, transactions_df, pos: dict[str, int]):
         # Method to write transactional detail source sheet
         # Filter to POs present in the template
         if self.transactional_po_col not in transactions_df.columns:
             raise KeyError(f"Expected {self.transactional_po_col} column not found in transactional dataframe.")
 
         transactions_df[self.transactional_po_col] = transactions_df[self.transactional_po_col].astype(str)
-        source_df = transactions_df[transactions_df[self.transactional_po_col].isin(self.pos.keys())]
+        source_df = transactions_df[transactions_df[self.transactional_po_col].isin(pos.keys())]
 
         visible_cols = [c for c in self.transactional_source_cols if c in source_df.columns]
         hidden_cols = [c for c in source_df.columns if c not in visible_cols]
