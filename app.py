@@ -6,7 +6,7 @@ Phase 1: Basic UI with file upload and report generation.
 import streamlit as st
 from pathlib import Path
 from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger
-from src.utils import load_config
+from streamlit_config import ConfigManager, AppConfig
 
 # Page configuration
 st.set_page_config(
@@ -27,14 +27,198 @@ if 'extracted_cost_centers' not in st.session_state:
     st.session_state.extracted_cost_centers = []
 if 'selected_cost_centers' not in st.session_state:
     st.session_state.selected_cost_centers = []
+if 'app_config' not in st.session_state:
+    st.session_state.app_config = ConfigManager.load_config()
 
-# Load default configuration
-@st.cache_resource
-def get_default_config():
-    """Load default configuration from config_base.yaml"""
-    return load_config('configs/config_base.yaml')
 
-config = get_default_config()
+def render_config_section():
+    """Render configuration settings section"""
+    
+    config = st.session_state.app_config
+    
+    # Status indicator
+    col_status, col_buttons = st.columns([3, 1])
+    with col_status:
+        if ConfigManager.is_using_custom_config():
+            st.success("Using Custom Configuration")
+        else:
+            st.info("Using Default Configuration")
+    
+    with col_buttons:
+        # Action buttons in a row
+        btn_col1, btn_col2 = st.columns(2)
+        
+        with btn_col1:
+            if st.button("Save Configuration", use_container_width=True, help="Save configuration to file", key="save_config_btn"):
+                is_valid, errors = ConfigManager.validate_config(config)
+                if is_valid:
+                    if ConfigManager.save_config(config):
+                        st.success("Config saved!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to save config")
+                else:
+                    st.error("Validation errors:")
+                    for error in errors:
+                        st.error(f"• {error}")
+        
+        with btn_col2:
+            if st.button("Reset to Defaults", use_container_width=True, help="Reset to default configuration", key="reset_config_btn"):
+                # Show confirmation in a separate area
+                st.session_state.show_reset_confirm = True
+            
+            # Handle confirmation separately
+            if st.session_state.get('show_reset_confirm', False):
+                if st.checkbox("Confirm reset to defaults?", key="confirm_reset_main"):
+                    # Delete custom config file first
+                    ConfigManager.delete_custom_config()
+                    # Then reset session state
+                    st.session_state.app_config = ConfigManager.get_default_config()
+                    st.session_state.show_reset_confirm = False
+                    st.success("Reset to defaults!")
+                    st.rerun()
+    
+    
+    # Configuration sections in columns for better use of space
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # Template Settings
+        with st.expander("Template Settings", expanded=False):
+            config.template.header_row = st.number_input(
+                "Header Row",
+                value=config.template.header_row,
+                min_value=1,
+                max_value=1000,
+                help="Row number where PO headers start in the template (1-based)"
+            )
+            
+            po_col_input = st.text_input(
+                "PO Column",
+                value=config.template.po_col,
+                help="Column letter containing PO numbers (e.g., 'B')"
+            )
+            config.template.po_col = po_col_input.upper() if po_col_input else config.template.po_col
+            
+            config.template.po_stop_marker = st.text_input(
+                "PO Stop Marker",
+                value=config.template.po_stop_marker,
+                help="Text marker indicating end of PO section"
+            )
+            
+            cc_col_input = st.text_input(
+                "Cost Center Column",
+                value=config.template.cost_center_col,
+                help="Column letter containing cost center IDs (e.g., 'A')"
+            )
+            config.template.cost_center_col = cc_col_input.upper() if cc_col_input else config.template.cost_center_col
+            
+            config.template.cost_center_start_row = st.number_input(
+                "Cost Center Start Row",
+                value=config.template.cost_center_start_row,
+                min_value=1,
+                max_value=1000,
+                help="Row number where cost centers start (1-based)"
+            )
+        
+        # Forecast Settings
+        with st.expander("Forecast Settings", expanded=False):
+            config.forecast_reader.po_col = st.text_input(
+                "PO Column Name",
+                value=config.forecast_reader.po_col,
+                help="Column name in forecast files containing PO numbers",
+                key="forecast_po_col"
+            )
+    
+    with col2:
+        # Transactional Settings
+        with st.expander("Transactional Settings", expanded=False):
+            config.transactional_detail_reader.required_cols = st.multiselect(
+                "Required Columns",
+                options=["PO Number", "Month", "GL Transaction Amount", "Type", "Cost Center*", "WBS Element"],
+                default=config.transactional_detail_reader.required_cols,
+                help="Columns that must exist in transactional file",
+                key="trans_required_cols"
+            )
+            
+            config.transactional_detail_reader.valid_types = st.multiselect(
+                "Valid Transaction Types",
+                options=["Actual", "Accrual", "Reversal", "Budget", "Forecast"],
+                default=config.transactional_detail_reader.valid_types,
+                help="Valid transaction types to process",
+                key="trans_valid_types"
+            )
+            
+            # Column Mappings (nested)
+            with st.expander("Column Mappings", expanded=False):
+                colmap = config.transactional_detail_reader.colmap
+                
+                colmap['po'] = st.text_input("PO Column", value=colmap['po'], help="Column name for PO numbers", key="trans_po_col")
+                colmap['month'] = st.text_input("Month Column", value=colmap['month'], help="Column name for month/period", key="trans_month_col")
+                colmap['amount'] = st.text_input("Amount Column", value=colmap['amount'], help="Column name for transaction amount", key="trans_amount_col")
+                colmap['classifier'] = st.text_input("Classifier Column", value=colmap['classifier'], help="Column name for transaction classifier", key="trans_classifier_col")
+                colmap['cost_center'] = st.text_input("Cost Center Column", value=colmap['cost_center'], help="Column name for cost center", key="trans_cc_col")
+                colmap['wbs'] = st.text_input("WBS Column", value=colmap['wbs'], help="Column name for WBS element", key="trans_wbs_col")
+                colmap['type'] = st.text_input("Type Column", value=colmap['type'], help="Column name for transaction type", key="trans_type_col")
+        
+        # Writer Settings
+        with st.expander("Writer Settings", expanded=False):
+            config.template_writer.output_path = st.text_input(
+                "Output Filename",
+                value=config.template_writer.output_path,
+                help="Name for generated output file (must end with .xlsx)",
+                key="writer_output_path"
+            )
+            
+            config.template_writer.overwrite = st.checkbox(
+                "Overwrite Existing Files",
+                value=config.template_writer.overwrite,
+                help="Allow overwriting existing output files",
+                key="writer_overwrite"
+            )
+            
+            dec_col_input = st.text_input(
+                "Dec Accrual Reversal Column",
+                value=config.template_writer.dec_acc_reversal_col,
+                help="Column letter for December accrual reversals (e.g., 'N')",
+                key="writer_dec_col"
+            )
+            config.template_writer.dec_acc_reversal_col = dec_col_input.upper() if dec_col_input else config.template_writer.dec_acc_reversal_col
+            
+            # Source Columns (nested)
+            with st.expander("Source Columns", expanded=False):
+                st.write("**Forecast Source Columns:**")
+                config.template_writer.forecast_source_cols = st.multiselect(
+                    "forecast_cols_label",
+                    options=[
+                        "PO #",
+                        "Jan 2026 - FTotal", "Feb 2026 - FTotal", "March 2026 - FTotal",
+                        "April 2026 - FTotal", "May 2026 - FTotal", "June 2026 - FTotal",
+                        "July 2026 - FTotal", "Aug 2026 - FTotal", "Sep 2026 - FTotal",
+                        "Oct 2026 - FTotal", "Nov 2026 - FTotal", "Dec 2026 - FTotal"
+                    ],
+                    default=config.template_writer.forecast_source_cols,
+                    label_visibility="collapsed",
+                    help="Columns to copy from forecast files",
+                    key="writer_forecast_cols"
+                )
+                
+                st.write("**Transactional Source Columns:**")
+                config.template_writer.transactional_source_cols = st.multiselect(
+                    "trans_cols_label",
+                    options=[
+                        "PO Number", "Accounting Period", "AP Voucher Number",
+                        "Vendor Name", "WBS Element", "GL Invoice Date",
+                        "GL Posting Date", "GL Line Description", "Description",
+                        "GL Transaction Amount", "GL BER Corp Amount", "Month",
+                        "AP01", "AP02", "AP03", "Type"
+                    ],
+                    default=config.template_writer.transactional_source_cols,
+                    label_visibility="collapsed",
+                    help="Columns to copy from transactional file",
+                    key="writer_trans_cols"
+                )
+
 
 # Header
 st.title("Financial Automation Report Generator")
@@ -72,13 +256,14 @@ with row1_col1:
             
             # Extract cost centers using TemplateReader
             from src.template_reader import TemplateReader
+            app_config = st.session_state.app_config
             temp_reader = TemplateReader(
                 file_path=tmp_path,
-                header_row=config['template']['header_row'],
-                po_col=config['template']['po_col'],
-                po_stop_marker=config['template']['po_stop_marker'],
-                cost_center_col=config['template']['cost_center_col'],
-                cost_center_start_row=config['template']['cost_center_start_row']
+                header_row=app_config.template.header_row,
+                po_col=app_config.template.po_col,
+                po_stop_marker=app_config.template.po_stop_marker,
+                cost_center_col=app_config.template.cost_center_col,
+                cost_center_start_row=app_config.template.cost_center_start_row
             )
             
             # Update session state with extracted cost centers
@@ -190,6 +375,12 @@ with status_col3:
 
 st.divider()
 
+# Configuration Settings
+st.subheader("Configuration Settings")
+render_config_section()
+
+st.divider()
+
 # Generate Report Section
 st.header("Generate Report")
 
@@ -238,8 +429,10 @@ if generate_button:
         )
         st.session_state.temp_dir = temp_dir
         
-        # Run pipeline
-        orchestrator = PipelineOrchestrator(config=config, logger=logger, progress_callback=update_progress)
+        # Run pipeline with config from session state
+        app_config = st.session_state.app_config
+        config_dict = ConfigManager._config_to_dict(app_config)
+        orchestrator = PipelineOrchestrator(config=config_dict, logger=logger, progress_callback=update_progress)
         output_path = orchestrator.run(file_paths, selected_cost_centers=st.session_state.selected_cost_centers)
         st.session_state.output_path = output_path
         
