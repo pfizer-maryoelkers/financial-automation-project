@@ -191,12 +191,13 @@ class PipelineOrchestrator:
         if self.progress_callback:
             self.progress_callback(percentage)
     
-    def run(self, file_paths: Dict[str, str]) -> str:
+    def run(self, file_paths: Dict[str, str], selected_cost_centers: Optional[List[str]] = None) -> str:
         """
         Execute the pipeline with uploaded files.
         
         Args:
             file_paths: Dictionary with keys 'template', 'forecast', 'transactional'
+            selected_cost_centers: Optional list of cost centers to process. If None, processes all.
             
         Returns:
             Path to generated output file
@@ -244,6 +245,12 @@ class PipelineOrchestrator:
             self.logger.info(f"Loaded template: {len(template_reader.cost_centers)} cost centers")
             self._update_progress(40)
             
+            # Filter cost centers if selection provided
+            cost_centers_to_process = template_reader.cost_centers
+            if selected_cost_centers:
+                cost_centers_to_process = [cc for cc in template_reader.cost_centers if cc in selected_cost_centers]
+                self.logger.info(f"Filtering to {len(cost_centers_to_process)} selected cost centers")
+            
             # Step 2: Build hierarchy
             self.logger.info("Step 2/4: Building hierarchy...")
             self._update_progress(45)
@@ -254,7 +261,7 @@ class PipelineOrchestrator:
                 raise Exception("Transactional data failed to load")
             
             hierarchy = build_hierarchy(
-                cost_centers=template_reader.cost_centers,
+                cost_centers=cost_centers_to_process,
                 hierarchy_map=hierarchy_map,
                 transactional_data=transactional_data,
                 forecast_data=forecast_data,

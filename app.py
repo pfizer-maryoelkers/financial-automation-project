@@ -23,6 +23,10 @@ if 'output_path' not in st.session_state:
     st.session_state.output_path = None
 if 'processing' not in st.session_state:
     st.session_state.processing = False
+if 'extracted_cost_centers' not in st.session_state:
+    st.session_state.extracted_cost_centers = []
+if 'selected_cost_centers' not in st.session_state:
+    st.session_state.selected_cost_centers = []
 
 # Load default configuration
 @st.cache_resource
@@ -44,34 +48,117 @@ st.divider()
 # File Upload Section
 st.header("Upload Files")
 
-col1, col2 = st.columns(2)
+# First row: Template File and Generate By Cost Center (TBD)
+row1_col1, row1_col2 = st.columns(2)
 
-with col1:
-    st.subheader("Required Files")
-    
+with row1_col1:
+    st.subheader("Template File")
     template_file = st.file_uploader(
-        "Template File",
+        "template_label",
         type=['xlsx'],
         help="Upload the financial spreadsheet template (.xlsx format)",
-        key="template_upload"
+        key="template_upload",
+        label_visibility="collapsed"
     )
     
+    # Extract cost centers when template is uploaded
+    if template_file is not None:
+        try:
+            # Save template temporarily to extract cost centers
+            import tempfile
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+                tmp_file.write(template_file.getvalue())
+                tmp_path = tmp_file.name
+            
+            # Extract cost centers using TemplateReader
+            from src.template_reader import TemplateReader
+            temp_reader = TemplateReader(
+                file_path=tmp_path,
+                header_row=config['template']['header_row'],
+                po_col=config['template']['po_col'],
+                po_stop_marker=config['template']['po_stop_marker'],
+                cost_center_col=config['template']['cost_center_col'],
+                cost_center_start_row=config['template']['cost_center_start_row']
+            )
+            
+            # Update session state with extracted cost centers
+            st.session_state.extracted_cost_centers = temp_reader.cost_centers
+            
+            # Initialize selected cost centers if not already set
+            if not st.session_state.selected_cost_centers:
+                st.session_state.selected_cost_centers = temp_reader.cost_centers.copy()
+            
+            # Clean up temp file
+            import os
+            os.unlink(tmp_path)
+            
+            st.success(f"Extracted {len(temp_reader.cost_centers)} cost centers from template")
+            
+        except Exception as e:
+            st.error(f"Error extracting cost centers: {str(e)}")
+
+with row1_col2:
+    st.subheader("Select Cost Centers")
+    
+    if st.session_state.extracted_cost_centers:
+        # Display extracted cost centers
+        st.write(f"**Found {len(st.session_state.extracted_cost_centers)} cost centers:**")
+        
+        # Multiselect for cost centers
+        st.session_state.selected_cost_centers = st.multiselect(
+            "Select cost centers to process",
+            options=st.session_state.extracted_cost_centers,
+            default=st.session_state.selected_cost_centers,
+            help="Select which cost centers to include in the report generation"
+        )
+        
+        # Option to add custom cost centers
+        st.write("**Add Cost Center:**")
+        col_input, col_button = st.columns([3, 1])
+        with col_input:
+            new_cc = st.text_input("Enter cost center ID", key="new_cost_center", label_visibility="collapsed", placeholder="Enter cost center ID")
+        with col_button:
+            if st.button("Add", use_container_width=True):
+                if new_cc and new_cc not in st.session_state.extracted_cost_centers:
+                    st.session_state.extracted_cost_centers.append(new_cc)
+                    st.session_state.selected_cost_centers.append(new_cc)
+                    st.success(f"Added: {new_cc}")
+                    st.rerun()
+                elif new_cc in st.session_state.extracted_cost_centers:
+                    st.warning("Already exists")
+                else:
+                    st.warning("Enter a cost center ID")
+        
+        # Show selection summary
+        if st.session_state.selected_cost_centers:
+            st.info(f"Selected: {len(st.session_state.selected_cost_centers)} of {len(st.session_state.extracted_cost_centers)} cost centers")
+        else:
+            st.warning("No cost centers selected - report will include all cost centers")
+    else:
+        st.info("Upload a template file to extract cost centers")
+
+# Second row: Transactional File and Forecast Files
+row2_col1, row2_col2 = st.columns(2)
+
+with row2_col1:
+    st.subheader("Transactional Detail File")
     transactional_file = st.file_uploader(
-        "Transactional Detail File",
+        "transactional_label",
         type=['xlsx'],
         help="Upload the C-TIES transactional detail file (.xlsx format)",
-        key="transactional_upload"
+        key="transactional_upload",
+        label_visibility="collapsed"
     )
 
-with col2:
+with row2_col2:
     st.subheader("Forecast Files")
-    
     forecast_files = st.file_uploader(
-        "Forecast File(s)",
+        "forecast_label",
         type=['xlsx'],
         accept_multiple_files=True,
         help="Upload one or more vendor forecast files (.xlsx format)",
-        key="forecast_upload"
+        key="forecast_upload",
+        label_visibility="collapsed"
     )
     
     if forecast_files:
@@ -90,16 +177,16 @@ with status_col1:
         st.warning("Template file required")
 
 with status_col2:
-    if forecast_files:
-        st.success(f"{len(forecast_files)} forecast file(s) uploaded")
-    else:
-        st.warning("At least one forecast file required")
-
-with status_col3:
     if transactional_file:
         st.success("Transactional file uploaded")
     else:
         st.warning("Transactional file required")
+
+with status_col3:
+    if forecast_files:
+        st.success(f"{len(forecast_files)} forecast file(s) uploaded")
+    else:
+        st.warning("At least one forecast file required")
 
 st.divider()
 
@@ -153,7 +240,7 @@ if generate_button:
         
         # Run pipeline
         orchestrator = PipelineOrchestrator(config=config, logger=logger, progress_callback=update_progress)
-        output_path = orchestrator.run(file_paths)
+        output_path = orchestrator.run(file_paths, selected_cost_centers=st.session_state.selected_cost_centers)
         st.session_state.output_path = output_path
         
         # Clear progress bar after completion
