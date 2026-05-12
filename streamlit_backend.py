@@ -339,3 +339,85 @@ class PipelineOrchestrator:
         return None
 
 # Made with Bob
+
+
+class ExcelPreviewHandler:
+    """Handles Excel file preview functionality."""
+    
+    @staticmethod
+    def get_sheet_names(file_path: str) -> List[str]:
+        """
+        Get all sheet names from Excel file.
+        
+        Args:
+            file_path: Path to Excel file
+            
+        Returns:
+            List of sheet names
+        """
+        try:
+            import pandas as pd
+            with pd.ExcelFile(file_path) as xls:
+                return xls.sheet_names
+        except Exception as e:
+            print(f"Error reading sheet names: {e}")
+            return []
+    
+    @staticmethod
+    def get_sheet_info(file_path: str, sheet_name: str) -> Dict[str, int]:
+        """
+        Get metadata about a specific sheet.
+        
+        Args:
+            file_path: Path to Excel file
+            sheet_name: Name of sheet to analyze
+            
+        Returns:
+            Dictionary with row_count and column_count
+        """
+        try:
+            import pandas as pd
+            df = pd.read_excel(file_path, sheet_name=sheet_name)
+            return {
+                'row_count': len(df),
+                'column_count': len(df.columns)
+            }
+        except Exception as e:
+            print(f"Error reading sheet info: {e}")
+            return {'row_count': 0, 'column_count': 0}
+    
+    @staticmethod
+    def preview_sheet(file_path: str, sheet_name: str, max_rows: int = 50, header_row: Optional[int] = None):
+        """
+        Load first N rows of a sheet for preview.
+        
+        Args:
+            file_path: Path to Excel file
+            sheet_name: Name of sheet to preview
+            max_rows: Maximum number of rows to load
+            header_row: Optional header row number (0-based). If provided, uses this row as column headers.
+            
+        Returns:
+            DataFrame with preview data, or None if error
+        """
+        try:
+            import pandas as pd
+            # If header_row is provided, convert from 1-based to 0-based and use it
+            if header_row is not None:
+                header_idx = header_row - 1  # Convert from 1-based to 0-based
+                df = pd.read_excel(
+                    file_path,
+                    sheet_name=sheet_name,
+                    header=header_idx,
+                    nrows=max_rows
+                )
+            else:
+                df = pd.read_excel(
+                    file_path,
+                    sheet_name=sheet_name,
+                    nrows=max_rows
+                )
+            return df
+        except Exception as e:
+            print(f"Error loading sheet preview: {e}")
+            return None

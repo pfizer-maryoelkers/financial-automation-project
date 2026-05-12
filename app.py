@@ -5,7 +5,7 @@ Phase 1: Basic UI with file upload and report generation.
 
 import streamlit as st
 from pathlib import Path
-from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger
+from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
 from streamlit_config import ConfigManager, AppConfig
 
 # Page configuration
@@ -29,6 +29,78 @@ if 'selected_cost_centers' not in st.session_state:
     st.session_state.selected_cost_centers = []
 if 'app_config' not in st.session_state:
     st.session_state.app_config = ConfigManager.load_config()
+
+
+def render_preview_section(output_path: str):
+    """Render Excel file preview section"""
+    st.subheader("Preview Report")
+    
+    try:
+        # Get sheet names
+        sheet_names = ExcelPreviewHandler.get_sheet_names(output_path)
+        
+        if not sheet_names:
+            st.warning("Could not load sheet names from output file")
+            return
+        
+        # Sheet selector
+        selected_sheet = st.selectbox(
+            "Select Sheet to Preview",
+            sheet_names,
+            help="Choose which sheet to preview"
+        )
+        
+        # Determine max rows (50 for first sheet, 10 for others)
+        is_first_sheet = (selected_sheet == sheet_names[0])
+        max_rows = 50 if is_first_sheet else 10
+        
+        # Get sheet info
+        sheet_info = ExcelPreviewHandler.get_sheet_info(output_path, selected_sheet)
+        
+        # Display metadata
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Rows", f"{sheet_info['row_count']:,}")
+        with col2:
+            st.metric("Columns", sheet_info['column_count'])
+        with col3:
+            st.metric("Preview Rows", max_rows)
+        
+        # Load and display preview
+        # For first sheet, use configured header row
+        header_row = None
+        if is_first_sheet:
+            header_row = st.session_state.app_config.template.header_row
+        
+        with st.spinner(f"Loading preview of {selected_sheet}..."):
+            df_preview = ExcelPreviewHandler.preview_sheet(
+                output_path,
+                selected_sheet,
+                max_rows,
+                header_row=header_row
+            )
+        
+        if df_preview is not None:
+            st.dataframe(
+                df_preview,
+                use_container_width=True,
+                height=400
+            )
+            
+            # Show preview info
+            rows_shown = len(df_preview)
+            total_rows = sheet_info['row_count']
+            if rows_shown < total_rows:
+                st.caption(
+                    f"Showing first {rows_shown} rows of {total_rows:,} total rows"
+                )
+            else:
+                st.caption(f"Showing all {rows_shown} rows")
+        else:
+            st.error("Could not load sheet preview")
+            
+    except Exception as e:
+        st.error(f"Error displaying preview: {str(e)}")
 
 
 def render_config_section():
@@ -505,6 +577,11 @@ if st.session_state.output_path:
         st.info("Click the button above to download your report.")
     else:
         st.error("Could not read output file for download.")
+    
+    st.divider()
+    
+    # Preview Section
+    render_preview_section(output_path)
 
 # Cleanup temp files on session end (best effort)
 if st.session_state.temp_dir:
@@ -517,7 +594,6 @@ st.divider()
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
     <p>Financial Automation Report Generator v1.0</p>
-    <p>Phase 1: Basic UI with File Upload and Report Generation</p>
 </div>
 """, unsafe_allow_html=True)
 
