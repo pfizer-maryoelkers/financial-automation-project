@@ -1,0 +1,60 @@
+template:
+  header_row: 9
+  po_col: B
+  po_stop_marker: Previous Period Invoices
+  cost_center_col: A
+  cost_center_start_row: 2
+forecast_reader:
+  po_col: 'PO #'
+transactional_detail_reader:
+  required_cols:
+  - PO Number
+  - Month
+  - GL Transaction Amount
+  valid_types:
+  - Actual
+  - Accrual
+  - Reversal
+  colmap:
+    po: PO Number
+    month: Month
+    amount: GL BER Corp Amount
+    classifier: AP Voucher Number
+    cost_center: CC ID
+    wbs: WBS Element
+    type: Type
+template_writer:
+  output_path: template_output.xlsx
+  overwrite: false
+  dec_acc_reversal_col: N
+  forecast_source_cols:
+  - 'PO #'
+  - Jan 2026 - FTotal
+  - Feb 2026 - FTotal
+  - March 2026 - FTotal
+  - April 2026 - FTotal
+  - May 2026 - FTotal
+  - June 2026 - FTotal
+  - July 2026 - FTotal
+  - Aug 2026 - FTotal
+  - Sep 2026 - FTotal
+  - Oct 2026 - FTotal
+  - Nov 2026 - FTotal
+  - Dec 2026 - FTotal
+  transactional_source_cols:
+  - PO Number
+  - Accounting Period
+  - AP Voucher Number
+  - Vendor Name
+  - WBS Element
+  - GL Invoice Date
+  - GL Posting Date
+  - GL Line Description
+  - Description
+  - GL Transaction Amount
+  - GL BER Corp Amount
+  - Month
+  - AP01
+  - AP02
+  - AP03
+  - Type
