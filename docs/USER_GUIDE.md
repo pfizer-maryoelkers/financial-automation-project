@@ -1,10 +1,10 @@
-# User Guide
+﻿# User Guide
 
 > **Complete guide for using the Financial Automation Project - from file preparation to report analysis**
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Getting Started](#getting-started)
 - [Using the Streamlit Web UI](#using-the-streamlit-web-ui)
@@ -18,15 +18,15 @@
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 
 Before you begin, ensure you have:
 
-- ✅ Python 3.9 or higher installed
-- ✅ Access to the project files
-- ✅ Your input files ready:
+-  Python 3.9 or higher installed
+-  Access to the project files
+-  Your input files ready:
   - Financial spreadsheet template (.xlsx)
   - C-TIES transactional detail file (.xlsx)
   - One or more vendor forecast files (.xlsx)
@@ -50,7 +50,7 @@ Before you begin, ensure you have:
 
 ---
 
-## 🎨 Using the Streamlit Web UI
+##  Using the Streamlit Web UI
 
 The Streamlit UI provides an intuitive interface for generating financial reports.
 
@@ -79,7 +79,7 @@ graph LR
 - Click "Browse files" under "Template File"
 - Select your financial spreadsheet template (.xlsx)
 - System automatically extracts cost centers from the template
-- ✅ Success message shows number of cost centers found
+-  Success message shows number of cost centers found
 
 **Transactional Detail File**:
 - Click "Browse files" under "Transactional Detail File"
@@ -111,10 +111,10 @@ After uploading the template, you can filter which cost centers to process:
 **Example**:
 ```
 Found 15 cost centers:
-☑ 1234
-☑ 2345
-☐ 3456  (unchecked - will be excluded)
-☑ 4567
+ 1234
+ 2345
+ 3456  (unchecked - will be excluded)
+ 4567
 ...
 ```
 
@@ -138,7 +138,7 @@ Click to expand "Configuration Settings" to adjust parameters:
 - Output Filename: Name for generated file
 - Overwrite: Allow overwriting existing data
 
-💡 **Tip**: Default settings work for standard templates. Only adjust if your files have a different structure.
+ **Tip**: Default settings work for standard templates. Only adjust if your files have a different structure.
 
 ---
 
@@ -155,15 +155,15 @@ Click to expand "Configuration Settings" to adjust parameters:
 
 3. **Monitor Progress**:
    ```
-   ⏳ Saving uploaded files...
-   ⏳ Step 1/4: Loading data...
-   ✅ Loaded forecast data: 150 POs
-   ✅ Loaded transactional data: 2,450 rows
-   ⏳ Step 2/4: Building hierarchy...
-   ✅ Built hierarchy: 23 exceptions found
-   ⏳ Step 3/4: Writing template output...
-   ⏳ Step 4/4: Generating exception reports...
-   ✅ Report generated successfully in 24.5 seconds!
+    Saving uploaded files...
+    Step 1/4: Loading data...
+    Loaded forecast data: 150 POs
+    Loaded transactional data: 2,450 rows
+    Step 2/4: Building hierarchy...
+    Built hierarchy: 23 exceptions found
+    Step 3/4: Writing template output...
+    Step 4/4: Generating exception reports...
+    Report generated successfully in 24.5 seconds!
    ```
 
 ---
@@ -184,9 +184,9 @@ Breakdown by Type:
 ```
 
 **What to do**:
-- ✅ **0 exceptions**: Perfect! Your data is clean
-- ⚠️ **Few exceptions**: Review and fix if critical
-- 🔴 **Many exceptions**: Check source data quality
+-  **0 exceptions**: Perfect! Your data is clean
+-  **Few exceptions**: Review and fix if critical
+-  **Many exceptions**: Check source data quality
 
 ---
 
@@ -242,8 +242,8 @@ Before downloading, preview the generated report:
 - Returns to base configuration
 
 **Configuration Status**:
-- 🟢 "Using Custom Configuration" - Your saved settings active
-- 🔵 "Using Default Configuration" - Base settings active
+-  "Using Custom Configuration" - Your saved settings active
+-  "Using Default Configuration" - Base settings active
 
 ---
 
@@ -280,7 +280,7 @@ Before downloading, preview the generated report:
 
 ---
 
-## 💻 Using the Command Line
+##  Using the Command Line
 
 For automated workflows or when UI is not available.
 
@@ -343,7 +343,7 @@ Step 4: Writing exception reports
 
 ---
 
-## 📄 Input File Requirements
+##  Input File Requirements
 
 ### Template File Requirements
 
@@ -438,7 +438,7 @@ Row 4: PO12345   | 2     | 210456           | 950               | 1234        | 
 
 ---
 
-## 📊 Understanding Outputs
+##  Understanding Outputs
 
 The system generates a comprehensive Excel workbook with 5 sheets:
 
@@ -449,7 +449,7 @@ The system generates a comprehensive Excel workbook with 5 sheets:
 **Structure**:
 - Same layout as input template
 - Data filled in monthly columns
-- Organized by Cost Center → WBS → PO
+- Organized by Cost Center  WBS  PO
 
 **Columns** (per month):
 - Accrual Reversal (Dec only)
@@ -607,7 +607,7 @@ Cost Center | Total | MISSING_WBS | DUPLICATE_PO | MISSING_PO
 
 ---
 
-## 🔍 Exception System Guide
+##  Exception System Guide
 
 ### Understanding Exception Types
 
@@ -639,7 +639,7 @@ Cost Center: 1234
 WBS Element: [empty]
 PO Number: [empty]
 Amount: $1,000
-→ Exception logged, data excluded
+ Exception logged, data excluded
 ```
 
 ---
@@ -671,7 +671,7 @@ Cost Center: 1234
 WBS Element: [empty]
 PO Number: PO12345
 Amount: $1,000
-→ Exception logged, PO excluded
+ Exception logged, PO excluded
 ```
 
 ---
@@ -703,7 +703,7 @@ Cost Center: 1234
 WBS Element: IT-CT123
 PO Number: [empty]
 Amount: $500
-→ Exception logged, transaction excluded
+ Exception logged, transaction excluded
 ```
 
 ---
@@ -733,9 +733,9 @@ Amount: $500
 WBS IT-CT123 appears in:
 - Cost Center 1234 (10 transactions)
 - Cost Center 2345 (5 transactions)
-→ All 15 transactions logged as exceptions
-→ First occurrence (CC 1234) processed
-→ Second occurrence (CC 2345) excluded
+ All 15 transactions logged as exceptions
+ First occurrence (CC 1234) processed
+ Second occurrence (CC 2345) excluded
 ```
 
 ---
@@ -764,9 +764,9 @@ WBS IT-CT123 appears in:
 PO12345 appears in:
 - CC 1234, WBS IT-CT123 (8 transactions)
 - CC 1234, WBS IT-CT456 (3 transactions)
-→ All 11 transactions logged as exceptions
-→ First occurrence processed
-→ Duplicate excluded
+ All 11 transactions logged as exceptions
+ First occurrence processed
+ Duplicate excluded
 ```
 
 ---
@@ -839,50 +839,50 @@ graph TD
 
 #### Prevention
 
-✅ **Data Quality Checks**:
+ **Data Quality Checks**:
 - Validate WBS and PO assignments before export
 - Ensure all transactions have required fields
 - Regular data audits
 
-✅ **Consistent Processes**:
+ **Consistent Processes**:
 - Standard PO creation procedures
 - WBS assignment guidelines
 - Regular training
 
-✅ **System Validation**:
+ **System Validation**:
 - Enable required field validation in source systems
 - Automated data quality checks
 - Pre-export validation
 
 #### Resolution
 
-✅ **Prioritize by Impact**:
+ **Prioritize by Impact**:
 1. MISSING_WBS_AND_PO (highest impact)
 2. MISSING_WBS / MISSING_PO
 3. DUPLICATE_WBS / DUPLICATE_PO
 
-✅ **Batch Fixes**:
+ **Batch Fixes**:
 - Group similar exceptions
 - Fix in bulk when possible
 - Document patterns
 
-✅ **Track Progress**:
+ **Track Progress**:
 - Monitor exception trends over time
 - Set reduction targets
 - Celebrate improvements
 
 ---
 
-## 💡 Best Practices
+##  Best Practices
 
 ### File Preparation
 
 **Before Upload**:
-1. ✅ Verify file formats (.xlsx)
-2. ✅ Check file sizes (< 100MB recommended)
-3. ✅ Ensure required columns exist
-4. ✅ Remove any password protection
-5. ✅ Close files in Excel (avoid file locks)
+1.  Verify file formats (.xlsx)
+2.  Check file sizes (< 100MB recommended)
+3.  Ensure required columns exist
+4.  Remove any password protection
+5.  Close files in Excel (avoid file locks)
 
 **Template File**:
 - Keep structure consistent
@@ -948,7 +948,7 @@ graph TD
 
 ---
 
-## 🔄 Common Workflows
+##  Common Workflows
 
 ### Workflow 1: Monthly Report Generation
 
@@ -1021,21 +1021,21 @@ graph TD
 
 ---
 
-## 🎯 Tips and Tricks
+##  Tips and Tricks
 
 ### UI Tips
 
-💡 **Keyboard Shortcuts**:
+ **Keyboard Shortcuts**:
 - `Ctrl + R`: Refresh page
 - `Ctrl + Shift + R`: Clear cache and refresh
 - `Ctrl + Click`: Open links in new tab
 
-💡 **File Upload**:
+ **File Upload**:
 - Drag and drop files instead of browsing
 - Upload multiple forecast files at once
 - Files are temporarily stored (auto-cleanup)
 
-💡 **Configuration**:
+ **Configuration**:
 - Save configuration before closing browser
 - Reset to defaults if issues occur
 - Test configuration changes with small dataset
@@ -1044,19 +1044,19 @@ graph TD
 
 ### Excel Tips
 
-💡 **Exception Analysis**:
+ **Exception Analysis**:
 - Use Excel's filter and sort features
 - Create pivot tables from exception data
 - Use conditional formatting to highlight issues
 - Copy exception list to separate workbook for tracking
 
-💡 **Data Validation**:
+ **Data Validation**:
 - Use VLOOKUP to cross-reference POs
 - Create summary tables by cost center
 - Compare forecast vs actual with formulas
 - Use charts to visualize trends
 
-💡 **Audit Trail**:
+ **Audit Trail**:
 - Keep source data sheets for reference
 - Use hyperlinks to jump between sheets
 - Document any manual adjustments
@@ -1066,13 +1066,13 @@ graph TD
 
 ### Performance Tips
 
-💡 **Speed Up Processing**:
+ **Speed Up Processing**:
 - Process fewer cost centers at once
 - Close unnecessary applications
 - Use SSD for file storage
 - Increase available RAM if possible
 
-💡 **Reduce File Size**:
+ **Reduce File Size**:
 - Remove unnecessary columns from source files
 - Limit to required accounting periods
 - Compress files before upload
@@ -1080,7 +1080,7 @@ graph TD
 
 ---
 
-## 🆘 Getting Help
+##  Getting Help
 
 ### Self-Service Resources
 
@@ -1091,11 +1091,11 @@ graph TD
 
 ### When to Escalate
 
-- ❌ System errors or crashes
-- ❌ Incorrect calculations
-- ❌ Missing data in output
-- ❌ Configuration not working
-- ❌ Performance issues
+-  System errors or crashes
+-  Incorrect calculations
+-  Missing data in output
+-  Configuration not working
+-  Performance issues
 
 ### What to Include
 
@@ -1108,7 +1108,7 @@ When reporting issues:
 
 ---
 
-## 📚 Related Documentation
+##  Related Documentation
 
 - **[Configuration Guide](CONFIGURATION.md)** - Complete configuration reference
 - **[Architecture Guide](ARCHITECTURE.md)** - System design and components

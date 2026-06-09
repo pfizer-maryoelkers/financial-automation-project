@@ -1,10 +1,10 @@
-# Architecture Guide
+﻿# Architecture Guide
 
 > **Complete system architecture, component design, and data models for the Financial Automation Project**
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [System Overview](#system-overview)
 - [Architecture Patterns](#architecture-patterns)
@@ -17,7 +17,7 @@
 
 ---
 
-## 🎯 System Overview
+##  System Overview
 
 The Financial Automation Project is built on an **ETL (Extract, Transform, Load)** architecture that processes financial data from multiple sources and generates comprehensive reports with exception tracking.
 
@@ -77,7 +77,7 @@ graph TB
 
 ---
 
-## 🏗️ Architecture Patterns
+##  Architecture Patterns
 
 ### 1. ETL Pattern
 
@@ -138,7 +138,7 @@ exception_log.log(
 
 ---
 
-## 🔄 ETL Pipeline
+##  ETL Pipeline
 
 ### Pipeline Flow
 
@@ -175,13 +175,13 @@ sequenceDiagram
 ### Data Flow
 
 1. **Extract Phase**
-   - ForecastReader: `file_paths` → `forecast_data` (dict)
-   - TransactionalDetailReader: `file_path` → `transactional_data` (dict) + `hierarchy_map` (dict)
-   - TemplateReader: `file_path` → `cost_centers` (list) + `pos` (dict)
+   - ForecastReader: `file_paths`  `forecast_data` (dict)
+   - TransactionalDetailReader: `file_path`  `transactional_data` (dict) + `hierarchy_map` (dict)
+   - TemplateReader: `file_path`  `cost_centers` (list) + `pos` (dict)
 
 2. **Transform Phase**
    - build_hierarchy: Combines all extracted data
-   - Creates Cost Center → WBS → PO hierarchy
+   - Creates Cost Center  WBS  PO hierarchy
    - Validates data quality
    - Logs exceptions with full context
 
@@ -193,7 +193,7 @@ sequenceDiagram
 
 ---
 
-## 🧩 Core Components
+##  Core Components
 
 ### 1. ForecastReader
 
@@ -321,13 +321,13 @@ pos = {
 2. Read cost centers from configured column starting at configured row
 3. Find stop marker row
 4. Extract PO numbers between header row and stop marker
-5. Create mapping of PO → row number
+5. Create mapping of PO  row number
 
 ---
 
 ### 4. build_hierarchy (Transform Function)
 
-**Purpose**: Build Cost Center → WBS → PO hierarchy with exception tracking
+**Purpose**: Build Cost Center  WBS  PO hierarchy with exception tracking
 
 **Location**: `src/utils.py`
 
@@ -440,7 +440,7 @@ pos = {
 
 ---
 
-## 📊 Data Models
+##  Data Models
 
 ### Hierarchy Models
 
@@ -604,7 +604,7 @@ class ExceptionLog:
 
 ---
 
-## 🔗 Component Interactions
+##  Component Interactions
 
 ### Data Flow Diagram
 
@@ -655,7 +655,7 @@ graph LR
 
 ### Interaction Patterns
 
-#### 1. Reader → Transform
+#### 1. Reader  Transform
 ```python
 # Readers provide structured data
 forecast_data = forecast_reader.get_forecast_data()
@@ -673,7 +673,7 @@ hierarchy = build_hierarchy(
 )
 ```
 
-#### 2. Transform → Load
+#### 2. Transform  Load
 ```python
 # Writer receives hierarchy and exception log
 template_writer.write_hierarchy(hierarchy, pos=template_reader.pos)
@@ -702,7 +702,7 @@ summary = exception_log.summary_by_type()
 
 ---
 
-## 🎨 Design Decisions
+##  Design Decisions
 
 ### 1. Why ETL Architecture?
 
@@ -785,7 +785,7 @@ template:
 
 ### 5. Why Hierarchy Structure?
 
-**Decision**: Organize data as Cost Center → WBS → PO
+**Decision**: Organize data as Cost Center  WBS  PO
 
 **Rationale**:
 - **Matches Business Logic**: Reflects actual organizational structure
@@ -796,16 +796,16 @@ template:
 **Structure**:
 ```
 Cost Center 1234
-  └─ WBS IT-CT123
-      ├─ PO12345 (monthly data)
-      └─ PO67890 (monthly data)
-  └─ WBS IT-CT456
-      └─ PO11111 (monthly data)
+   WBS IT-CT123
+       PO12345 (monthly data)
+       PO67890 (monthly data)
+   WBS IT-CT456
+       PO11111 (monthly data)
 ```
 
 ---
 
-## 🔌 Extension Points
+##  Extension Points
 
 ### Adding New Exception Types
 
@@ -905,7 +905,7 @@ def _categorize_row(self, row):
 
 ---
 
-## 📈 Performance Considerations
+##  Performance Considerations
 
 ### Memory Usage
 
@@ -928,7 +928,7 @@ def _categorize_row(self, row):
 
 ---
 
-## 🔍 Testing Strategy
+##  Testing Strategy
 
 ### Unit Testing
 
@@ -974,7 +974,7 @@ def test_full_pipeline():
 
 ---
 
-## 📚 Related Documentation
+##  Related Documentation
 
 - **[User Guide](USER_GUIDE.md)** - How to use the system
 - **[Configuration Guide](CONFIGURATION.md)** - Configuration reference

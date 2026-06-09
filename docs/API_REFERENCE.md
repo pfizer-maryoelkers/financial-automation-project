@@ -1,10 +1,10 @@
-# API Reference & Developer Guide
+﻿# API Reference & Developer Guide
 
 > **Complete API documentation and developer guide for the Financial Automation Project**
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Developer Setup](#developer-setup)
 - [Project Structure](#project-structure)
@@ -19,7 +19,7 @@
 
 ---
 
-## 🚀 Developer Setup
+##  Developer Setup
 
 ### Prerequisites
 
@@ -85,34 +85,34 @@ mypy src/
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 financial-automation-project/
-│
-├── src/                           # Core source code
-│   ├── __init__.py
-│   ├── forecast_reader.py         # Forecast file reader
-│   ├── transactional_detail_reader.py  # C-TIES reader
-│   ├── template_reader.py         # Template structure reader
-│   ├── template_writer.py         # Output workbook writer
-│   ├── models.py                  # Data models
-│   └── utils.py                   # Utility functions
-│
-├── app.py                         # Streamlit UI
-├── streamlit_backend.py           # Streamlit backend orchestration
-├── streamlit_config.py            # Streamlit configuration management
-├── main.py                        # Command-line entry point
-│
-├── configs/                       # Configuration files
-├── data/                          # Sample data
-├── notebooks/                     # Jupyter notebooks
-└── docs/                          # Documentation
+
+ src/                           # Core source code
+    __init__.py
+    forecast_reader.py         # Forecast file reader
+    transactional_detail_reader.py  # C-TIES reader
+    template_reader.py         # Template structure reader
+    template_writer.py         # Output workbook writer
+    models.py                  # Data models
+    utils.py                   # Utility functions
+
+ app.py                         # Streamlit UI
+ streamlit_backend.py           # Streamlit backend orchestration
+ streamlit_config.py            # Streamlit configuration management
+ main.py                        # Command-line entry point
+
+ configs/                       # Configuration files
+ data/                          # Sample data
+ notebooks/                     # Jupyter notebooks
+ docs/                          # Documentation
 ```
 
 ---
 
-## 🔧 Core API Reference
+##  Core API Reference
 
 ### ForecastReader
 
@@ -334,12 +334,12 @@ def get_transactional_data(self) -> dict
 - Calls `load_transactional_detail_file()` if not loaded
 - Filters to valid transaction types
 - Groups by PO, Month, Type, Cost Center, WBS
-- Applies month offset for actuals (actuals in AP02 → Jan)
+- Applies month offset for actuals (actuals in AP02  Jan)
 - Sorts months chronologically
 
 **Month Offset Logic**:
-- **Actuals**: Belong to prior month (AP02 actuals → Jan)
-- **Accruals/Reversals**: Belong to current month (AP02 accruals → Feb)
+- **Actuals**: Belong to prior month (AP02 actuals  Jan)
+- **Accruals/Reversals**: Belong to current month (AP02 accruals  Feb)
 
 **Example**:
 ```python
@@ -414,9 +414,9 @@ def _categorize_row(self, row: pd.Series) -> str
 **Example**:
 ```python
 # Applied automatically during load
-# Row with AP Voucher "510123" → "Actual"
-# Row with AP Voucher "210456" and amount 950 → "Accrual"
-# Row with AP Voucher "210789" and amount -950 → "Reversal"
+# Row with AP Voucher "510123"  "Actual"
+# Row with AP Voucher "210456" and amount 950  "Accrual"
+# Row with AP Voucher "210789" and amount -950  "Reversal"
 ```
 
 ---
@@ -543,7 +543,7 @@ def get_existing_pos(self) -> dict[str, int]
 
 **Description**: Extracts PO numbers and their row positions
 
-**Returns**: Dictionary mapping PO → row number
+**Returns**: Dictionary mapping PO  row number
 
 **Behavior**:
 - Finds stop marker row
@@ -621,11 +621,11 @@ def write_hierarchy(self, hierarchy: dict, pos: dict[str, int]) -> None
 **Description**: Writes financial data to template
 
 **Parameters**:
-- `hierarchy` (dict): Cost Center → WBS → PO hierarchy
-- `pos` (dict): PO → row number mapping
+- `hierarchy` (dict): Cost Center  WBS  PO hierarchy
+- `pos` (dict): PO  row number mapping
 
 **Behavior**:
-- Iterates through hierarchy (CostCenter → WBSCode → PO)
+- Iterates through hierarchy (CostCenter  WBSCode  PO)
 - For each PO, writes monthly metrics to correct cells
 - Respects `overwrite` setting
 - Skips POs not in template
@@ -651,7 +651,7 @@ def write_forecast_source_sheet(
 
 **Parameters**:
 - `forecast_df` (pd.DataFrame): Forecast data
-- `pos` (dict): PO → row mapping (for filtering)
+- `pos` (dict): PO  row mapping (for filtering)
 
 **Behavior**:
 - Filters to POs in template
@@ -685,7 +685,7 @@ def write_transactional_source_sheet(
 
 **Parameters**:
 - `transactions_df` (pd.DataFrame): Transactional data
-- `pos` (dict): PO → row mapping (for filtering)
+- `pos` (dict): PO  row mapping (for filtering)
 
 **Behavior**:
 - Filters to POs in template
@@ -780,7 +780,7 @@ writer.save()
 
 ---
 
-## 🎨 Streamlit Components
+##  Streamlit Components
 
 ### FileHandler
 
@@ -990,7 +990,7 @@ if not is_valid:
 
 ---
 
-## 🛠️ Utility Functions
+##  Utility Functions
 
 ### build_hierarchy()
 
@@ -1007,7 +1007,7 @@ def build_hierarchy(
 ) -> dict[str, CostCenter]
 ```
 
-**Description**: Builds Cost Center → WBS → PO hierarchy with exception tracking
+**Description**: Builds Cost Center  WBS  PO hierarchy with exception tracking
 
 **Parameters**:
 - `cost_centers` (list[str]): List of cost center IDs to process
@@ -1017,7 +1017,7 @@ def build_hierarchy(
 - `exception_log` (ExceptionLog): Exception log for tracking issues
 - `transactional_df` (pd.DataFrame): Source DataFrame for exception context
 
-**Returns**: Dictionary mapping cost_center_id → CostCenter object
+**Returns**: Dictionary mapping cost_center_id  CostCenter object
 
 **Example**:
 ```python
@@ -1094,7 +1094,7 @@ df = pd.read_excel(excel_file)
 
 ---
 
-## 📊 Data Models
+##  Data Models
 
 Complete reference in [Architecture Guide - Data Models](ARCHITECTURE.md#data-models)
 
@@ -1134,7 +1134,7 @@ summary_by_cc = exception_log.summary_by_cost_center()
 
 ---
 
-## 🔌 Extending the System
+##  Extending the System
 
 ### Adding a New Exception Type
 
@@ -1281,7 +1281,7 @@ values = {
 
 ---
 
-## 📝 Code Conventions
+##  Code Conventions
 
 ### Type Hints
 
@@ -1357,7 +1357,7 @@ except Exception as e:
 
 ---
 
-## 🧪 Testing Guidelines
+##  Testing Guidelines
 
 ### Unit Testing
 
@@ -1441,7 +1441,7 @@ Create minimal test files:
 
 ---
 
-## 🤝 Contributing
+##  Contributing
 
 ### Development Workflow
 
@@ -1474,12 +1474,12 @@ Create minimal test files:
 
 ### Code Review Checklist
 
-- ✅ Code follows conventions
-- ✅ Type hints present
-- ✅ Docstrings added
-- ✅ Tests written and passing
-- ✅ Documentation updated
-- ✅ No breaking changes (or documented)
+-  Code follows conventions
+-  Type hints present
+-  Docstrings added
+-  Tests written and passing
+-  Documentation updated
+-  No breaking changes (or documented)
 
 ### Documentation Updates
 
@@ -1491,7 +1491,7 @@ When making changes:
 
 ---
 
-## 📚 Related Documentation
+##  Related Documentation
 
 - **[User Guide](USER_GUIDE.md)** - End user documentation
 - **[Architecture Guide](ARCHITECTURE.md)** - System design

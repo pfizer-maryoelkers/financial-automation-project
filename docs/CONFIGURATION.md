@@ -1,10 +1,10 @@
-# Configuration Guide
+﻿# Configuration Guide
 
 > **Complete reference for configuring the Financial Automation Project**
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Configuration Overview](#configuration-overview)
 - [Configuration Files](#configuration-files)
@@ -18,7 +18,7 @@
 
 ---
 
-## 🎯 Configuration Overview
+##  Configuration Overview
 
 The Financial Automation Project uses **YAML-based configuration** for flexibility and maintainability.
 
@@ -51,7 +51,7 @@ graph TD
 
 ---
 
-## 📁 Configuration Files
+##  Configuration Files
 
 ### config_base.yaml
 
@@ -140,7 +140,7 @@ template_writer:
 
 ---
 
-## 🏗️ Template Configuration
+##  Template Configuration
 
 Configuration for reading and writing the financial spreadsheet template.
 
@@ -184,8 +184,8 @@ template:
 **Example**:
 ```
 Row 15: [Some header]
-Row 16: Cost Center | PO # | ... | Dec Acc Rev | Jan Forecast | ...  ← This is header_row
-Row 17: 1234        | PO123| ...                                      ← Data starts here
+Row 16: Cost Center | PO # | ... | Dec Acc Rev | Jan Forecast | ...   This is header_row
+Row 17: 1234        | PO123| ...                                       Data starts here
 ```
 
 ---
@@ -211,7 +211,7 @@ template:
 **Example**:
 ```
 Column A: Cost Center
-Column B: PO #          ← This is po_col
+Column B: PO #           This is po_col
 Column C: Description
 ```
 
@@ -241,7 +241,7 @@ template:
 ```
 Row 45: 1234 | PO999 | ...
 Row 46: 1234 | PO888 | ...
-Row 47: Previous Period Invoices  ← This is the stop marker
+Row 47: Previous Period Invoices   This is the stop marker
 Row 48: [Other content]
 ```
 
@@ -283,14 +283,14 @@ template:
 **Example**:
 ```
 Row 8:  [Header or blank]
-Row 9:  1234              ← First cost center (cost_center_start_row)
-Row 10: 2345              ← Second cost center
-Row 11: 3456              ← Third cost center
+Row 9:  1234               First cost center (cost_center_start_row)
+Row 10: 2345               Second cost center
+Row 11: 3456               Third cost center
 ```
 
 ---
 
-## 📊 Forecast Reader Configuration
+##  Forecast Reader Configuration
 
 Configuration for reading vendor forecast files.
 
@@ -350,7 +350,7 @@ forecast_reader:
 
 ---
 
-## 📋 Transactional Detail Reader Configuration
+##  Transactional Detail Reader Configuration
 
 Configuration for reading C-TIES transactional detail files.
 
@@ -491,7 +491,7 @@ colmap:
 
 ---
 
-## 📝 Template Writer Configuration
+##  Template Writer Configuration
 
 Configuration for generating output workbook.
 
@@ -665,7 +665,7 @@ transactional_source_cols:
 
 ---
 
-## 📚 Configuration Examples
+##  Configuration Examples
 
 ### Example 1: Standard Configuration
 
@@ -886,7 +886,7 @@ template_writer:
 
 ---
 
-## ✅ Validation Rules
+##  Validation Rules
 
 The system validates configuration to prevent errors.
 
@@ -925,7 +925,7 @@ The system validates configuration to prevent errors.
 
 ---
 
-## 🔧 Troubleshooting
+##  Troubleshooting
 
 ### Common Configuration Issues
 
@@ -1010,7 +1010,7 @@ template_writer:
 
 ---
 
-## 📚 Related Documentation
+##  Related Documentation
 
 - **[User Guide](USER_GUIDE.md)** - How to use the system
 - **[Architecture Guide](ARCHITECTURE.md)** - System design

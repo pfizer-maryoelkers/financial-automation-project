@@ -1,10 +1,10 @@
-# Deployment & Operations Guide
+﻿# Deployment & Operations Guide
 
 > **Complete guide for deploying, integrating, and troubleshooting the Financial Automation Project**
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Local Deployment](#local-deployment)
 - [Streamlit Deployment](#streamlit-deployment)
@@ -17,7 +17,7 @@
 
 ---
 
-## 💻 Local Deployment
+##  Local Deployment
 
 ### Prerequisites
 
@@ -110,7 +110,7 @@ export FINANCIAL_AUTOMATION_OUTPUT_DIR=/path/to/output
 
 ---
 
-## 🌐 Streamlit Deployment
+##  Streamlit Deployment
 
 ### Streamlit Cloud (Recommended)
 
@@ -142,7 +142,7 @@ export FINANCIAL_AUTOMATION_OUTPUT_DIR=/path/to/output
 
 **Step 3: Configure**
 
-- Set secrets if needed (Settings → Secrets)
+- Set secrets if needed (Settings  Secrets)
 - Configure resource limits
 - Set up custom domain (optional)
 
@@ -211,7 +211,7 @@ export FINANCIAL_AUTOMATION_OUTPUT_DIR=/path/to/output
 
 ---
 
-## 🔄 Power Automate Integration
+##  Power Automate Integration
 
 ### Overview
 
@@ -461,7 +461,7 @@ def process_financial_data(req: func.HttpRequest) -> func.HttpResponse:
 
 ---
 
-## ☁️ Azure Deployment
+##  Azure Deployment
 
 ### Azure Function App Setup
 
@@ -562,7 +562,7 @@ jobs:
 
 ---
 
-## 🔧 Troubleshooting
+##  Troubleshooting
 
 ### Common Issues
 
@@ -722,7 +722,7 @@ Set in `host.json`:
 
 ---
 
-## ⚡ Performance Optimization
+##  Performance Optimization
 
 ### File Size Optimization
 
@@ -788,7 +788,7 @@ print(f"Memory usage: {process.memory_info().rss / 1024 / 1024:.2f} MB")
 
 ---
 
-## 🔄 Maintenance
+##  Maintenance
 
 ### Regular Tasks
 
@@ -859,7 +859,7 @@ python -m pytest tests/
 
 ---
 
-## ❓ FAQ
+##  FAQ
 
 ### General Questions
 
@@ -899,7 +899,7 @@ A: Yes, modify `TemplateWriter` class or adjust configuration.
 A: Update the `colmap` in configuration to match your column names.
 
 **Q: How are actuals assigned to months?**  
-A: Actuals in accounting period N belong to month N-1 (e.g., AP02 actuals → January).
+A: Actuals in accounting period N belong to month N-1 (e.g., AP02 actuals  January).
 
 **Q: What happens to duplicate POs?**  
 A: First occurrence is used, duplicates logged as exceptions.
@@ -925,7 +925,7 @@ A: Check error message, verify file formats, ensure all dependencies installed. 
 
 ---
 
-## 📞 Support
+##  Support
 
 ### Getting Help
 
@@ -949,7 +949,7 @@ A: Check error message, verify file formats, ensure all dependencies installed. 
 
 ---
 
-## 📚 Related Documentation
+##  Related Documentation
 
 - **[README](../README.md)** - Project overview
 - **[User Guide](USER_GUIDE.md)** - End user documentation

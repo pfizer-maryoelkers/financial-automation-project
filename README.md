@@ -1,4 +1,4 @@
-# Financial Automation Project
+﻿# Financial Automation Project
 
 > **An end-to-end ETL pipeline for automating financial data processing with comprehensive exception tracking and data quality validation.**
 
@@ -8,7 +8,7 @@
 
 ---
 
-## 📋 Table of Contents
+##  Table of Contents
 
 - [Overview](#overview)
 - [Key Features](#key-features)
@@ -21,7 +21,7 @@
 
 ---
 
-## 🎯 Overview
+##  Overview
 
 The Financial Automation Project automates the process of populating a Financial Spreadsheet Template with:
 - **Forecast data** from vendor files
@@ -44,38 +44,38 @@ graph LR
 
 ---
 
-## ✨ Key Features
+##  Key Features
 
-### 🔄 Automated Data Processing
+###  Automated Data Processing
 - **Multi-source integration**: Combines vendor forecasts and transactional data
 - **Intelligent parsing**: Automatically detects valid sheets and data structures
 - **Duplicate handling**: Manages duplicate POs across multiple forecast files
 
-### 🎨 User-Friendly Interface
+###  User-Friendly Interface
 - **Streamlit Web UI**: Easy-to-use interface for file uploads and report generation
 - **Cost Center Filtering**: Process specific cost centers or all at once
 - **Live Preview**: View generated reports before downloading
 - **Configuration Management**: Adjust settings through the UI
 
-### 📊 Comprehensive Exception Tracking
+###  Comprehensive Exception Tracking
 - **5 Exception Types**: Missing WBS, Missing PO, Duplicates, and more
 - **Detailed Logging**: Full source row context for every exception
 - **Summary Reports**: Executive overview of data quality issues
 - **Interactive Filtering**: Filter exceptions by month, type, or cost center
 
-### 🔍 Complete Audit Trail
+###  Complete Audit Trail
 - **Forecast Source Data**: Track all forecast values to source
 - **Transaction Source Data**: Complete transactional detail audit
 - **Exception Reports**: Detailed and summary views
 
-### ⚙️ Flexible Configuration
+###  Flexible Configuration
 - **YAML-based**: Easy-to-modify configuration files
 - **Multiple Environments**: Support for different file formats and structures
 - **Validation**: Built-in configuration validation
 
 ---
 
-## 🚀 Quick Start
+##  Quick Start
 
 ### Prerequisites
 
@@ -122,7 +122,7 @@ Make sure to configure `configs/config_base.yaml` with your file paths first.
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 The system follows an **ETL (Extract, Transform, Load)** architecture:
 
@@ -154,14 +154,14 @@ graph TD
 | **ForecastReader** | Reads vendor forecast files and extracts monthly forecast data |
 | **TransactionalDetailReader** | Processes C-TIES files, categorizes transactions (Actual/Accrual/Reversal) |
 | **TemplateReader** | Extracts cost centers and PO structure from template |
-| **build_hierarchy** | Builds Cost Center → WBS → PO hierarchy with exception tracking |
+| **build_hierarchy** | Builds Cost Center  WBS  PO hierarchy with exception tracking |
 | **TemplateWriter** | Generates output workbook with data and reports |
 
 For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ---
 
-## 📚 Documentation
+##  Documentation
 
 ### For End Users
 - **[User Guide](docs/USER_GUIDE.md)** - Complete guide for using the system
@@ -196,59 +196,59 @@ For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITE
 
 ---
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 financial-automation-project/
-│
-├── README.md                          # This file
-├── requirements.txt                   # Python dependencies
-├── .gitignore                         # Git ignore rules
-│
-├── app.py                             # Streamlit web application
-├── main.py                            # Command-line entry point
-├── streamlit_backend.py               # Backend orchestration for Streamlit
-├── streamlit_config.py                # Configuration management for Streamlit
-│
-├── src/                               # Core source code
-│   ├── __init__.py
-│   ├── forecast_reader.py             # Vendor forecast file reader
-│   ├── transactional_detail_reader.py # C-TIES file reader
-│   ├── template_reader.py             # Template structure reader
-│   ├── template_writer.py             # Output workbook writer
-│   ├── models.py                      # Data models and exceptions
-│   └── utils.py                       # Utility functions
-│
-├── configs/                           # Configuration files
-│   ├── config_base.yaml               # Base configuration
-│   └── config_streamlit.yaml          # Streamlit-specific config (created by UI)
-│
-├── data/                              # Sample data (not in repo)
-│   ├── flowchart.png                  # Architecture diagram
-│   └── template_output.xlsx           # Sample output
-│
-├── notebooks/                         # Jupyter notebooks for exploration
-│   ├── exploring_data.ipynb
-│   ├── template_reader.ipynb
-│   └── test_new_inputs.ipynb
-│
-└── docs/                              # Comprehensive documentation
-    ├── ARCHITECTURE.md                # System architecture and design
-    ├── USER_GUIDE.md                  # End user documentation
-    ├── CONFIGURATION.md               # Configuration reference
-    ├── API_REFERENCE.md               # Developer API documentation
-    └── DEPLOYMENT.md                  # Deployment and operations guide
+
+ README.md                          # This file
+ requirements.txt                   # Python dependencies
+ .gitignore                         # Git ignore rules
+
+ app.py                             # Streamlit web application
+ main.py                            # Command-line entry point
+ streamlit_backend.py               # Backend orchestration for Streamlit
+ streamlit_config.py                # Configuration management for Streamlit
+
+ src/                               # Core source code
+    __init__.py
+    forecast_reader.py             # Vendor forecast file reader
+    transactional_detail_reader.py # C-TIES file reader
+    template_reader.py             # Template structure reader
+    template_writer.py             # Output workbook writer
+    models.py                      # Data models and exceptions
+    utils.py                       # Utility functions
+
+ configs/                           # Configuration files
+    config_base.yaml               # Base configuration
+    config_streamlit.yaml          # Streamlit-specific config (created by UI)
+
+ data/                              # Sample data (not in repo)
+    flowchart.png                  # Architecture diagram
+    template_output.xlsx           # Sample output
+
+ notebooks/                         # Jupyter notebooks for exploration
+    exploring_data.ipynb
+    template_reader.ipynb
+    test_new_inputs.ipynb
+
+ docs/                              # Comprehensive documentation
+     ARCHITECTURE.md                # System architecture and design
+     USER_GUIDE.md                  # End user documentation
+     CONFIGURATION.md               # Configuration reference
+     API_REFERENCE.md               # Developer API documentation
+     DEPLOYMENT.md                  # Deployment and operations guide
 ```
 
 ---
 
-## 📤 Key Outputs
+##  Key Outputs
 
 The pipeline generates a comprehensive Excel workbook with multiple sheets:
 
 ### 1. Main Template (Populated)
 - Forecast, Actual, Accrual, and Reversal data for each PO
-- Organized by Cost Center → WBS → PO hierarchy
+- Organized by Cost Center  WBS  PO hierarchy
 - Monthly breakdown (Jan-Dec)
 
 ### 2. Forecast Source Data
@@ -275,7 +275,7 @@ The pipeline generates a comprehensive Excel workbook with multiple sheets:
 
 ---
 
-## 🔍 Exception Types
+##  Exception Types
 
 The system tracks five types of data quality exceptions:
 
@@ -291,7 +291,7 @@ For detailed exception documentation, see [docs/USER_GUIDE.md#exception-system](
 
 ---
 
-## 🔗 Power Automate Integration
+##  Power Automate Integration
 
 The system integrates with Power Automate for end-to-end automation:
 
@@ -305,7 +305,7 @@ For integration details, see [docs/DEPLOYMENT.md#power-automate-integration](doc
 
 ---
 
-## 🛠️ Configuration
+##  Configuration
 
 The system uses YAML configuration files for flexibility:
 
@@ -322,7 +322,7 @@ For complete configuration documentation, see [docs/CONFIGURATION.md](docs/CONFI
 
 ---
 
-## 📊 Data Flow
+##  Data Flow
 
 ```mermaid
 sequenceDiagram
@@ -347,7 +347,7 @@ sequenceDiagram
 
 ---
 
-## 🤝 Support
+##  Support
 
 ### Getting Help
 
@@ -369,13 +369,13 @@ For detailed troubleshooting, see [docs/DEPLOYMENT.md#troubleshooting](docs/DEPL
 
 ---
 
-## 📝 License
+##  License
 
 Internal Pfizer project - All rights reserved
 
 ---
 
-## 🎯 Next Steps
+##  Next Steps
 
 1. **New Users**: Start with the [User Guide](docs/USER_GUIDE.md)
 2. **Administrators**: Review the [Configuration Guide](docs/CONFIGURATION.md)
