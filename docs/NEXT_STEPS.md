@@ -2,7 +2,7 @@
 
 This document outlines some next steps for this project that would improve functionality of the automation system. These next steps are ranked in terms of impact and complexity.
 
-1. Normalized Starting Template - High Impact, Low Complexity
+## 1. Normalized Starting Template - High Impact, Low Complexity
 
 Using new template (located at data/templates/financial_template_v1.xlsx) as the starting point for all new spreadsheets. For new orgs, use this same file as the starting point. New template is mostly finished, although would still benefit from further enhancements.
 
@@ -10,7 +10,7 @@ Key Improvements:
 * Aestetic Improvements
 * Simplifies configurations. Can now use standard parameters for all template configs - removing the need to update these.
 
-2. Improved Transactional Detail Configurations - Medium Impact, Medium Complexity
+## 2. Improved Transactional Detail Configurations - Medium Impact, Medium Complexity
 
 A few steps can be taken to improve the transactional detail configurations. Some ideas may include:
 * Using 'Accounting Period' column instead of 'Month'. This handles the case where the transactional detail file does not contain a 'Month' column.
@@ -20,7 +20,7 @@ Key Improvements:
 * Simplified Transactional Detail configurations.
 * Easier debugging
 
-3. Improved ER support - High Complexity, High Impact
+## 3. Improved ER support - High Complexity, High Impact
 
 Right now, ERs are handled the same way at POs. They will be caught as long as they have a cost center and WBS code, however they are not distinguished from regular PO numbers. 
 
@@ -31,7 +31,7 @@ After rows are distinguished, must also decide how to write this data. May have 
 Key Improvements:
 * Handles more cases, reduces manual efforts in accounting.
 
-4. Enhanced Frontend - High Complexity, High Impact
+## 4. Enhanced Frontend - High Complexity, High Impact
 
 Improve streamlit UI, or move to full stack application if necessary.
 
