@@ -228,15 +228,15 @@ class TemplateWriter:
     def write_exception_sheet(self, exception_log, transactional_df):
         ws = self.wb.create_sheet("Exceptions")
         
-        # Define visible columns (Month moved to position 4 for better visibility)
+        # Define visible columns - include Description from transactional data
         visible_headers = [
             'Cost Center', 'Month', 'WBS', 'PO',
-            'Exception Type', 'Source Row', 'Amount', 'Type'
+            'Exception Type', 'Source Row', 'Amount', 'Type', 'Description'
         ]
         
         # Get all transactional columns for hidden section
         # Exclude columns already shown in visible section
-        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type'}
+        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type', 'Description'}
         hidden_headers = [col for col in transactional_df.columns if col not in excluded_cols]
         
         all_headers = visible_headers + hidden_headers
@@ -247,7 +247,7 @@ class TemplateWriter:
         
         # Write data rows
         for row_idx, entry in enumerate(exception_log.entries, start=2):
-            # Visible columns (updated order with Month at position 4)
+            # Visible columns
             ws.cell(row=row_idx, column=1, value=entry.cost_center)
             ws.cell(row=row_idx, column=2, value=entry.month)
             ws.cell(row=row_idx, column=3, value=entry.wbs)
@@ -256,10 +256,12 @@ class TemplateWriter:
             ws.cell(row=row_idx, column=6, value=entry.row_index)
             ws.cell(row=row_idx, column=7, value=entry.amount)
             ws.cell(row=row_idx, column=8, value=entry.transaction_type)
+            # Description from source row data
+            ws.cell(row=row_idx, column=9, value=entry.source_row_data.get('Description') if entry.source_row_data else None)
             
-            # Hidden columns (full source row data)
+            # Hidden columns (remaining source row data)
             if entry.source_row_data:
-                for col_idx_hidden, col_name in enumerate(hidden_headers, start=9):
+                for col_idx_hidden, col_name in enumerate(hidden_headers, start=10):
                     ws.cell(row=row_idx, column=col_idx_hidden,
                            value=entry.source_row_data.get(col_name))
         
