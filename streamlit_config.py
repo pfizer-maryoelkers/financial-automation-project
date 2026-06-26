@@ -18,6 +18,7 @@ class TemplateConfig:
     po_stop_marker: str = "Previous Period Invoices"
     cost_center_col: str = "A"
     cost_center_start_row: int = 9
+    cost_center_end_row: Optional[int] = None
 
 
 @dataclass
@@ -132,8 +133,6 @@ class ConfigManager:
             errors.append(f"Invalid PO column: {config.template.po_col}")
         if not ConfigManager._is_valid_excel_column(config.template.cost_center_col):
             errors.append(f"Invalid cost center column: {config.template.cost_center_col}")
-        if config.template.cost_center_start_row < 1:
-            errors.append("Cost center start row must be >= 1")
         if not config.template.po_stop_marker.strip():
             errors.append("PO stop marker cannot be empty")
         
@@ -179,12 +178,18 @@ class ConfigManager:
     
     @staticmethod
     def _dict_to_config(data: Dict[str, Any]) -> AppConfig:
-        """Convert dictionary to AppConfig"""
+        """Convert dictionary to AppConfig, ignoring unknown keys"""
+        import dataclasses
+
+        def filter_fields(cls, raw: dict) -> dict:
+            known = {f.name for f in dataclasses.fields(cls)}
+            return {k: v for k, v in raw.items() if k in known}
+
         return AppConfig(
-            template=TemplateConfig(**data.get('template', {})),
-            forecast_reader=ForecastConfig(**data.get('forecast_reader', {})),
-            transactional_detail_reader=TransactionalConfig(**data.get('transactional_detail_reader', {})),
-            template_writer=WriterConfig(**data.get('template_writer', {}))
+            template=TemplateConfig(**filter_fields(TemplateConfig, data.get('template', {}))),
+            forecast_reader=ForecastConfig(**filter_fields(ForecastConfig, data.get('forecast_reader', {}))),
+            transactional_detail_reader=TransactionalConfig(**filter_fields(TransactionalConfig, data.get('transactional_detail_reader', {}))),
+            template_writer=WriterConfig(**filter_fields(WriterConfig, data.get('template_writer', {})))
         )
     
     @staticmethod

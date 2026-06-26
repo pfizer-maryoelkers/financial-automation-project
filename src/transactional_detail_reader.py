@@ -1,5 +1,6 @@
 
 import pandas as pd
+import re
 
 class TransactionalDetailReader:
     """Class for reading transactional detail file and extracts accruals, actuals, and reversals.
@@ -76,17 +77,53 @@ class TransactionalDetailReader:
     # Use by calling df["Type"] = df.apply(self._categorize_row, axis=1)
     def _categorize_row(self, row):
         '''
-        Returns value for row 'Type' as a string
+        Returns value for row 'Type' as a string.
+
+        Priority order:
+        1. "CO Doc Line Item Txt" description column — checked for keywords
+           (accrual, reversal, reclass, invoice) as the most reliable source.
+        2. AP Voucher Number prefix as fallback:
+             "5xx" = Actual (vendor invoice)
+             "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
+             "9xx" = Reclass
         '''
         classifier = str(row[self.colmap["classifier"]])
-        amount = row[self.colmap["amount"]]
+
+        # --- Step 1: check CO Doc Line Item Txt for explicit description ---
+        co_doc_col = "CO Doc Line Item Txt"
+        if co_doc_col in row.index:
+            desc = str(row[co_doc_col]).strip().lower()
+            if desc and desc not in ('nan', 'none', ''):
+                if 'reversal' in desc:
+                    return "Reversal"
+                if 'accrual' in desc:
+                    return "Accrual"
+                if 'reclass' in desc:
+                    return "Reclass"
+                if 'invoice' in desc or 'vendor' in desc:
+                    return "Actual"
+
+        # --- Step 2: fall back to AP Voucher Number prefix ---
+        # Use GL Transaction Amount for sign — always populated.
+        # Fall back to the configured amount column if the column is absent.
+        gl_trans_col = "GL Transaction Amount"
+        if gl_trans_col in row.index:
+            try:
+                sign_amount = float(row[gl_trans_col])
+            except (TypeError, ValueError):
+                sign_amount = 0.0
+        else:
+            try:
+                sign_amount = float(row[self.colmap["amount"]])
+            except (TypeError, ValueError):
+                sign_amount = 0.0
 
         if classifier.startswith("5"):
             return "Actual"
         elif classifier.startswith("2"):
-            if amount > 0:
+            if sign_amount >= 0:
                 return "Accrual"
-            elif amount < 0:
+            else:
                 return "Reversal"
         elif classifier.startswith("9"):
             return "Reclass"
@@ -157,11 +194,24 @@ class TransactionalDetailReader:
         result = {}
         for _, row in grouped.iterrows():
             po = row[self.colmap["po"]]
-            month_num = row[self.colmap["month"]]
+            raw_month = row[self.colmap["month"]]
             type_name = row[self.colmap["type"]]
             value = row[self.colmap["amount"]]
             cost_center = str(row[self.colmap["cost_center"]]).strip()
             wbs = str(row[self.colmap["wbs"]]).strip()
+
+            # Normalise month to 1-12.
+            # Supports plain integers (1-12) and YYYYMM format (e.g. 202601 → 1).
+            try:
+                raw_month_int = int(raw_month)
+                if raw_month_int > 12:
+                    # YYYYMM format — extract last two digits
+                    month_num = raw_month_int % 100
+                else:
+                    month_num = raw_month_int
+            except (TypeError, ValueError):
+                continue  # unparseable month — skip row
+
             # Actual values belong to prior month
             if month_num == 1:
                 actual_month = "Dec"
@@ -216,10 +266,16 @@ class TransactionalDetailReader:
         Returns a mapping of every row in the transactional file,
         keyed by row index. Ensures every row is accounted for.
         Used for hierarchy building and exception tracking.
+        
+        Special handling: Reads GL Line Description, GL Transaction Description,
+        and Description columns for ER number extraction.
+        
         Returns:
             dict: {
-                45: { 'po': 'PO1234', 'cost_center': '1234', 'wbs': 'IT-CT123' },
-                46: { 'po': None,     'cost_center': '2345', 'wbs': None },
+                45: { 'po': 'PO1234', 'cost_center': '1234', 'wbs': 'IT-CT123',
+                      'gl_line_desc': '...', 'gl_trans_desc': '...', 'description': '...' },
+                46: { 'po': None, 'cost_center': '2345', 'wbs': None,
+                      'gl_line_desc': '...', 'gl_trans_desc': None, 'description': None },
                 ...
             }
         """
@@ -230,6 +286,15 @@ class TransactionalDetailReader:
         missing_cols = [c for c in required if c not in self.data.columns]
         if missing_cols:
             raise ValueError(f"Missing required columns for hierarchy map: {missing_cols}")
+        
+        # Description columns to search for ER numbers (check all that exist in the file)
+        desc_col_names = {
+            'gl_line_desc': 'GL Line Description',
+            'gl_trans_desc': 'GL Transaction Description',
+            'description': 'Description',
+        }
+        present_desc_cols = {key: col for key, col in desc_col_names.items() if col in self.data.columns}
+        
         # Placeholder values to treat as missing
         MISSING_VALUES = {'', 'none', 'nan', '#'}
         result = {}
@@ -237,23 +302,37 @@ class TransactionalDetailReader:
             po = row[self.colmap["po"]]
             wbs = row[self.colmap["wbs"]]
             cost_center = row[self.colmap["cost_center"]]
+            
             # Normalize PO
             po = str(po).strip() if pd.notna(po) else None
             if po and po.lower() in MISSING_VALUES:
                 po = None
+            
             # Normalize WBS
             wbs = str(wbs).strip() if pd.notna(wbs) else None
             if wbs and wbs.lower() in MISSING_VALUES:
                 wbs = None
+            
             # Normalize cost center
             cost_center = str(cost_center).strip() if pd.notna(cost_center) else None
             if cost_center and cost_center.lower() in MISSING_VALUES:
                 cost_center = None
+            
+            # Read all description columns for ER extraction
+            desc_values = {}
+            for key, col in present_desc_cols.items():
+                val = row.get(col)
+                desc_values[key] = str(val).strip() if pd.notna(val) and str(val).strip() else None
+            
             result[idx] = {
                 'po': po,
                 'cost_center': cost_center,
-                'wbs': wbs
+                'wbs': wbs,
+                'gl_line_desc': desc_values.get('gl_line_desc'),
+                'gl_trans_desc': desc_values.get('gl_trans_desc'),
+                'description': desc_values.get('description'),
             }
+        
         # Ensure no rows were dropped
         assert len(result) == len(self.data), (
             f"Row count mismatch: expected {len(self.data)} rows, "

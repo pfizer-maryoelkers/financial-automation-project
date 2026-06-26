@@ -3,7 +3,9 @@ from openpyxl.formula.translate import Translator
 from openpyxl.utils import get_column_letter, column_index_from_string
 from openpyxl.worksheet.worksheet import Worksheet
 from openpyxl.worksheet.datavalidation import DataValidation
-from openpyxl.styles import Font
+from openpyxl.styles import Font, PatternFill, Border, Side
+from copy import copy
+import re
 import pandas as pd
 from src.models import CostCenter, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType
 
@@ -63,6 +65,45 @@ class TemplateWriter:
         self.forecast_po_col = self.forecast_source_cols[0]
         self.transactional_po_col = self.transactional_source_cols[0]
 
+        # Total 2026 column — found dynamically by scanning the header row
+        self.total_col = self._get_total_col()
+
+    def _get_total_col(self) -> str | None:
+        """Scan all rows up to and including the first data row for a cell containing
+        'Total' followed by a year (e.g. 'Total 2026'). Returns the column letter,
+        or None if not found."""
+        search_rows = range(1, self.header_row + 10)  # generous window above data
+        for row in search_rows:
+            for col in range(1, (self.sheet.max_column or 200) + 1):
+                val = self.sheet.cell(row=row, column=col).value
+                if val and re.search(r'total\s+\d{4}', str(val), re.IGNORECASE):
+                    return get_column_letter(col)
+        return None
+
+    def _write_total_formula(self, row: int):
+        """Write the Total 2026 SUM formula into the total column for the given row.
+        The formula picks the best available value per month:
+        Actual → Accrual → Forecast (matching the pattern in the template).
+        Only writes if the total column was found and the cell is blank (or overwrite=True)."""
+        if not self.total_col:
+            return
+        cell = self.sheet[f"{self.total_col}{row}"]
+        if not self.overwrite and cell.value not in (None, 0, ''):
+            return
+        # Build SUM of per-month best-value: IF(Actual<>"", Actual, IF(Accrual<>"", Accrual, Forecast))
+        parts = []
+        for month_cols in self.column_map.values():
+            actual   = month_cols.get('Actual')
+            accrual  = month_cols.get('Accrual')
+            forecast = month_cols.get('Forecast')
+            if actual and accrual and forecast:
+                parts.append(
+                    f'IF({actual}{row}<>"",{actual}{row},'
+                    f'IF({accrual}{row}<>"",{accrual}{row},{forecast}{row}))'
+                )
+        if parts:
+            cell.value = '=' + '+'.join(parts)
+
     def get_column_map(self, starting_col):
         months = [
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -86,6 +127,121 @@ class TemplateWriter:
             col_index += 1
 
         return col_map
+
+    def insert_er_rows(self, hierarchy: dict, pos: dict[str, int]) -> dict[str, int]:
+        """
+        Collects all ER numbers from the hierarchy (those assigned WBS="ER" during
+        exception processing) and inserts a new row for each one in the Template sheet
+        directly above the 'Previous Period Invoices' stop-marker row.
+
+        The new rows have only the ER number written into the PO column (column B by
+        default, matching self.po_column).  All other cells are left blank so the
+        normal write_hierarchy call can fill in the monthly data.
+
+        Args:
+            hierarchy: The built hierarchy dict returned by build_hierarchy.
+            pos: The existing PO → row mapping from TemplateReader.get_existing_pos().
+
+        Returns:
+            Updated pos dict that includes the newly inserted ER rows.
+        """
+        # Collect unique ER numbers that are NOT already in the template
+        er_pattern = re.compile(r'^ER\d+$', re.IGNORECASE)
+        er_numbers = []
+        seen = set()
+        for cc_id, cost_center in hierarchy.items():
+            for wbs_code, wbs in cost_center.wbs_codes.items():
+                if wbs_code.upper() == "ER":
+                    for po_number in wbs.pos:
+                        if er_pattern.match(po_number) and po_number not in pos and po_number not in seen:
+                            er_numbers.append(po_number)
+                            seen.add(po_number)
+
+        if not er_numbers:
+            print("No ER rows to insert into template.")
+            return pos
+
+        # Find the stop-marker row (Previous Period Invoices) in the sheet
+        stop_row = None
+        for row_idx in range(1, (self.sheet.max_row or 1000) + 1):
+            cell_val = self.sheet[f"A{row_idx}"].value
+            if cell_val is not None and str(cell_val).strip() == "Previous Period Invoices":
+                stop_row = row_idx
+                break
+
+        if stop_row is None:
+            print("WARNING: 'Previous Period Invoices' marker not found – ER rows not inserted.")
+            return pos
+
+        # Update header label in the PO column to reflect ER numbers
+        po_col_idx = column_index_from_string(self.po_column)
+        header_cell = self.sheet.cell(row=self.header_row, column=po_col_idx)
+        header_cell.value = "PO Number/ER Number"
+
+        # Green fill for ER cells
+        green_fill = PatternFill(fill_type="solid", fgColor="00B050")
+
+        # Reference row: use the first data row (header_row + 1) as the style source.
+        # This ensures we always copy from a well-formed row regardless of how many
+        # ERs have already been inserted above stop_row.
+        ref_row = self.header_row + 1
+        max_col = self.sheet.max_column or 1
+
+        # Build per-column style snapshots from the reference row once
+        ref_styles = {}
+        for col_idx in range(1, max_col + 1):
+            src = self.sheet.cell(row=ref_row, column=col_idx)
+            ref_styles[col_idx] = {
+                'font': copy(src.font),
+                'border': copy(src.border),
+                'alignment': copy(src.alignment),
+                'number_format': src.number_format,
+                'fill': copy(src.fill),
+            }
+        ref_height = self.sheet.row_dimensions[ref_row].height
+
+        # Insert one row per ER above stop_row (insert in reverse to preserve ordering)
+        # After inserting N rows, stop_row shifts by N – track the insertion point
+        insert_at = stop_row  # rows are inserted BEFORE this row
+        for er in er_numbers:
+            self.sheet.insert_rows(insert_at)
+
+            # Apply reference row formatting to every cell in the new row
+            for col_idx in range(1, max_col + 1):
+                new_cell = self.sheet.cell(row=insert_at, column=col_idx)
+                s = ref_styles[col_idx]
+                new_cell.font = copy(s['font'])
+                # Normalise top border: always use 'thin' so each new row looks
+                # identical to the reference data rows regardless of insertion order
+                orig_border = s['border']
+                new_cell.border = Border(
+                    left=copy(orig_border.left),
+                    right=copy(orig_border.right),
+                    top=Side(border_style='thin'),
+                    bottom=copy(orig_border.bottom),
+                )
+                new_cell.alignment = copy(s['alignment'])
+                new_cell.number_format = s['number_format']
+                # Fill: green on PO column, no fill on all other columns
+                if col_idx == po_col_idx:
+                    new_cell.fill = green_fill
+                else:
+                    new_cell.fill = copy(s['fill'])
+
+            if ref_height:
+                self.sheet.row_dimensions[insert_at].height = ref_height
+
+            # Write ER number into the PO column
+            self.sheet.cell(row=insert_at, column=po_col_idx, value=er)
+
+            # Write Total 2026 formula for this ER row
+            self._write_total_formula(insert_at)
+
+            pos[er] = insert_at
+            insert_at += 1  # next ER goes after the one just inserted
+
+        print(f"Inserted {len(er_numbers)} ER row(s) into template: {er_numbers}")
+        return pos
 
     def write_hierarchy(self, hierarchy: dict, pos: dict[str, int]):
         '''
@@ -115,6 +271,8 @@ class TemplateWriter:
                             cell = self.sheet[f"{col_letter}{row}"]
                             if self.overwrite or cell.value is None or str(cell.value).strip() == "":
                                 cell.value = values.get(metric)
+                    # Write Total 2026 formula after all months are written for this PO
+                    self._write_total_formula(row)
 
 
 
@@ -225,12 +383,22 @@ class TemplateWriter:
 
 
     
+    @staticmethod
+    def _extract_er_number(po_value):
+        """If po_value contains an ER number (e.g. 'ER97054 - ARCH & TECH - ...'), return only 'ER97054'.
+        Otherwise return the original value unchanged."""
+        if po_value and isinstance(po_value, str):
+            match = re.match(r'^(ER\d+)', po_value.strip(), re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+        return po_value
+
     def write_exception_sheet(self, exception_log, transactional_df):
         ws = self.wb.create_sheet("Exceptions")
         
         # Define visible columns - include Description from transactional data
         visible_headers = [
-            'Cost Center', 'Month', 'WBS', 'PO',
+            'Cost Center', 'Month', 'WBS', 'PO/ER Number',
             'Exception Type', 'Source Row', 'Amount', 'Type', 'Description'
         ]
         
@@ -251,7 +419,7 @@ class TemplateWriter:
             ws.cell(row=row_idx, column=1, value=entry.cost_center)
             ws.cell(row=row_idx, column=2, value=entry.month)
             ws.cell(row=row_idx, column=3, value=entry.wbs)
-            ws.cell(row=row_idx, column=4, value=entry.po)
+            ws.cell(row=row_idx, column=4, value=self._extract_er_number(entry.po))
             ws.cell(row=row_idx, column=5, value=entry.exception_type.value)
             ws.cell(row=row_idx, column=6, value=entry.row_index)
             ws.cell(row=row_idx, column=7, value=entry.amount)
@@ -303,7 +471,7 @@ class TemplateWriter:
         for row_idx, entry in enumerate(exception_log.entries, start=2):
             ws.cell(row=row_idx, column=1, value=entry.cost_center or '')
             ws.cell(row=row_idx, column=2, value=entry.wbs or '')
-            ws.cell(row=row_idx, column=3, value=entry.po or '')
+            ws.cell(row=row_idx, column=3, value=self._extract_er_number(entry.po) or '')
             ws.cell(row=row_idx, column=4, value=entry.exception_type.value)
             ws.cell(row=row_idx, column=5, value=entry.month or '')
             ws.cell(row=row_idx, column=6, value=entry.amount)

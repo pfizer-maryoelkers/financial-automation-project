@@ -295,7 +295,8 @@ class PipelineOrchestrator:
             )
             self._update_progress(70)
             
-            template_writer.write_hierarchy(hierarchy, pos=template_reader.pos)
+            pos = template_writer.insert_er_rows(hierarchy, pos=template_reader.pos)
+            template_writer.write_hierarchy(hierarchy, pos=pos)
             self._update_progress(75)
             template_writer.write_forecast_source_sheet(forecast_reader.data, pos=template_reader.pos)
             self._update_progress(80)

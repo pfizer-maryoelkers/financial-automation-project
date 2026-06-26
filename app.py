@@ -27,8 +27,8 @@ if 'extracted_cost_centers' not in st.session_state:
     st.session_state.extracted_cost_centers = []
 if 'selected_cost_centers' not in st.session_state:
     st.session_state.selected_cost_centers = []
-if 'app_config' not in st.session_state:
-    st.session_state.app_config = ConfigManager.load_config()
+# Always reload config from disk so stale session-state fields never persist
+st.session_state.app_config = ConfigManager.load_config()
 
 
 def render_preview_section(output_path: str):
@@ -192,6 +192,22 @@ def render_config_section():
                 max_value=1000,
                 help="Row number where cost centers start (1-based)"
             )
+            
+            use_cc_end_row = st.checkbox(
+                "Set Cost Center End Row",
+                value=config.template.cost_center_end_row is not None,
+                help="Enable to stop reading cost centers at a specific row instead of the first blank cell"
+            )
+            if use_cc_end_row:
+                config.template.cost_center_end_row = st.number_input(
+                    "Cost Center End Row",
+                    value=config.template.cost_center_end_row if config.template.cost_center_end_row is not None else config.template.cost_center_start_row,
+                    min_value=1,
+                    max_value=1000,
+                    help="Row number where cost centers stop being read (1-based, inclusive)"
+                )
+            else:
+                config.template.cost_center_end_row = None
         
         # Forecast Settings
         with st.expander("Forecast Settings", expanded=False):

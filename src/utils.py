@@ -2,6 +2,7 @@ import yaml
 import base64
 import io
 import pandas as pd
+import re
 from collections import defaultdict
 from src.models import CostCenter, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType
 
@@ -60,6 +61,21 @@ def build_hierarchy(
     transactional_df: pd.DataFrame
 ) -> dict[str, CostCenter]:
     
+    # Regex pattern to extract ER numbers (ER followed by digits)
+    er_pattern = re.compile(r'\bER\d+\b', re.IGNORECASE)
+
+    def _find_er_in_row(row: dict) -> str | None:
+        """Search GL Line Description, GL Transaction Description, and Description
+        columns (in that priority order) for an ER number. Returns the first match
+        uppercased (e.g. 'ER97054'), or None if not found."""
+        for key in ('gl_line_desc', 'gl_trans_desc', 'description'):
+            text = row.get(key)
+            if text:
+                m = er_pattern.search(text)
+                if m:
+                    return m.group(0).upper()
+        return None
+
     # Step 1: Pre-group hierarchy_map rows by cost center
     rows_by_cost_center = defaultdict(list)
     for row_idx, row in hierarchy_map.items():
@@ -80,6 +96,7 @@ def build_hierarchy(
     # Step 3: Track seen POs and WBS codes for processing
     seen_pos = {}  # po -> (cost_center, wbs)
     seen_wbs = {}  # wbs -> cost_center (for tracking first occurrence)
+    er_extracted_count = 0
 
     # Step 4: Build hierarchy
     result = {}
@@ -98,17 +115,41 @@ def build_hierarchy(
             # Handling Exceptions (in priority order)
 
             # Check 1: Both WBS and PO missing (highest priority)
+            # Special case: Try to extract ER number from any description column
             if not wbs and not po:
-                exception_log.log(
-                    ExceptionType.MISSING_WBS_AND_PO,
-                    row_index=row_idx,
-                    cost_center=cc_id,
-                    month=month,
-                    amount=amount,
-                    transaction_type=trans_type,
-                    source_row_data=source_row_data
-                )
-                continue
+                er_found = _find_er_in_row(row)
+                if er_found:
+                    # Use extracted ER number as PO with special WBS "ER"
+                    po = er_found  # e.g., ER97054
+                    wbs = "ER"    # Special WBS code for expense reports
+                    er_extracted_count += 1
+                    # Continue processing with extracted ER as PO
+                else:
+                    # No ER found in any description column, log as exception
+                    exception_log.log(
+                        ExceptionType.MISSING_WBS_AND_PO,
+                        row_index=row_idx,
+                        cost_center=cc_id,
+                        month=month,
+                        amount=amount,
+                        transaction_type=trans_type,
+                        source_row_data=source_row_data
+                    )
+                    continue
+
+            # Check 1b: PO exists but looks like a full ER description — extract clean ER number
+            # e.g. PO column contains "ER97054 - ARCH & TECH - APP ARCHITECTURE"
+            if po and not wbs:
+                er_found = _find_er_in_row(row)
+                if not er_found:
+                    # Fall back: try extracting directly from the PO value itself
+                    m = er_pattern.match(po)
+                    if m:
+                        er_found = m.group(0).upper()
+                if er_found:
+                    po = er_found
+                    wbs = "ER"
+                    er_extracted_count += 1
 
             # Check 2: Individual missing checks
             if not wbs:
@@ -204,5 +245,8 @@ def build_hierarchy(
                     po_obj.monthly_data[month].forecast = values.get('Forecast', 0.0)
             # Note: MISSING_FORECAST exception removed - no longer tracking
         result[cc_id] = cost_center
+    
+    if er_extracted_count > 0:
+        print(f"  - ER numbers extracted and processed: {er_extracted_count}")
     
     return result

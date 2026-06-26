@@ -17,7 +17,7 @@ transactional_detail_reader:
   - Reversal
   colmap:
     po: PO Number
-    month: Month
+    month: Accounting Period
     amount: GL BER Corp Amount
     classifier: AP Voucher Number
     cost_center: CC ID

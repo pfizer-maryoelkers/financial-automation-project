@@ -5,9 +5,8 @@ from src.transactional_detail_reader import TransactionalDetailReader
 from src.template_reader import TemplateReader
 from src.template_writer import TemplateWriter
 from src.models import ExceptionLog
-
 # Loading config file
-config_path = 'configs/config_base.yaml'
+config_path = 'configs/config_chris2026_ap05.yaml'
 base64 = False
 config = load_config(config_path)
 if base64:
@@ -15,7 +14,6 @@ if base64:
         config['forecast_reader']['file_paths'][idx] = convert_base64(config['forecast_reader']['file_paths'][idx])
     config['transactional_detail_reader']['file_path'] = convert_base64(config['transactional_detail_reader']['file_path'])
     config['template']['file_path'] = convert_base64(config['template']['file_path'])
-    
 ## Initialize classes
 forecast_reader = ForecastReader(
     file_paths=config['forecast_reader']['file_paths'],

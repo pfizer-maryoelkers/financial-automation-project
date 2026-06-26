@@ -9,7 +9,9 @@ class TemplateReader:
                 po_col,
                 po_stop_marker,
                 cost_center_col,
-                cost_center_start_row
+                cost_center_start_row,
+                cost_center_end_row=None,
+                **kwargs
         ):
         
         
@@ -26,6 +28,7 @@ class TemplateReader:
         self.po_stop_marker = po_stop_marker
         self.cost_center_col = cost_center_col
         self.cost_center_start_row = cost_center_start_row
+        self.cost_center_end_row = cost_center_end_row
 
         # Read on init
         self.cost_centers = self.get_existing_cost_centers()
@@ -45,6 +48,9 @@ class TemplateReader:
         row = self.cost_center_start_row
 
         while True:
+            # Stop at end row if configured
+            if self.cost_center_end_row is not None and row > self.cost_center_end_row:
+                break
             cell = self.sheet[f"{self.cost_center_col}{row}"].value
             if cell is None or str(cell).strip() == "":
                 break
