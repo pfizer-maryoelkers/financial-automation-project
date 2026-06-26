@@ -35,6 +35,7 @@ class ExceptionType(Enum):
     MISSING_PO = "MISSING_PO"
     DUPLICATE_PO = "DUPLICATE_PO"
     DUPLICATE_WBS = "DUPLICATE_WBS"
+    RECLASS = "Reclass"
 @dataclass
 class ExceptionEntry:
     exception_type: ExceptionType

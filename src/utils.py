@@ -112,6 +112,21 @@ def build_hierarchy(
             amount = source_row_data.get('GL BER Corp Amount')
             trans_type = source_row_data.get('Type')
 
+            # Log Reclass rows as exceptions so they appear in the Exceptions tab
+            if trans_type == "Reclass":
+                exception_log.log(
+                    ExceptionType.RECLASS,
+                    row_index=row_idx,
+                    po=po,
+                    wbs=wbs,
+                    cost_center=cc_id,
+                    month=month,
+                    amount=amount,
+                    transaction_type=trans_type,
+                    source_row_data=source_row_data
+                )
+                # Continue processing so the reclass data still flows to the template
+
             # Handling Exceptions (in priority order)
 
             # Check 1: Both WBS and PO missing (highest priority)
