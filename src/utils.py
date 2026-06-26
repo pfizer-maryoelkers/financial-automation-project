@@ -112,7 +112,8 @@ def build_hierarchy(
             amount = source_row_data.get('GL BER Corp Amount')
             trans_type = source_row_data.get('Type')
 
-            # Log Reclass rows as exceptions so they appear in the Exceptions tab
+            # Reclass rows (9xx AP Voucher) — log and skip further checks.
+            # They have no PO or WBS so the normal missing-field checks don't apply.
             if trans_type == "Reclass":
                 exception_log.log(
                     ExceptionType.RECLASS,
@@ -125,7 +126,7 @@ def build_hierarchy(
                     transaction_type=trans_type,
                     source_row_data=source_row_data
                 )
-                # Continue processing so the reclass data still flows to the template
+                continue  # skip PO/WBS checks — Reclasses don't have them
 
             # Handling Exceptions (in priority order)
 
