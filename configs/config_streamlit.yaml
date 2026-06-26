@@ -15,6 +15,7 @@ transactional_detail_reader:
   - Actual
   - Accrual
   - Reversal
+  - Reclass
   colmap:
     po: PO Number
     month: Accounting Period

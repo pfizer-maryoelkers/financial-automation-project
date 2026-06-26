@@ -230,18 +230,20 @@ class TransactionalDetailReader:
                 result[po][actual_month] = {
                     "Actual": 0,
                     "Accrual": 0,
-                    "Reversal": 0
+                    "Reversal": 0,
+                    "Reclass": 0
                 }
-            elif type_name in ["Accrual", "Reversal"] and accrual_month not in result[po]:
+            elif type_name in ["Accrual", "Reversal", "Reclass"] and accrual_month not in result[po]:
                 result[po][accrual_month] = {
                     "Actual": 0,
                     "Accrual": 0,
-                    "Reversal": 0
+                    "Reversal": 0,
+                    "Reclass": 0
                 }
             # Assign value
             if type_name == "Actual":
                 result[po][actual_month][type_name] = value
-            else:
+            elif type_name in ["Accrual", "Reversal", "Reclass"] and accrual_month:
                 result[po][accrual_month][type_name] = value
         # Sort months for readability, preserve cost_center and wbs
         month_order = [
