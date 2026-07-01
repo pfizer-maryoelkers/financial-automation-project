@@ -6,7 +6,7 @@ class TransactionalDetailReader:
     """Class for reading transactional detail file and extracts accruals, actuals, and reversals.
 
     Includes the following methods:
-        - load_transactional_detail_file(): Loads CTIES file into singular dataframe
+        - load_transactional_detail_file(): Loads TIES file into singular dataframe
         - _categorize_row(): categorizes row type as actual, accrual, etc.
         - get_transactional_data(): reads dataframe and filters data, returns dict of data we need
         
@@ -15,7 +15,7 @@ class TransactionalDetailReader:
         510 - Invoice
         900 - Reclass
 
-    __init__ defines required cols, required types, and a column map for easy configuration of newly formatted CTIES files.
+    __init__ defines required cols, required types, and a column map for easy configuration of newly formatted TIES files.
     
     """
 
@@ -73,7 +73,7 @@ class TransactionalDetailReader:
         except Exception as e:
             print("Error loading transactional detail file:", e)
 
-    # Internal helper function that categorizes a row in CTIES file as Actual, Accrual, Reversal, etc.
+    # Internal helper function that categorizes a row in TIES file as Actual, Accrual, Reversal, etc.
     # Use by calling df["Type"] = df.apply(self._categorize_row, axis=1)
     def _categorize_row(self, row):
         '''
