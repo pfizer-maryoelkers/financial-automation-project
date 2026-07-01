@@ -1,1121 +1,694 @@
-﻿# User Guide
+# Financial Automation Portal — User Guide
 
-> **Complete guide for using the Financial Automation Project - from file preparation to report analysis**
-
----
-
-##  Table of Contents
-
-- [Getting Started](#getting-started)
-- [Using the Streamlit Web UI](#using-the-streamlit-web-ui)
-- [Using the Command Line](#using-the-command-line)
-- [Input File Requirements](#input-file-requirements)
-- [Understanding Outputs](#understanding-outputs)
-- [Exception System Guide](#exception-system-guide)
-- [Best Practices](#best-practices)
-- [Common Workflows](#common-workflows)
-- [Tips and Tricks](#tips-and-tricks)
+> **Using Financial Template, TIES, and Vendor Forecast Files**
 
 ---
 
-##  Getting Started
+## Table of Contents
+
+- [User Guide for Non-Technical Users](#user-guide-for-non-technical-users)
+  - [Accessing the Portal](#accessing-the-portal)
+  - [Before You Begin](#before-you-begin)
+  - [Generating a Report](#generating-a-report)
+  - [Understanding the Output Workbook](#understanding-the-output-workbook)
+  - [Common Exception Types](#common-exception-types)
+  - [Best Practices](#best-practices)
+  - [Troubleshooting](#troubleshooting)
+- [User Guide for Technical Users](#user-guide-for-technical-users)
+  - [Getting Started](#getting-started)
+  - [Input File Requirements](#input-file-requirements)
+  - [Configuration Settings](#configuration-settings)
+  - [Report Generation Process](#report-generation-process)
+  - [Understanding Outputs](#understanding-outputs)
+  - [Exception Management](#exception-management)
+  - [Best Practices (Technical)](#best-practices-technical)
+  - [Common Workflows](#common-workflows)
+  - [Troubleshooting (Technical)](#troubleshooting-technical)
+
+---
+
+---
+
+# User Guide for Non-Technical Users
+
+> A step-by-step guide for generating financial reports using the Financial Automation Portal
+
+---
+
+## Accessing the Portal
+
+Access the Financial Automation Portal using the following link:
+
+👉 [Financial Automation Generator](https://financial-automation-generator.streamlit.app)
+
+The portal allows users to upload source files, generate reports, review exceptions, and download the completed workbook.
+
+---
+
+## Before You Begin
+
+Before generating a report, ensure you have the following files:
+
+### Required Files
+
+| File | Format |
+|------|--------|
+| Financial Template Workbook | `.xlsx` |
+| TIES Transactional Detail File | `.xlsx` |
+| One or more Forecast Files | `.xlsx` |
+
+### Important Validation Checks
+
+**Template Workbook**
+- Confirm the worksheet structure is correct.
+- Verify Cost Centers and PO information are present.
+- Ensure column locations align with the portal configuration settings.
+
+**TIES Transactional Detail File**
+- Ensure all required columns are included.
+- Month must be populated for every transaction.
+- Verify Cost Center, WBS, PO Number, and transaction amount data are present.
+- Confirm the file structure matches the configured column mappings.
+
+**Forecast Files**
+- Ensure forecast months are included.
+- Verify PO numbers correspond to those in the template.
+- Confirm file formatting aligns with the configuration settings.
+
+> **Note:** Incorrect configurations or missing Month values (in TIES sheet) may result in missing data, inaccurate reporting, or processing errors.
+
+---
+
+## Generating a Report
+
+### Step 1: Upload Files
+
+Upload the required files in the following order:
+
+1. Template Workbook
+2. TIES Transactional Detail File
+3. Forecast File(s)
+
+After uploading, the portal validates the files and displays confirmation messages.
+
+---
+
+### Step 2: Review Cost Centers
+
+When the template is uploaded, the system identifies available Cost Centers.
+
+Users can:
+- Process all Cost Centers
+- Select specific Cost Centers
+- Exclude Cost Centers not required for the current run
+
+This option is useful when testing or reviewing a specific area.
+
+---
+
+### Step 3: Review Configuration Settings
+
+Before generating the report, review the configuration section to ensure it matches the layout of the uploaded spreadsheets.
+
+Key settings include:
+
+**Template Configuration**
+- Header Row
+- Cost Center Column
+- PO Column
+
+**TIES Configuration**
+- Month Column
+- PO Number Column
+- Transaction Amount Column
+- Cost Center Column
+- WBS Column
+
+**Forecast Configuration**
+- PO Number Column
+- Monthly Forecast Columns
+
+> **Best Practice:** Always review configuration settings when receiving updated file formats from vendors or business partners.
+
+---
+
+### Step 4: Generate the Report
+
+Once all files have been uploaded and validated:
+
+1. Confirm all uploads show a successful status.
+2. Verify configuration settings.
+3. Select **Generate Report**.
+
+The system will process the files and display progress updates throughout the report generation process.
+
+---
+
+### Step 5: Review Exception Summary
+
+After processing completes, an Exception Summary is displayed.
+
+The summary provides:
+- Total exception count
+- Exception counts by category
+- Percentage breakdown by exception type
+
+| Exception Volume | Recommendation |
+|-----------------|----------------|
+| 0 Exceptions | Data quality is excellent |
+| Few Exceptions | Review and determine if corrective action is required |
+| High Exception Volume | Investigate source data and validate configurations |
+
+---
+
+### Step 6: Preview Results
+
+Before downloading the workbook, preview the generated report.
+
+Review:
+- Cost Center information
+- WBS assignments
+- Purchase Orders
+- Forecast amounts
+- Actuals
+- Accruals
+- Reversals
+
+Verify that the data appears as expected before downloading.
+
+---
+
+### Step 7: Download the Workbook
+
+Once validation is complete:
+
+1. Select **Download Report**.
+2. Save the workbook locally.
+3. Open in Excel for detailed analysis and distribution.
+
+---
+
+## Understanding the Output Workbook
+
+The downloaded workbook contains several worksheets designed for reporting and auditing purposes.
+
+### Main Template
+
+Contains the completed financial report populated with:
+- Forecast values
+- Actuals
+- Accruals
+- Reversals
+
+This is the primary reporting worksheet used for financial analysis.
+
+### Forecast Source Data
+
+Provides an audit trail of all forecast data used in the report.
+
+Use this worksheet to:
+- Verify forecast values
+- Review vendor submissions
+- Trace forecast data back to source files
+
+### TIES Source Data
+
+Provides a complete audit trail of transaction data loaded from TIES.
+
+Use this worksheet to:
+- Verify actuals
+- Validate accruals and reversals
+- Investigate discrepancies
+
+### Exceptions Detail
+
+Contains all exception records identified during processing.
+
+Available information includes:
+- Cost Center
+- Month
+- WBS
+- PO Number
+- Exception Type
+- Source Row
+- Transaction Amount
+
+Use this worksheet to investigate and resolve data quality issues.
+
+### Exceptions Summary
+
+Provides a high-level overview of all exceptions, including:
+- Exception counts by type
+- Exception counts by Cost Center
+- Percentage breakdowns
+- Monthly filtering capabilities
+
+This worksheet is useful for management reporting and data quality monitoring.
+
+---
+
+## Common Exception Types
+
+### Missing WBS and PO
+Both WBS and PO are missing from a transaction.
+**Impact:** Transaction cannot be assigned and will not be included in reporting.
+
+### Missing WBS
+A PO exists, but the WBS value is missing.
+**Impact:** Ownership of the transaction cannot be determined.
+
+### Missing PO
+A WBS exists, but the PO Number is missing.
+**Impact:** Transaction cannot be mapped correctly.
+
+### Duplicate WBS
+The same WBS appears under multiple Cost Centers.
+**Impact:** Ownership conflicts may occur.
+
+### Duplicate PO
+The same PO appears under multiple WBS or Cost Center combinations.
+**Impact:** Duplicate records may be excluded from reporting.
+
+---
+
+## Best Practices
+
+Before every report run:
+
+- ✅ Verify the Month field is populated in the TIES Transactional Detail File
+- ✅ Confirm all uploaded files are current versions
+- ✅ Review configuration settings before processing
+- ✅ Verify Cost Centers are selected appropriately
+- ✅ Review exception reports after each run
+- ✅ Investigate and resolve recurring data quality issues
+
+---
+
+## Troubleshooting
+
+### Report Does Not Generate
+
+- Verify all required files were uploaded.
+- Confirm configuration settings match the spreadsheet layouts.
+- Ensure the Month column exists within the TIES file.
+- Check for missing required columns.
+
+### Data Appears Missing
+
+- Review the Exceptions worksheet.
+- Verify PO and WBS values exist in the source files.
+- Confirm Cost Centers are selected for processing.
+- Recheck configuration mappings.
+
+### High Number of Exceptions
+
+- Review source data quality.
+- Validate TIES data completeness.
+- Confirm PO, WBS, Cost Center, and Month values are populated.
+- Verify configuration settings match the uploaded files.
+
+---
+
+---
+
+# User Guide for Technical Users
+
+> Financial Automation of Template, TIES, and Vendor Files — Technical User Guide
+
+**Application URL:** 👉 [Financial Automation Generator](https://financial-automation-generator.streamlit.app)
+
+**GitHub:** 👉 [Financial Automation GitHub](https://github.com/your-org/financial-automation-project)
+
+---
+
+## Getting Started
 
 ### Prerequisites
 
-Before you begin, ensure you have:
+Before using the Financial Automation solution, ensure you have:
 
--  Python 3.9 or higher installed
--  Access to the project files
--  Your input files ready:
-  - Financial spreadsheet template (.xlsx)
-  - C-TIES transactional detail file (.xlsx)
-  - One or more vendor forecast files (.xlsx)
+- Access to the Financial Automation Portal
+- Financial Template Workbook (`.xlsx`)
+- TIES Transactional Detail File (`.xlsx`)
+- One or more Vendor Forecast Files (`.xlsx`)
 
-### Installation
+### Required Validation
 
-1. **Navigate to the project directory**:
-   ```bash
-   cd financial-automation-project
-   ```
+Prior to processing files:
 
-2. **Install required packages**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Verify installation**:
-   ```bash
-   python -c "import streamlit; print('Ready to go!')"
-   ```
+- Verify that the Month column exists in the TIES file.
+- Ensure all transactions contain valid Month values.
+- Confirm PO Numbers are populated where applicable.
+- Verify Cost Centers and WBS Elements are present.
+- Ensure file layouts match the expected configuration settings.
 
 ---
 
-##  Using the Streamlit Web UI
+## Input File Requirements
 
-The Streamlit UI provides an intuitive interface for generating financial reports.
+### Template Workbook
 
-### Starting the Application
+The Template Workbook serves as the report structure that will be populated during processing.
 
-```bash
-streamlit run app.py
-```
+**Requirements**
+- Excel (`.xlsx`) format
+- Contains Cost Center information
+- Contains Purchase Order (PO) information
+- Monthly Forecast, Accrual, Reversal, and Actual columns
+- Consistent worksheet structure
 
-Your browser will automatically open to `http://localhost:8501`
+**Validation Checklist**
+- ✅ Cost Centers are current
+- ✅ PO Numbers are populated
+- ✅ Monthly columns exist
+- ✅ Workbook structure has not been modified
 
----
+### Vendor Forecast Files
 
-### Step-by-Step Walkthrough
+Vendor Forecast files provide forecast amounts for Purchase Orders.
 
-#### Step 1: Upload Files
+**Requirements**
+- Excel (`.xlsx`) format
+- Contains PO Number column
+- Contains monthly forecast values
+- Current reporting period data
 
-```mermaid
-graph LR
-    A[Upload Template] --> B[Upload Transactional File]
-    B --> C[Upload Forecast Files]
-    C --> D[Ready to Process]
-```
+**Validation Checklist**
+- ✅ Forecast months are included
+- ✅ PO Numbers match the template
+- ✅ Duplicate PO values are reviewed
+- ✅ Latest forecast version is being used
 
-**Template File**:
-- Click "Browse files" under "Template File"
-- Select your financial spreadsheet template (.xlsx)
-- System automatically extracts cost centers from the template
--  Success message shows number of cost centers found
+### TIES Transactional Detail File
 
-**Transactional Detail File**:
-- Click "Browse files" under "Transactional Detail File"
-- Select your C-TIES file (.xlsx)
-- Must contain required columns (PO Number, Month, GL Transaction Amount)
+The TIES file provides transaction data used to populate Actuals, Accruals, and Reversals.
 
-**Forecast Files**:
-- Click "Browse files" under "Forecast Files"
-- Select one or more vendor forecast files (.xlsx)
-- Can upload multiple files at once
-- System handles duplicate POs automatically (first occurrence wins)
-
----
-
-#### Step 2: Select Cost Centers (Optional)
-
-After uploading the template, you can filter which cost centers to process:
-
-**Options**:
-- **Process All**: Leave all cost centers selected (default)
-- **Select Specific**: Uncheck cost centers you want to exclude
-- **Add Custom**: Enter additional cost center IDs not in template
-
-**Use Cases**:
-- Testing with a single cost center
-- Processing only changed cost centers
-- Excluding problematic cost centers temporarily
-
-**Example**:
-```
-Found 15 cost centers:
- 1234
- 2345
- 3456  (unchecked - will be excluded)
- 4567
-...
-```
-
----
-
-#### Step 3: Configure Settings (Optional)
-
-Click to expand "Configuration Settings" to adjust parameters:
-
-**Template Settings**:
-- Header Row: Row where PO headers start (default: 16)
-- PO Column: Column containing PO numbers (default: B)
-- Cost Center Column: Column with cost center IDs (default: A)
-
-**Transactional Settings**:
-- Required Columns: Columns that must exist
-- Valid Types: Transaction types to process
-- Column Mappings: Map column names to expected fields
-
-**Writer Settings**:
-- Output Filename: Name for generated file
-- Overwrite: Allow overwriting existing data
-
- **Tip**: Default settings work for standard templates. Only adjust if your files have a different structure.
-
----
-
-#### Step 4: Generate Report
-
-1. **Verify Upload Status**:
-   - All three file types should show green checkmarks
-   - Cost center selection confirmed
-
-2. **Click "Generate Report"**:
-   - Progress bar shows pipeline stages
-   - Status messages display current operation
-   - Processing typically takes 10-60 seconds
-
-3. **Monitor Progress**:
-   ```
-    Saving uploaded files...
-    Step 1/4: Loading data...
-    Loaded forecast data: 150 POs
-    Loaded transactional data: 2,450 rows
-    Step 2/4: Building hierarchy...
-    Built hierarchy: 23 exceptions found
-    Step 3/4: Writing template output...
-    Step 4/4: Generating exception reports...
-    Report generated successfully in 24.5 seconds!
-   ```
-
----
-
-#### Step 5: Review Exception Summary
-
-After generation, an exception summary appears:
-
-**Example**:
-```
-Exception Summary
-Total Exceptions: 23
-
-Breakdown by Type:
-- MISSING_WBS: 12 (52.2%)
-- DUPLICATE_PO: 8 (34.8%)
-- MISSING_PO: 3 (13.0%)
-```
-
-**What to do**:
--  **0 exceptions**: Perfect! Your data is clean
--  **Few exceptions**: Review and fix if critical
--  **Many exceptions**: Check source data quality
-
----
-
-#### Step 6: Preview Report
-
-Before downloading, preview the generated report:
-
-**Sheet Selector**:
-- Choose which sheet to preview
-- First sheet (main template): Shows 50 rows
-- Other sheets: Show 10 rows
-
-**Sheet Metadata**:
-- Total Rows: Full row count
-- Columns: Number of columns
-- Preview Rows: How many rows shown
-
-**Navigation**:
-- Scroll horizontally to see all columns
-- Use filters to find specific data
-- Check data accuracy before downloading
-
----
-
-#### Step 7: Download Report
-
-1. **Click "Download Generated Report"**
-2. **Save to your desired location**
-3. **Open in Excel to view complete report**
-
-**File Contents**:
-- Main template with populated data
-- Forecast source data sheet
-- Transactions source data sheet
-- Exception reports (detailed + summary)
-
----
-
-### UI Features
-
-#### Configuration Management
-
-**Save Configuration**:
-- Adjust settings in UI
-- Click "Save Configuration"
-- Settings saved to `configs/config_streamlit.yaml`
-- Used for future sessions
-
-**Reset to Defaults**:
-- Click "Reset to Defaults"
-- Confirm reset
-- Deletes custom config file
-- Returns to base configuration
-
-**Configuration Status**:
--  "Using Custom Configuration" - Your saved settings active
--  "Using Default Configuration" - Base settings active
-
----
-
-#### Cost Center Filtering
-
-**Extract from Template**:
-- Automatically reads cost centers when template uploaded
-- Shows count: "Extracted 15 cost centers from template"
-
-**Select/Deselect**:
-- Use multiselect dropdown
-- Select all or specific cost centers
-- Shows selection summary: "Selected: 12 of 15 cost centers"
-
-**Add Custom**:
-- Enter cost center ID in text box
-- Click "Add" button
-- Useful for new cost centers not yet in template
-
----
-
-#### Live Preview
-
-**Benefits**:
-- Verify data before downloading
-- Check formatting and structure
-- Spot issues early
-- No need to download and re-upload
-
-**Limitations**:
-- Shows limited rows (50 for main sheet, 10 for others)
-- Full data available in downloaded file
-- Some Excel formatting may not display
-
----
-
-##  Using the Command Line
-
-For automated workflows or when UI is not available.
-
-### Basic Usage
-
-1. **Configure file paths** in `configs/config_base.yaml`:
-   ```yaml
-   template:
-     file_path: "data/templates/your_template.xlsx"
-   
-   forecast_reader:
-     file_paths:
-       - "data/forecasts/vendor1_forecast.xlsx"
-       - "data/forecasts/vendor2_forecast.xlsx"
-   
-   transactional_detail_reader:
-     file_path: "data/transactional/cties_file.xlsx"
-   
-   template_writer:
-     output_path: "data/output/result.xlsx"
-   ```
-
-2. **Run the pipeline**:
-   ```bash
-   python main.py
-   ```
-
-3. **Check output**:
-   - Output file created at specified path
-   - Console shows progress and exception summary
-   - Review exception reports in output file
-
-### Console Output
-
-```
-============
-Step 1: Loading data
-
-Loading valid sheets: ['AP01', 'AP02', 'AP03']
-Successfully loaded transactional data from valid sheets.
-Loaded forecast data
-
-Step 2: Building hierarchy
-
-Hierarchy map built: 2450 rows processed.
-  - Missing PO:          15
-  - Missing WBS:         8
-  - Missing Cost Center: 0
-
-Step 3: Writing template output
-
-Workbook saved to: data/output/result.xlsx
-
-Step 4: Writing exception reports
-
-  MISSING_WBS: 12
-  DUPLICATE_PO: 8
-  MISSING_PO: 3
-```
-
----
-
-##  Input File Requirements
-
-### Template File Requirements
-
-**Format**: Excel (.xlsx)
-
-**Required Structure**:
-- Cost center column (default: Column A)
-- PO number column (default: Column B)
-- Header row with PO numbers (default: Row 16)
-- Stop marker to indicate end of PO section (default: "Previous Period Invoices")
-- Monthly data columns (Dec Accrual Reversal through Dec Actual)
-
-**Example Structure**:
-```
-Row 9:  Cost Center | ...
-Row 10: 1234        | ...
-Row 11: 2345        | ...
-...
-Row 16: Cost Center | PO # | ... | Dec Acc Rev | Jan Forecast | Jan Accrual | Jan Actual | ...
-Row 17: 1234        | PO123| ... | 0           | 1000         | 0           | 0          | ...
-...
-Row 50: Previous Period Invoices  (stop marker)
-```
-
----
-
-### Forecast File Requirements
-
-**Format**: Excel (.xlsx)
-
-**Required Columns**:
-- PO column (default: "PO #")
-- Monthly forecast columns ending in "- FTotal"
-  - Example: "Jan 2026 - FTotal", "Feb 2026 - FTotal"
-
-**Sheet Detection**:
-- System automatically finds valid sheet
-- Valid sheet must have both PO column and forecast columns
-- If multiple sheets valid, uses first one found
-
-**Example Structure**:
-```
-PO #    | Jan 2026 - FTotal | Feb 2026 - FTotal | ...
-PO12345 | 1000             | 2000              | ...
-PO67890 | 1500             | 1800              | ...
-```
-
-**Multiple Files**:
-- Can provide multiple forecast files
-- System combines data from all files
-- Duplicate POs: First occurrence wins (warning displayed)
-
----
-
-### Transactional Detail File Requirements
-
-**Format**: Excel (.xlsx) from C-TIES
-
-**Required Columns** (default names):
+**Required Fields**
 - PO Number
-- Month (accounting period number)
-- GL Transaction Amount
-- GL BER Corp Amount
-- AP Voucher Number (for classification)
-- Cost Center*
+- Month
+- Cost Center
 - WBS Element
-- Type (auto-generated by system)
+- Transaction Amount
+- AP Voucher Number
 
-**Sheet Detection**:
-- Loads all sheets with required columns
-- Header expected at Row 2 (Row 1 is title)
-- Combines data from all valid sheets
+> **Critical Requirement:** The Month field must be included and populated. Missing Month values may prevent transactions from being processed correctly.
 
-**Transaction Types**:
-System automatically categorizes based on AP Voucher Number:
-
-| Voucher Prefix | Amount | Type |
-|----------------|--------|------|
-| 5xx | Any | Actual (Invoice) |
-| 2xx | Positive | Accrual |
-| 2xx | Negative | Reversal |
-| 9xx | Any | Reclass |
-| Other | Any | Undefined |
-
-**Example Structure**:
-```
-Row 1: [Title Row]
-Row 2: PO Number | Month | AP Voucher Number | GL BER Corp Amount | Cost Center* | WBS Element | ...
-Row 3: PO12345   | 2     | 510123           | 1000              | 1234        | IT-CT123   | ...
-Row 4: PO12345   | 2     | 210456           | 950               | 1234        | IT-CT123   | ...
-```
+**Validation Checklist**
+- ✅ Month column exists
+- ✅ Month values are populated
+- ✅ Cost Centers are populated
+- ✅ WBS Elements are populated where applicable
+- ✅ Transaction amounts are valid
+- ✅ Latest TIES extract is being used
 
 ---
 
-##  Understanding Outputs
+## Configuration Settings
 
-The system generates a comprehensive Excel workbook with 5 sheets:
+Before generating a report, review configuration settings and confirm they match the uploaded files.
 
-### Sheet 1: Main Template (Populated)
+### Template Configuration
 
-**Purpose**: Your template with all financial data populated
+Verify:
+- Header Row
+- Cost Center Column
+- PO Column
+- Stop Marker
 
-**Structure**:
-- Same layout as input template
-- Data filled in monthly columns
-- Organized by Cost Center  WBS  PO
+### TIES Configuration
 
-**Columns** (per month):
-- Accrual Reversal (Dec only)
-- Forecast
-- Accrual
-- Actual
+Verify:
+- Month Column
+- PO Number Column
+- Cost Center Column
+- WBS Column
+- Transaction Amount Column
 
-**Example**:
-```
-Cost Center | PO #    | ... | Jan Forecast | Jan Accrual | Jan Actual | Feb Forecast | ...
-1234        | PO12345 | ... | 1000        | 950         | 900        | 2000        | ...
-```
+### Forecast Configuration
 
-**Usage**:
-- Primary output for financial analysis
-- Use for reporting and planning
-- Compare forecast vs actual
-- Track accruals and reversals
+Verify:
+- PO Number Column
+- Forecast Value Columns
+- Forecast Worksheet Selection
 
----
-
-### Sheet 2: Forecast Source Data
-
-**Purpose**: Complete audit trail for forecast values
-
-**Columns**:
-- **Visible**: PO #, Monthly forecast columns
-- **Hidden**: All other columns from source files (grouped, expandable)
-
-**Features**:
-- Filtered to POs in template only
-- Auto-filter enabled
-- Freeze panes at Row 2
-- Total row with SUBTOTAL formulas
-- Auto-sized columns
-
-**Usage**:
-- Verify forecast values
-- Trace back to source files
-- Audit forecast data
-- Expand hidden columns for full context
-
-**Example**:
-```
-PO #    | Jan 2026 - FTotal | Feb 2026 - FTotal | [Hidden: Resource, Vendor, etc.]
-PO12345 | 1000             | 2000              | ...
-PO67890 | 1500             | 1800              | ...
-Total   | 2500             | 3800              |
-```
+> **Important:** Configuration mismatches are one of the most common causes of missing report data, incorrect report population, high exception volumes, and processing failures.
 
 ---
 
-### Sheet 3: Transactions Source Data
+## Report Generation Process
 
-**Purpose**: Complete audit trail for transactional data
+### Step 1: Upload Files
 
-**Columns**:
-- **Visible**: PO Number, Accounting Period, AP Voucher Number, Vendor Name, WBS Element, Amount, Month, Type
-- **Hidden**: All other C-TIES columns (grouped, expandable)
+Upload the following files:
 
-**Features**:
-- Filtered to POs in template only
-- Auto-filter enabled
-- Freeze panes at Row 2
-- Auto-sized columns
-- All transaction types included
+1. Template Workbook
+2. TIES Transactional Detail File
+3. Vendor Forecast File(s)
 
-**Usage**:
-- Verify actual/accrual/reversal values
-- Trace transactions to source
-- Audit transactional data
-- Investigate discrepancies
+The system validates uploaded files before processing.
 
-**Example**:
-```
-PO Number | Month | AP Voucher | Amount | Type     | [Hidden: GL Posting Date, etc.]
-PO12345   | Jan   | 510123    | 1000   | Actual   | ...
-PO12345   | Feb   | 210456    | 950    | Accrual  | ...
-PO12345   | Feb   | 210789    | -950   | Reversal | ...
-```
+### Step 2: Review Cost Centers
 
----
+The system automatically extracts Cost Centers from the template.
 
-### Sheet 4: Exceptions (Detailed Log)
+Users may:
+- Process all Cost Centers
+- Select specific Cost Centers
+- Temporarily exclude Cost Centers
 
-**Purpose**: Row-by-row exception log with full context
+### Step 3: Verify Configuration Settings
 
-**Columns**:
-- **Visible**:
-  - Cost Center
-  - Month
-  - WBS
-  - PO
-  - Exception Type
-  - Source Row (row number in C-TIES file)
-  - Amount
-  - Type (transaction type)
-- **Hidden**: Complete source row data (all C-TIES columns)
+Review all configuration settings prior to running the report. Ensure uploaded file structures align with configured settings.
 
-**Features**:
-- Auto-filter enabled
-- Freeze panes at Row 2
-- Auto-sized columns
-- Hidden columns grouped and collapsible
-- Sortable by any column
+### Step 4: Generate Report
 
-**Usage**:
-- Identify specific data quality issues
-- Filter by exception type
-- Filter by cost center or month
-- Expand hidden columns for full source context
-- Use Source Row to find original data in C-TIES
+Select **Generate Report**. The system performs the following actions:
 
-**Example**:
-```
-Cost Center | Month | WBS      | PO      | Exception Type | Source Row | Amount | Type   | [Hidden...]
-1234        | Jan   |          | PO12345 | MISSING_WBS   | 42        | 1000   | Actual | ...
-2345        | Feb   | IT-CT123 |         | MISSING_PO    | 156       | 500    | Accrual| ...
-```
+1. Loads source files
+2. Processes forecast data
+3. Processes transactional data
+4. Builds Cost Center, WBS, and PO relationships
+5. Populates the template
+6. Generates exception reports
+7. Creates the final workbook
+
+### Step 5: Review Exception Summary
+
+Upon completion, review the Exception Summary:
+
+- Total exception count
+- Exception categories
+- Cost Centers with the most exceptions
+- Trends requiring investigation
+
+### Step 6: Download Report
+
+Download the completed workbook for validation and distribution.
 
 ---
 
-### Sheet 5: Exceptions Summary
+## Understanding Outputs
 
-**Purpose**: Executive overview of data quality issues
+The generated workbook contains multiple worksheets.
 
-**Features**:
-- **Interactive Month Filter**: Dropdown to filter by month or view all
-- **Summary by Type**: Count and percentage of each exception type
-- **Summary by Cost Center**: Exception breakdown by cost center
-- **Dynamic Formulas**: Updates when filter changes
+### Main Template
 
-**Section 1: Summary by Type**:
-```
-Exception Type        | Count | % of Total
-MISSING_WBS          | 12    | 52.2%
-DUPLICATE_PO         | 8     | 34.8%
-MISSING_PO           | 3     | 13.0%
-TOTAL                | 23    | 100.0%
-```
+Contains populated reporting data including Forecasts, Actuals, Accruals, and Reversals.
 
-**Section 2: Summary by Cost Center**:
-```
-Cost Center | Total | MISSING_WBS | DUPLICATE_PO | MISSING_PO
-1234        | 15    | 10          | 5            | 0
-2345        | 8     | 2           | 3            | 3
-```
+**Primary Use:** Financial reporting and analysis.
 
-**Usage**:
-- Quick overview of data quality
-- Identify problematic cost centers
-- Track exceptions by month
-- Prioritize data cleanup efforts
-- Report to stakeholders
+### Forecast Source Data
 
----
+Contains forecast information used during report generation.
 
-##  Exception System Guide
+**Primary Use:** Forecast validation, audit support, source verification.
 
-### Understanding Exception Types
+### TIES Source Data
 
-#### 1. MISSING_WBS_AND_PO (Highest Priority)
+Contains transactional information loaded from the TIES file.
 
-**Description**: Both WBS code and PO number are missing from a transaction row
+**Primary Use:** Transaction validation, audit support, variance investigation.
 
-**Impact**: 
-- Transaction cannot be assigned to any cost center or PO
-- Data is lost in the output
+### Exceptions Detail
 
-**Common Causes**:
-- Incomplete data entry in C-TIES
-- Data extraction issues
-- Rows with only cost center information
+Contains detailed exception records.
 
-**How to Fix**:
-1. Open Exceptions sheet
-2. Filter by "MISSING_WBS_AND_PO"
-3. Note Source Row numbers
-4. Find rows in original C-TIES file
-5. Add missing WBS and PO information
-6. Re-run pipeline
+| Field | Description |
+|-------|-------------|
+| Cost Center | Cost center associated with the record |
+| Month | Transaction month |
+| WBS | WBS element |
+| PO Number | Purchase order number |
+| Exception Type | Category of exception |
+| Source Row | Row number from source file |
+| Transaction Amount | Transaction value |
 
-**Example**:
-```
-Row 42 in C-TIES:
-Cost Center: 1234
-WBS Element: [empty]
-PO Number: [empty]
-Amount: $1,000
- Exception logged, data excluded
-```
+**Primary Use:** Root cause investigation and issue resolution.
+
+### Exceptions Summary
+
+Provides a high-level overview of exception activity including exception counts, exception percentages, Cost Center breakdowns, and month-based filtering.
+
+**Primary Use:** Data quality monitoring and management reporting.
 
 ---
 
-#### 2. MISSING_WBS
+## Exception Management
 
-**Description**: WBS code is missing but PO number exists
+Exception reports identify records that could not be processed correctly.
 
-**Impact**:
-- Cannot determine which WBS owns the PO
-- PO data excluded from output
+### Missing WBS and PO
 
-**Common Causes**:
-- PO created without WBS assignment
-- WBS field not populated in C-TIES
-- Data sync issues
+**Description:** Both the WBS and PO Number are missing.
+**Impact:** Transaction cannot be assigned and is excluded from reporting.
 
-**How to Fix**:
-1. Filter exceptions by "MISSING_WBS"
-2. Identify affected POs
-3. Look up correct WBS for each PO
-4. Update C-TIES or source system
-5. Re-run pipeline
+### Missing WBS
 
-**Example**:
-```
-Row 156 in C-TIES:
-Cost Center: 1234
-WBS Element: [empty]
-PO Number: PO12345
-Amount: $1,000
- Exception logged, PO excluded
-```
+**Description:** PO exists but WBS is missing.
+**Impact:** Transaction ownership cannot be determined.
 
----
+### Missing PO
 
-#### 3. MISSING_PO
+**Description:** WBS exists but PO Number is missing.
+**Impact:** Transaction cannot be assigned to a Purchase Order.
 
-**Description**: PO number is missing but WBS code exists
+### Duplicate WBS
 
-**Impact**:
-- Transaction cannot be assigned to specific PO
-- Data excluded from output
+**Description:** The same WBS appears under multiple Cost Centers.
+**Impact:** Ownership conflicts may occur.
 
-**Common Causes**:
-- Transactions without PO (manual entries)
-- WBS-level charges
-- Data entry errors
+### Duplicate PO
 
-**How to Fix**:
-1. Filter exceptions by "MISSING_PO"
-2. Review transactions
-3. Determine if PO should exist
-4. If yes: Add PO number in source
-5. If no: May need to handle differently (WBS-level reporting)
+**Description:** The same PO appears under multiple Cost Center and WBS combinations.
+**Impact:** Duplicate records may be excluded during processing.
 
-**Example**:
-```
-Row 89 in C-TIES:
-Cost Center: 1234
-WBS Element: IT-CT123
-PO Number: [empty]
-Amount: $500
- Exception logged, transaction excluded
-```
+### Exception Investigation Process
+
+1. Open the **Exceptions Summary** worksheet.
+2. Identify the largest exception categories.
+3. Open the **Exceptions Detail** worksheet.
+4. Filter by Exception Type.
+5. Locate affected transactions.
+6. Review source files.
+7. Correct source data.
+8. Re-run the report.
+9. Verify exception reduction.
 
 ---
 
-#### 4. DUPLICATE_WBS
-
-**Description**: WBS code appears under multiple cost centers
-
-**Impact**:
-- Ownership conflict
-- All occurrences logged as exceptions
-- First occurrence processed, others excluded
-
-**Common Causes**:
-- WBS transferred between cost centers
-- Data entry errors
-- Organizational changes
-
-**How to Fix**:
-1. Filter exceptions by "DUPLICATE_WBS"
-2. Identify which cost center should own WBS
-3. Update incorrect assignments in source
-4. Re-run pipeline
-
-**Example**:
-```
-WBS IT-CT123 appears in:
-- Cost Center 1234 (10 transactions)
-- Cost Center 2345 (5 transactions)
- All 15 transactions logged as exceptions
- First occurrence (CC 1234) processed
- Second occurrence (CC 2345) excluded
-```
-
----
-
-#### 5. DUPLICATE_PO
-
-**Description**: PO appears under multiple WBS/cost center combinations
-
-**Impact**:
-- Ownership conflict
-- First occurrence processed, duplicates excluded
-
-**Common Causes**:
-- PO reassigned between WBS codes
-- Split POs across multiple WBS
-- Data entry errors
-
-**How to Fix**:
-1. Filter exceptions by "DUPLICATE_PO"
-2. Determine correct WBS/cost center for PO
-3. Update incorrect assignments
-4. Re-run pipeline
-
-**Example**:
-```
-PO12345 appears in:
-- CC 1234, WBS IT-CT123 (8 transactions)
-- CC 1234, WBS IT-CT456 (3 transactions)
- All 11 transactions logged as exceptions
- First occurrence processed
- Duplicate excluded
-```
-
----
-
-### Using Exception Reports
-
-#### Workflow for Exception Analysis
-
-```mermaid
-graph TD
-    A[Generate Report] --> B[Open Exceptions Summary]
-    B --> C{Many Exceptions?}
-    C -->|Yes| D[Identify Top Exception Types]
-    C -->|No| E[Review Individual Exceptions]
-    D --> F[Open Exceptions Detail Sheet]
-    E --> F
-    F --> G[Filter by Exception Type]
-    G --> H[Note Source Rows]
-    H --> I[Fix in Source Data]
-    I --> J[Re-run Pipeline]
-    J --> K[Verify Exceptions Reduced]
-```
-
-#### Step-by-Step Analysis
-
-**1. Start with Summary**:
-- Open "Exceptions Summary" sheet
-- Review total exception count
-- Identify most common exception types
-- Check cost centers with most issues
-
-**2. Filter by Month** (if needed):
-- Use month dropdown filter
-- Focus on specific accounting period
-- Compare month-to-month trends
-
-**3. Drill into Details**:
-- Open "Exceptions" sheet
-- Apply filters:
-  - Exception Type
-  - Cost Center
-  - Month
-  - PO or WBS
-
-**4. Investigate Root Cause**:
-- Note Source Row numbers
-- Expand hidden columns for full context
-- Open original C-TIES file
-- Find corresponding rows
-- Identify pattern or cause
-
-**5. Document Findings**:
-- Create list of issues
-- Categorize by type and severity
-- Prioritize fixes
-
-**6. Fix Source Data**:
-- Update C-TIES or source system
-- Verify changes
-- Re-export files
-
-**7. Re-run and Verify**:
-- Run pipeline with updated files
-- Check exception count decreased
-- Verify data accuracy in output
-
----
-
-### Exception Best Practices
-
-#### Prevention
-
- **Data Quality Checks**:
-- Validate WBS and PO assignments before export
-- Ensure all transactions have required fields
-- Regular data audits
-
- **Consistent Processes**:
-- Standard PO creation procedures
-- WBS assignment guidelines
-- Regular training
-
- **System Validation**:
-- Enable required field validation in source systems
-- Automated data quality checks
-- Pre-export validation
-
-#### Resolution
-
- **Prioritize by Impact**:
-1. MISSING_WBS_AND_PO (highest impact)
-2. MISSING_WBS / MISSING_PO
-3. DUPLICATE_WBS / DUPLICATE_PO
-
- **Batch Fixes**:
-- Group similar exceptions
-- Fix in bulk when possible
-- Document patterns
-
- **Track Progress**:
-- Monitor exception trends over time
-- Set reduction targets
-- Celebrate improvements
-
----
-
-##  Best Practices
+## Best Practices (Technical)
 
 ### File Preparation
 
-**Before Upload**:
-1.  Verify file formats (.xlsx)
-2.  Check file sizes (< 100MB recommended)
-3.  Ensure required columns exist
-4.  Remove any password protection
-5.  Close files in Excel (avoid file locks)
+Before uploading files:
 
-**Template File**:
-- Keep structure consistent
-- Don't modify column positions
-- Ensure stop marker is present
-- Verify cost center list is current
+- ✅ Verify all files are in Excel format (`.xlsx`)
+- ✅ Ensure files are not password protected
+- ✅ Verify latest file versions are being used
+- ✅ Confirm TIES includes Month values
+- ✅ Verify Cost Centers and PO Numbers are populated
 
-**Forecast Files**:
-- Use consistent column naming
-- Include all months
-- Verify PO numbers match template
-- Check for duplicate POs across files
+### Configuration Review
 
-**Transactional File**:
-- Export complete data (all columns)
-- Include all accounting periods
-- Verify AP Voucher Numbers are correct
-- Check for missing WBS/PO assignments
+Before generating a report:
 
----
+- ✅ Validate Template settings
+- ✅ Validate TIES settings
+- ✅ Validate Forecast settings
+- ✅ Confirm selected Cost Centers
+- ✅ Review prior exceptions for recurring issues
 
-### Processing Tips
+### Output Validation
 
-**For Large Files**:
-- Process one cost center at a time
-- Split forecast files if very large
-- Close other applications to free memory
-- Use command line for better performance
+After report generation:
 
-**For Testing**:
-- Start with single cost center
-- Use small subset of data
-- Verify configuration before full run
-- Check exception reports carefully
+- ✅ Review Exception Summary
+- ✅ Review high-priority exceptions
+- ✅ Validate report totals
+- ✅ Spot-check forecast values
+- ✅ Spot-check actual values
+- ✅ Save a copy of the final workbook
 
-**For Production**:
-- Use consistent file naming
-- Save configuration settings
-- Document any custom settings
-- Keep backup of input files
+### Monthly Processing Checklist
+
+- ✅ Latest Template Workbook
+- ✅ Latest Vendor Forecast Files
+- ✅ Latest TIES Extract
+- ✅ Month column populated
+- ✅ Configuration settings validated
+- ✅ Prior exceptions reviewed
+- ✅ Final report archived
 
 ---
 
-### Data Quality
+## Common Workflows
 
-**Regular Checks**:
-- Review exception reports after each run
-- Track exception trends over time
-- Set data quality targets
-- Address root causes, not symptoms
+### Monthly Report Generation
 
-**Validation**:
-- Compare totals to source files
-- Spot-check random POs
-- Verify month offsets (actuals in prior month)
-- Check accrual/reversal pairs
+1. Obtain latest TIES extract.
+2. Obtain updated forecast files.
+3. Access the Financial Automation Portal.
+4. Upload required files.
+5. Review Cost Centers.
+6. Verify configurations.
+7. Generate report.
+8. Review exceptions.
+9. Download final workbook.
 
-**Documentation**:
-- Document known issues
-- Track fixes applied
-- Maintain change log
-- Share learnings with team
+### Exception Review
 
----
+1. Generate report.
+2. Open Exception Summary.
+3. Identify largest exception categories.
+4. Review Exceptions Detail.
+5. Investigate source data.
+6. Correct data issues.
+7. Re-run report.
 
-##  Common Workflows
+### Configuration Maintenance
 
-### Workflow 1: Monthly Report Generation
+When file layouts change:
 
-**Frequency**: Monthly
-
-**Steps**:
-1. Export latest C-TIES file
-2. Collect vendor forecast updates
-3. Launch Streamlit UI
-4. Upload all files
-5. Select all cost centers
-6. Generate report
-7. Review exception summary
-8. Download and distribute
-
-**Time**: 5-10 minutes
+1. Review Template structure.
+2. Review Forecast file structure.
+3. Review TIES file structure.
+4. Update configuration settings.
+5. Test processing.
+6. Validate output.
+7. Document changes.
 
 ---
 
-### Workflow 2: Cost Center Deep Dive
+## Troubleshooting (Technical)
 
-**Frequency**: As needed
+### Report Generation Fails
 
-**Steps**:
-1. Launch Streamlit UI
-2. Upload files
-3. Select single cost center
-4. Generate report
-5. Review exceptions in detail
-6. Investigate issues
-7. Fix source data
-8. Re-run for verification
+Verify:
+- All required files are uploaded.
+- Files are Excel (`.xlsx`) format.
+- Required columns exist.
+- Configuration settings are correct.
+- Month column exists in the TIES file.
 
-**Time**: 30-60 minutes
+### Missing Data in Output
 
----
+Verify:
+- Transactions exist in the TIES file.
+- Forecast values exist in vendor files.
+- PO Numbers match across files.
+- Cost Center selections are correct.
+- Exceptions are reviewed.
 
-### Workflow 3: Exception Cleanup
+### High Exception Volume
 
-**Frequency**: Weekly/Monthly
-
-**Steps**:
-1. Generate full report
-2. Open Exceptions Summary
-3. Identify top exception types
-4. Open Exceptions detail sheet
-5. Filter by exception type
-6. Export exception list
-7. Work with data owners to fix
-8. Re-run to verify improvements
-
-**Time**: 1-2 hours
+Review:
+- Missing WBS records
+- Missing PO records
+- Duplicate WBS assignments
+- Duplicate PO assignments
+- TIES data completeness
+- Configuration accuracy
 
 ---
 
-### Workflow 4: Configuration Update
-
-**Frequency**: When file formats change
-
-**Steps**:
-1. Launch Streamlit UI
-2. Expand Configuration Settings
-3. Update relevant parameters
-4. Click "Save Configuration"
-5. Test with sample files
-6. Verify output accuracy
-7. Document changes
-
-**Time**: 15-30 minutes
-
----
-
-##  Tips and Tricks
-
-### UI Tips
-
- **Keyboard Shortcuts**:
-- `Ctrl + R`: Refresh page
-- `Ctrl + Shift + R`: Clear cache and refresh
-- `Ctrl + Click`: Open links in new tab
-
- **File Upload**:
-- Drag and drop files instead of browsing
-- Upload multiple forecast files at once
-- Files are temporarily stored (auto-cleanup)
-
- **Configuration**:
-- Save configuration before closing browser
-- Reset to defaults if issues occur
-- Test configuration changes with small dataset
-
----
-
-### Excel Tips
-
- **Exception Analysis**:
-- Use Excel's filter and sort features
-- Create pivot tables from exception data
-- Use conditional formatting to highlight issues
-- Copy exception list to separate workbook for tracking
-
- **Data Validation**:
-- Use VLOOKUP to cross-reference POs
-- Create summary tables by cost center
-- Compare forecast vs actual with formulas
-- Use charts to visualize trends
-
- **Audit Trail**:
-- Keep source data sheets for reference
-- Use hyperlinks to jump between sheets
-- Document any manual adjustments
-- Save versions with dates
-
----
-
-### Performance Tips
-
- **Speed Up Processing**:
-- Process fewer cost centers at once
-- Close unnecessary applications
-- Use SSD for file storage
-- Increase available RAM if possible
-
- **Reduce File Size**:
-- Remove unnecessary columns from source files
-- Limit to required accounting periods
-- Compress files before upload
-- Archive old data
-
----
-
-##  Getting Help
-
-### Self-Service Resources
-
-1. **Exception Reports**: Start here for data quality issues
-2. **Configuration Guide**: For parameter questions
-3. **Architecture Guide**: For technical understanding
-4. **Troubleshooting Guide**: For common errors
-
-### When to Escalate
-
--  System errors or crashes
--  Incorrect calculations
--  Missing data in output
--  Configuration not working
--  Performance issues
-
-### What to Include
-
-When reporting issues:
-- Screenshot of error message
-- Input file samples (if possible)
-- Configuration settings used
-- Steps to reproduce
-- Expected vs actual behavior
-
----
-
-##  Related Documentation
-
-- **[Configuration Guide](CONFIGURATION.md)** - Complete configuration reference
-- **[Architecture Guide](ARCHITECTURE.md)** - System design and components
-- **[API Reference](API_REFERENCE.md)** - For developers
-- **[Deployment Guide](DEPLOYMENT.md)** - Troubleshooting and FAQ
-
----
-
-**Last Updated**: June 2026  
-**Version**: 1.0
+*Version: 1.0 — Last Updated: July 2026*
