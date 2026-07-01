@@ -25,7 +25,7 @@
 
 The Financial Automation Project automates the process of populating a Financial Spreadsheet Template with:
 - **Forecast data** from vendor files
-- **Actual data** from C-TIES transactional detail files
+- **Actual data** from TIES transactional detail files
 - **Comprehensive exception tracking** for data quality validation
 
 This system eliminates manual data entry, reduces errors, and provides detailed audit trails and exception reports for financial analysis.
@@ -35,7 +35,7 @@ This system eliminates manual data entry, reduces errors, and provides detailed 
 ```mermaid
 graph LR
     A[Vendor Forecasts] --> D[ETL Pipeline]
-    B[C-TIES Transactions] --> D
+    B[TIES Transactions] --> D
     C[Template] --> D
     D --> E[Populated Template]
     D --> F[Exception Reports]
@@ -105,7 +105,7 @@ streamlit run app.py
 
 Then:
 1. Upload your template file
-2. Upload transactional detail file (C-TIES)
+2. Upload transactional detail file (TIES)
 3. Upload one or more forecast files
 4. (Optional) Select specific cost centers to process
 5. Configure settings if needed
@@ -152,7 +152,7 @@ graph TD
 | Component | Purpose |
 |-----------|---------|
 | **ForecastReader** | Reads vendor forecast files and extracts monthly forecast data |
-| **TransactionalDetailReader** | Processes C-TIES files, categorizes transactions (Actual/Accrual/Reversal) |
+| **TransactionalDetailReader** | Processes TIES files, categorizes transactions (Actual/Accrual/Reversal) |
 | **TemplateReader** | Extracts cost centers and PO structure from template |
 | **build_hierarchy** | Builds Cost Center  WBS  PO hierarchy with exception tracking |
 | **TemplateWriter** | Generates output workbook with data and reports |
@@ -213,7 +213,7 @@ financial-automation-project/
  src/                               # Core source code
     __init__.py
     forecast_reader.py             # Vendor forecast file reader
-    transactional_detail_reader.py # C-TIES file reader
+    transactional_detail_reader.py # TIES file reader
     template_reader.py             # Template structure reader
     template_writer.py             # Output workbook writer
     models.py                      # Data models and exceptions
@@ -258,7 +258,7 @@ The pipeline generates a comprehensive Excel workbook with multiple sheets:
 
 ### 3. Transactions Source Data
 - Complete audit trail for all transactional data
-- All C-TIES columns preserved
+- All TIES columns preserved
 - Filterable by PO, month, type, etc.
 
 ### 4. Exceptions (Detailed)

@@ -418,7 +418,7 @@ with row2_col1:
     transactional_file = st.file_uploader(
         "transactional_label",
         type=['xlsx'],
-        help="Upload the C-TIES transactional detail file (.xlsx format)",
+        help="Upload the TIES transactional detail file (.xlsx format)",
         key="transactional_upload",
         label_visibility="collapsed"
     )

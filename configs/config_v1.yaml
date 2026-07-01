@@ -7,7 +7,7 @@ forecast_reader:
 
 ## Transactional Detail Reader
 transactional_detail_reader:
-  file_path: "data/C-TIES AP09 2025.xlsx"
+  file_path: "data/TIES AP09 2025.xlsx"
 
 ## Template Writer
 template_writer:

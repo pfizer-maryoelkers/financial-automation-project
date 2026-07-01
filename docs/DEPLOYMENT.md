@@ -601,10 +601,10 @@ jobs:
 
 #### Issue: "No valid sheets found"
 
-**Cause**: Required columns missing from C-TIES file
+**Cause**: Required columns missing from TIES file
 
 **Solutions**:
-1. Open C-TIES file
+1. Open TIES file
 2. Check column names in Row 2
 3. Update configuration:
    ```yaml
@@ -895,7 +895,7 @@ A: Yes, modify `TemplateWriter` class or adjust configuration.
 
 ### Data Questions
 
-**Q: What if my C-TIES file has different columns?**  
+**Q: What if my TIES file has different columns?**  
 A: Update the `colmap` in configuration to match your column names.
 
 **Q: How are actuals assigned to months?**  

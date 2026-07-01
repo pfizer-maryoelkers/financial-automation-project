@@ -132,7 +132,7 @@ class TransactionalDetailReader:
 
     def get_transactional_data(self) -> dict:
         '''
-        Method that gets transactional data from C-TIES file. 
+        Method that gets transactional data from TIES file. 
         Extracts all rows, categorizes them, and returns a dict w/ actuals and accruals.
         Aggregates by PO / month.
         Returns:

@@ -352,7 +352,7 @@ forecast_reader:
 
 ##  Transactional Detail Reader Configuration
 
-Configuration for reading C-TIES transactional detail files.
+Configuration for reading TIES transactional detail files.
 
 ### Parameters
 
@@ -364,7 +364,7 @@ transactional_detail_reader:
 
 **Type**: String  
 **Required**: Yes (for command-line usage)  
-**Description**: Path to C-TIES transactional detail file  
+**Description**: Path to TIES transactional detail file  
 **Used By**: TransactionalDetailReader  
 **Notes**:
 - Single file only
@@ -459,7 +459,7 @@ transactional_detail_reader:
 
 **Type**: Dictionary (key-value pairs)  
 **Required**: Yes  
-**Description**: Maps internal field names to actual column names in C-TIES file  
+**Description**: Maps internal field names to actual column names in TIES file  
 **Used By**: TransactionalDetailReader  
 
 **Purpose**: Allows system to work with different column naming conventions
@@ -477,7 +477,7 @@ transactional_detail_reader:
 | `type` | Transaction type | "Type" |
 
 **Customization Example**:
-If your C-TIES file has different column names:
+If your TIES file has different column names:
 ```yaml
 colmap:
   po: "Purchase Order Number"        # Instead of "PO Number"
@@ -640,7 +640,7 @@ template_writer:
 
 **Purpose**:
 - Defines visible columns in audit sheet
-- Other C-TIES columns automatically hidden but preserved
+- Other TIES columns automatically hidden but preserved
 
 **Recommended Columns**:
 - PO Number (identifier)
@@ -835,7 +835,7 @@ template_writer:
 
 ### Example 4: Alternative Column Names
 
-**Scenario**: C-TIES file with different column naming
+**Scenario**: TIES file with different column naming
 
 ```yaml
 template:
@@ -946,10 +946,10 @@ template:
 
 #### Issue: "No valid sheets found"
 
-**Cause**: `required_cols` don't match actual column names in C-TIES file
+**Cause**: `required_cols` don't match actual column names in TIES file
 
 **Solution**:
-1. Open C-TIES file in Excel
+1. Open TIES file in Excel
 2. Check actual column names (Row 2)
 3. Update `required_cols` to match exactly
 ```yaml
@@ -967,7 +967,7 @@ transactional_detail_reader:
 **Cause**: `colmap` values don't match actual column names
 
 **Solution**:
-1. Open C-TIES file
+1. Open TIES file
 2. Verify column names
 3. Update `colmap` values
 ```yaml

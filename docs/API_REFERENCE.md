@@ -93,7 +93,7 @@ financial-automation-project/
  src/                           # Core source code
     __init__.py
     forecast_reader.py         # Forecast file reader
-    transactional_detail_reader.py  # C-TIES reader
+    transactional_detail_reader.py  # TIES reader
     template_reader.py         # Template structure reader
     template_writer.py         # Output workbook writer
     models.py                  # Data models
@@ -234,7 +234,7 @@ def _load_valid_sheet(self, file_path: str) -> Optional[pd.DataFrame]
 
 **Location**: `src/transactional_detail_reader.py`
 
-**Purpose**: Read and categorize C-TIES transactional data
+**Purpose**: Read and categorize TIES transactional data
 
 #### Constructor
 
@@ -248,7 +248,7 @@ TransactionalDetailReader(
 ```
 
 **Parameters**:
-- `file_path` (str): Path to C-TIES Excel file
+- `file_path` (str): Path to TIES Excel file
 - `required_cols` (list): Columns required for valid sheet detection
 - `valid_types` (list): Transaction types to process
 - `colmap` (dict): Column name mappings
@@ -283,7 +283,7 @@ reader = TransactionalDetailReader(
 def load_transactional_detail_file(self) -> None
 ```
 
-**Description**: Loads all valid sheets from C-TIES file
+**Description**: Loads all valid sheets from TIES file
 
 **Behavior**:
 - Checks each sheet for required columns

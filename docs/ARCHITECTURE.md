@@ -27,7 +27,7 @@ The Financial Automation Project is built on an **ETL (Extract, Transform, Load)
 graph TB
     subgraph "Input Layer"
         A[Vendor Forecast Files]
-        B[C-TIES Transactional File]
+        B[TIES Transactional File]
         C[Financial Template]
     end
     
@@ -235,7 +235,7 @@ sequenceDiagram
 
 ### 2. TransactionalDetailReader
 
-**Purpose**: Extract and categorize transactional data from C-TIES files
+**Purpose**: Extract and categorize transactional data from TIES files
 
 **Location**: `src/transactional_detail_reader.py`
 
