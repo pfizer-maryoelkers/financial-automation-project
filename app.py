@@ -231,7 +231,7 @@ def render_config_section():
             
             config.transactional_detail_reader.valid_types = st.multiselect(
                 "Valid Transaction Types",
-                options=["Actual", "Accrual", "Reversal", "Budget", "Forecast"],
+                options=["Actual", "Accrual", "Reversal", "Reclass", "Budget", "Forecast"],
                 default=config.transactional_detail_reader.valid_types,
                 help="Valid transaction types to process",
                 key="trans_valid_types"
