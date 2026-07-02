@@ -494,21 +494,39 @@ class TemplateWriter:
         all_exception_types = sorted(set(summary_by_type['counts'].keys()))
         all_cost_centers = sorted(set(summary_by_cc.keys()))
         
-        # Get all unique months from exception data (ensure they are strings)
-        all_months = sorted(set(str(entry.month) for entry in exception_log.entries if entry.month), key=month_sort_key)
-        
+        # Get all unique months from exception data — normalise to 3-letter names where possible
+        _month_norm = {
+            'january':'Jan','february':'Feb','march':'Mar','april':'Apr',
+            'may':'May','june':'Jun','july':'Jul','august':'Aug',
+            'september':'Sep','october':'Oct','november':'Nov','december':'Dec'
+        }
+        def _norm_month(m):
+            s = str(m).strip()
+            return _month_norm.get(s.lower(), s)
+
+        all_months = sorted(
+            set(_norm_month(entry.month) for entry in exception_log.entries if entry.month),
+            key=month_sort_key
+        )
+
         current_row = 1
-        
+
         # Add Month Filter Dropdown
         ws.cell(row=current_row, column=1, value="Filter by Month:")
         ws.cell(row=current_row, column=1).font = Font(bold=True, size=12)
-        
-        # Create dropdown list (ensure all values are strings)
-        month_options = ["All Months"] + [str(m) for m in all_months]
-        dv = DataValidation(type="list", formula1=f'"{",".join(month_options)}"', allow_blank=False)
+
+        # Create dropdown list — Excel DataValidation formula1 has a 255-char limit.
+        # Write months to a helper column (ZZ) and reference that range instead.
+        month_options = ["All Months"] + all_months
+        helper_col = 100  # column CV — well out of view
+        for i, opt in enumerate(month_options, start=1):
+            ws.cell(row=i, column=helper_col, value=opt)
+        helper_letter = get_column_letter(helper_col)
+        helper_range = f"'{ws.title}'!${helper_letter}$1:${helper_letter}${len(month_options)}"
+        dv = DataValidation(type="list", formula1=helper_range, allow_blank=False)
         dv.add(ws['B1'])
         ws.add_data_validation(dv)
-        
+
         # Set default value
         ws['B1'] = "All Months"
         ws['B1'].font = Font(size=11)
