@@ -190,6 +190,14 @@ class TransactionalDetailReader:
             .sum()
             .reset_index()
         )
+        # Build month lookup dicts once (used inside the loop)
+        # Supports short names ("jan"), full names ("january"), integers (1-12), YYYYMM (202603)
+        month_name_map = {v.lower(): k for k, v in self.month_map.items()}  # e.g. 'jan'->1
+        full_names = {
+            'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
+            'july':7,'august':8,'september':9,'october':10,'november':11,'december':12
+        }
+
         # Build results
         result = {}
         for _, row in grouped.iterrows():
@@ -200,17 +208,28 @@ class TransactionalDetailReader:
             cost_center = str(row[self.colmap["cost_center"]]).strip()
             wbs = str(row[self.colmap["wbs"]]).strip()
 
-            # Normalise month to 1-12.
-            # Supports plain integers (1-12) and YYYYMM format (e.g. 202601 → 1).
-            try:
-                raw_month_int = int(raw_month)
-                if raw_month_int > 12:
-                    # YYYYMM format — extract last two digits
-                    month_num = raw_month_int % 100
-                else:
-                    month_num = raw_month_int
-            except (TypeError, ValueError):
-                continue  # unparseable month — skip row
+            # Normalise month to a 1-12 integer.
+            # Supports:
+            #   - String month names: "Jan", "Mar", "March", etc.
+            #   - Plain integers 1-12
+            #   - YYYYMM format (e.g. 202603 → 3)
+            raw_month_str = str(raw_month).strip().lower()
+            if raw_month_str in month_name_map:
+                # Short name: "jan", "feb", "mar" etc.
+                month_num = month_name_map[raw_month_str]
+            elif raw_month_str in full_names:
+                # Full name: "january", "march" etc.
+                month_num = full_names[raw_month_str]
+            else:
+                try:
+                    raw_month_int = int(raw_month)
+                    if raw_month_int > 12:
+                        # YYYYMM format — extract last two digits
+                        month_num = raw_month_int % 100
+                    else:
+                        month_num = raw_month_int
+                except (TypeError, ValueError):
+                    continue  # unparseable month — skip row
 
             # Actual values belong to prior month
             if month_num == 1:
