@@ -396,15 +396,15 @@ class TemplateWriter:
     def write_exception_sheet(self, exception_log, transactional_df):
         ws = self.wb.create_sheet("Exceptions")
         
-        # Define visible columns - include Description from transactional data
+        # Define visible columns - include Description and GL Line Description from transactional data
         visible_headers = [
             'Cost Center', 'Month', 'WBS', 'PO/ER Number',
-            'Exception Type', 'Source Row', 'Amount', 'Type', 'Description'
+            'Exception Type', 'Source Row', 'Amount', 'Type', 'Description', 'GL Line Description'
         ]
         
         # Get all transactional columns for hidden section
         # Exclude columns already shown in visible section
-        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type', 'Description'}
+        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type', 'Description', 'GL Line Description'}
         hidden_headers = [col for col in transactional_df.columns if col not in excluded_cols]
         
         all_headers = visible_headers + hidden_headers
@@ -426,10 +426,12 @@ class TemplateWriter:
             ws.cell(row=row_idx, column=8, value=entry.transaction_type)
             # Description from source row data
             ws.cell(row=row_idx, column=9, value=entry.source_row_data.get('Description') if entry.source_row_data else None)
+            # GL Line Description from source row data
+            ws.cell(row=row_idx, column=10, value=entry.source_row_data.get('GL Line Description') if entry.source_row_data else None)
             
             # Hidden columns (remaining source row data)
             if entry.source_row_data:
-                for col_idx_hidden, col_name in enumerate(hidden_headers, start=10):
+                for col_idx_hidden, col_name in enumerate(hidden_headers, start=11):
                     ws.cell(row=row_idx, column=col_idx_hidden,
                            value=entry.source_row_data.get(col_name))
         
