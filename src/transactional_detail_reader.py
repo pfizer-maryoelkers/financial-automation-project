@@ -11,9 +11,9 @@ class TransactionalDetailReader:
         - get_transactional_data(): reads dataframe and filters data, returns dict of data we need
         
     Codes for AP Voucher Number (used in categorize row):
-        210 - Accrual/Reversal
-        510 - Invoice
-        900 - Reclass
+        2xxxxxxxxx - Accrual/Reversal (starts with 2)
+        5xxxxxxxxx - Invoice/Actual (starts with 5)
+        9xxxxxxxxx - Reclass (starts with 9, e.g. 9006227350)
 
     __init__ defines required cols, required types, and a column map for easy configuration of newly formatted TIES files.
     
@@ -80,30 +80,16 @@ class TransactionalDetailReader:
         Returns value for row 'Type' as a string.
 
         Priority order:
-        1. "CO Doc Line Item Txt" description column — checked for keywords
-           (accrual, reversal, reclass, invoice) as the most reliable source.
-        2. AP Voucher Number prefix as fallback:
-             "5xx" = Actual (vendor invoice)
-             "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
-             "9xx" = Reclass
+        1. AP Voucher Number prefix — checked first as the authoritative source.
+             Numbers starting with "9" (e.g. 9006227350) = Reclass
+             Numbers starting with "5" = Actual (vendor invoice)
+             Numbers starting with "2" = Accrual (positive) or Reversal (negative)
+        2. "CO Doc Line Item Txt" description column — fallback keyword check
+           (accrual, reversal, reclass, invoice) when AP Voucher prefix is not matched.
         '''
         classifier = str(row[self.colmap["classifier"]])
 
-        # --- Step 1: check CO Doc Line Item Txt for explicit description ---
-        co_doc_col = "CO Doc Line Item Txt"
-        if co_doc_col in row.index:
-            desc = str(row[co_doc_col]).strip().lower()
-            if desc and desc not in ('nan', 'none', ''):
-                if 'reversal' in desc:
-                    return "Reversal"
-                if 'accrual' in desc:
-                    return "Accrual"
-                if 'reclass' in desc:
-                    return "Reclass"
-                if 'invoice' in desc or 'vendor' in desc:
-                    return "Actual"
-
-        # --- Step 2: fall back to AP Voucher Number prefix ---
+        # --- Step 1: AP Voucher Number prefix (authoritative) ---
         # Use GL Transaction Amount for sign — always populated.
         # Fall back to the configured amount column if the column is absent.
         gl_trans_col = "GL Transaction Amount"
@@ -118,17 +104,31 @@ class TransactionalDetailReader:
             except (TypeError, ValueError):
                 sign_amount = 0.0
 
-        if classifier.startswith("5"):
+        if classifier.startswith("9"):
+            return "Reclass"
+        elif classifier.startswith("5"):
             return "Actual"
         elif classifier.startswith("2"):
             if sign_amount >= 0:
                 return "Accrual"
             else:
                 return "Reversal"
-        elif classifier.startswith("9"):
-            return "Reclass"
-        else:
-            return "Undefined"
+
+        # --- Step 2: fall back to CO Doc Line Item Txt keyword check ---
+        co_doc_col = "CO Doc Line Item Txt"
+        if co_doc_col in row.index:
+            desc = str(row[co_doc_col]).strip().lower()
+            if desc and desc not in ('nan', 'none', ''):
+                if 'reversal' in desc:
+                    return "Reversal"
+                if 'accrual' in desc:
+                    return "Accrual"
+                if 'reclass' in desc:
+                    return "Reclass"
+                if 'invoice' in desc or 'vendor' in desc:
+                    return "Actual"
+
+        return "Undefined"
 
     def get_transactional_data(self) -> dict:
         '''
