@@ -79,19 +79,18 @@ class TransactionalDetailReader:
         '''
         Returns value for row 'Type' as a string.
 
-        Priority order:
-        1. AP Voucher Number prefix — checked first as the authoritative source.
-             Numbers starting with "9" (e.g. 9006227350) = Reclass
-             Numbers starting with "5" = Actual (vendor invoice)
-             Numbers starting with "2" = Accrual (positive) or Reversal (negative)
-        2. "CO Doc Line Item Txt" description column — fallback keyword check
-           (accrual, reversal, reclass, invoice) when AP Voucher prefix is not matched.
+        For AP Voucher Numbers starting with "9":
+          - Description starts with "ER" (e.g. "ER97054 - ...") → "ER"
+          - Description starts with "RC" (e.g. "RC03: AUTOSYS CLOUD LT MOVEMENT") → "Reclass"
+          - No description match → "Reclass" (default for 9xx)
+        For all other vouchers:
+          "5xx" = Actual (vendor invoice)
+          "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
+        Fallback: CO Doc Line Item Txt keyword check.
         '''
         classifier = str(row[self.colmap["classifier"]])
 
-        # --- Step 1: AP Voucher Number prefix (authoritative) ---
-        # Use GL Transaction Amount for sign — always populated.
-        # Fall back to the configured amount column if the column is absent.
+        # Use GL Transaction Amount for sign on 2xx vouchers.
         gl_trans_col = "GL Transaction Amount"
         if gl_trans_col in row.index:
             try:
@@ -105,7 +104,17 @@ class TransactionalDetailReader:
                 sign_amount = 0.0
 
         if classifier.startswith("9"):
-            return "Reclass"
+            # Check description columns to distinguish ER from Reclass.
+            # Priority: GL Line Description → Description → CO Doc Line Item Txt
+            for desc_col in ("GL Line Description", "Description", "CO Doc Line Item Txt"):
+                if desc_col in row.index:
+                    desc = str(row[desc_col]).strip()
+                    if desc and desc.lower() not in ('nan', 'none', ''):
+                        if re.match(r'^ER\d+', desc, re.IGNORECASE):
+                            return "ER"
+                        if desc.upper().startswith("RC"):
+                            return "Reclass"
+            return "Reclass"  # default for 9xx with no matching description
         elif classifier.startswith("5"):
             return "Actual"
         elif classifier.startswith("2"):
@@ -114,7 +123,7 @@ class TransactionalDetailReader:
             else:
                 return "Reversal"
 
-        # --- Step 2: fall back to CO Doc Line Item Txt keyword check ---
+        # --- Fallback: CO Doc Line Item Txt keyword check ---
         co_doc_col = "CO Doc Line Item Txt"
         if co_doc_col in row.index:
             desc = str(row[co_doc_col]).strip().lower()
@@ -123,7 +132,7 @@ class TransactionalDetailReader:
                     return "Reversal"
                 if 'accrual' in desc:
                     return "Accrual"
-                if 'reclass' in desc:
+                if re.match(r'^rc', desc):
                     return "Reclass"
                 if 'invoice' in desc or 'vendor' in desc:
                     return "Actual"

@@ -34,7 +34,7 @@ class TransactionalConfig:
         "PO Number", "Month", "GL Transaction Amount"
     ])
     valid_types: List[str] = field(default_factory=lambda: [
-        "Actual", "Accrual", "Reversal", "Reclass"
+        "Actual", "Accrual", "Reversal", "Reclass", "ER"
     ])
     colmap: Dict[str, str] = field(default_factory=lambda: {
         'po': 'PO Number',

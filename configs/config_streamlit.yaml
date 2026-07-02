@@ -16,6 +16,7 @@ transactional_detail_reader:
   - Accrual
   - Reversal
   - Reclass
+  - ER
   colmap:
     po: PO Number
     month: Month
