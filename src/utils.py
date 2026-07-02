@@ -112,26 +112,12 @@ def build_hierarchy(
             amount = source_row_data.get('GL BER Corp Amount')
             trans_type = source_row_data.get('Type')
 
-            # Reclass rows (9xx AP Voucher) — log and skip further checks.
-            # They have no PO or WBS so the normal missing-field checks don't apply.
-            if trans_type == "Reclass":
-                exception_log.log(
-                    ExceptionType.RECLASS,
-                    row_index=row_idx,
-                    po=po,
-                    wbs=wbs,
-                    cost_center=cc_id,
-                    month=month,
-                    amount=amount,
-                    transaction_type=trans_type,
-                    source_row_data=source_row_data
-                )
-                continue  # skip PO/WBS checks — Reclasses don't have them
-
             # Handling Exceptions (in priority order)
 
             # Check 1: Both WBS and PO missing (highest priority)
-            # Special case: Try to extract ER number from any description column
+            # Special case: Try to extract ER number from any description column.
+            # ER extraction runs BEFORE the Reclass check so that ER rows are never
+            # misidentified as Reclasses even if they carry a 9xx AP Voucher number.
             if not wbs and not po:
                 er_found = _find_er_in_row(row)
                 if er_found:
@@ -141,7 +127,21 @@ def build_hierarchy(
                     er_extracted_count += 1
                     # Continue processing with extracted ER as PO
                 else:
-                    # No ER found in any description column, log as exception
+                    # No ER found — now check if it's a Reclass (9xx AP Voucher)
+                    if trans_type == "Reclass":
+                        exception_log.log(
+                            ExceptionType.RECLASS,
+                            row_index=row_idx,
+                            po=po,
+                            wbs=wbs,
+                            cost_center=cc_id,
+                            month=month,
+                            amount=amount,
+                            transaction_type=trans_type,
+                            source_row_data=source_row_data
+                        )
+                        continue  # skip PO/WBS checks — Reclasses don't have them
+                    # No ER and not a Reclass — log as missing WBS and PO
                     exception_log.log(
                         ExceptionType.MISSING_WBS_AND_PO,
                         row_index=row_idx,
@@ -166,6 +166,21 @@ def build_hierarchy(
                     po = er_found
                     wbs = "ER"
                     er_extracted_count += 1
+                else:
+                    # Has a PO but no WBS and not an ER — check if it's a Reclass
+                    if trans_type == "Reclass":
+                        exception_log.log(
+                            ExceptionType.RECLASS,
+                            row_index=row_idx,
+                            po=po,
+                            wbs=wbs,
+                            cost_center=cc_id,
+                            month=month,
+                            amount=amount,
+                            transaction_type=trans_type,
+                            source_row_data=source_row_data
+                        )
+                        continue
 
             # Check 2: Individual missing checks
             if not wbs:
