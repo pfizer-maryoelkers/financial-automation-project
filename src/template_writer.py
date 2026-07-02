@@ -338,12 +338,15 @@ class TemplateWriter:
 
     def write_transactional_source_sheet(self, transactions_df, pos: dict[str, int]):
         # Method to write transactional detail source sheet
-        # Filter to POs present in the template
+        # Include rows where PO is in the template OR where Type is Reclass
+        # (Reclass rows have no PO so they would otherwise be filtered out)
         if self.transactional_po_col not in transactions_df.columns:
             raise KeyError(f"Expected {self.transactional_po_col} column not found in transactional dataframe.")
 
         transactions_df[self.transactional_po_col] = transactions_df[self.transactional_po_col].astype(str)
-        source_df = transactions_df[transactions_df[self.transactional_po_col].isin(pos.keys())]
+        in_template = transactions_df[self.transactional_po_col].isin(pos.keys())
+        is_reclass = transactions_df['Type'] == 'Reclass' if 'Type' in transactions_df.columns else False
+        source_df = transactions_df[in_template | is_reclass]
 
         visible_cols = [c for c in self.transactional_source_cols if c in source_df.columns]
         hidden_cols = [c for c in source_df.columns if c not in visible_cols]
