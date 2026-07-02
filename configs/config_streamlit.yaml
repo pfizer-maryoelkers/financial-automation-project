@@ -18,7 +18,7 @@ transactional_detail_reader:
   - Reclass
   colmap:
     po: PO Number
-    month: Accounting Period
+    month: Month
     amount: GL BER Corp Amount
     classifier: AP Voucher Number
     cost_center: CC ID

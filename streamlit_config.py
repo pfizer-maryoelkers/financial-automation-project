@@ -41,7 +41,7 @@ class TransactionalConfig:
         'month': 'Month',
         'amount': 'GL BER Corp Amount',
         'classifier': 'AP Voucher Number',
-        'cost_center': 'Cost Center*',
+        'cost_center': 'CC ID',
         'wbs': 'WBS Element',
         'type': 'Type'
     })

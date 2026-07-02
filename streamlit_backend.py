@@ -325,7 +325,8 @@ class PipelineOrchestrator:
             return self.output_path
             
         except Exception as e:
-            self.logger.error(f"Pipeline failed: {str(e)}")
+            import traceback
+            self.logger.error(f"Pipeline failed: {str(e)}\n{traceback.format_exc()}")
             raise
     
     def get_exception_summary(self) -> Optional[Dict]:
