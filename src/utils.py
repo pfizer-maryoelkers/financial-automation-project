@@ -244,11 +244,8 @@ def build_hierarchy(
             po_obj = cost_center.wbs_codes[wbs].pos[po]
             
             # Fill MonthlyMetrics from transactional data
-            po_lookup = po
-            if wbs == "ER" and po:
-                po_lookup = str(po).strip().upper()
-            if po_lookup in transactional_data:
-                po_data = transactional_data[po_lookup]
+            if po in transactional_data:
+                po_data = transactional_data[po]
                 for month, values in po_data.items():
                     if month in ('cost_center', 'wbs'):
                         continue
