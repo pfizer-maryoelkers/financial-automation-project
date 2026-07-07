@@ -399,15 +399,15 @@ class TemplateWriter:
     def write_exception_sheet(self, exception_log, transactional_df):
         ws = self.wb.create_sheet("Exceptions")
         
-        # Define visible columns for filtering on the main Exceptions tab
+        # Define visible columns - include Description and GL Line Description from transactional data
         visible_headers = [
-            'Cost Center', 'Accounting Period', 'WBS', 'PO/ER Number',
-            'Exception Type', 'Source Row', 'Amount', 'Type', 'GL Line Description'
+            'Cost Center', 'Month', 'WBS', 'PO/ER Number',
+            'Exception Type', 'Source Row', 'Amount', 'Type', 'Description', 'GL Line Description'
         ]
         
         # Get all transactional columns for hidden section
         # Exclude columns already shown in visible section
-        excluded_cols = {'Cost Center*', 'Accounting Period', 'WBS Element', 'PO Number', 'GL BER Corp Amount', 'Type', 'GL Line Description'}
+        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Month', 'GL BER Corp Amount', 'Type', 'Description', 'GL Line Description'}
         hidden_headers = [col for col in transactional_df.columns if col not in excluded_cols]
         
         all_headers = visible_headers + hidden_headers
@@ -420,19 +420,21 @@ class TemplateWriter:
         for row_idx, entry in enumerate(exception_log.entries, start=2):
             # Visible columns
             ws.cell(row=row_idx, column=1, value=entry.cost_center)
-            ws.cell(row=row_idx, column=2, value=entry.source_row_data.get('Accounting Period') if entry.source_row_data else None)
+            ws.cell(row=row_idx, column=2, value=entry.month)
             ws.cell(row=row_idx, column=3, value=entry.wbs)
             ws.cell(row=row_idx, column=4, value=self._extract_er_number(entry.po))
             ws.cell(row=row_idx, column=5, value=entry.exception_type.value)
             ws.cell(row=row_idx, column=6, value=entry.row_index)
             ws.cell(row=row_idx, column=7, value=entry.amount)
             ws.cell(row=row_idx, column=8, value=entry.transaction_type)
+            # Description from source row data
+            ws.cell(row=row_idx, column=9, value=entry.source_row_data.get('Description') if entry.source_row_data else None)
             # GL Line Description from source row data
-            ws.cell(row=row_idx, column=9, value=entry.source_row_data.get('GL Line Description') if entry.source_row_data else None)
+            ws.cell(row=row_idx, column=10, value=entry.source_row_data.get('GL Line Description') if entry.source_row_data else None)
             
             # Hidden columns (remaining source row data)
             if entry.source_row_data:
-                for col_idx_hidden, col_name in enumerate(hidden_headers, start=10):
+                for col_idx_hidden, col_name in enumerate(hidden_headers, start=11):
                     ws.cell(row=row_idx, column=col_idx_hidden,
                            value=entry.source_row_data.get(col_name))
         

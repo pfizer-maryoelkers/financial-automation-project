@@ -11,13 +11,11 @@ class TransactionalDetailReader:
         - get_transactional_data(): reads dataframe and filters data, returns dict of data we need
         
     Codes for AP Voucher Number (used in categorize row):
-        2xxxxxxxxx - Accrual/Reversal (starts with 2)
-        5xxxxxxxxx - Invoice/Actual (starts with 5)
-        9xxxxxxxxx - Reclass only when GL Line Description starts with "RC";
-                     ER when any description starts with "ER<digits>";
-                     otherwise Undefined.
+        210 - Accrual/Reversal
+        510 - Invoice
+        900 - Reclass
 
-    __init__ defines required cols, required types, and a column map for easy configuration of newly formatted TIES files.
+    __init__ defines required cols, required types, and a column map for easy configuration of newly formatted CTIES files.
     
     """
 
@@ -71,57 +69,74 @@ class TransactionalDetailReader:
             self.data["Type"] = self.data.apply(self._categorize_row, axis=1)
             self.data[self.colmap['po']] = self.data[self.colmap['po']].astype('str') # Change POs to strings
 
-            # Normalise PO Number for ER-typed rows so they are keyed by clean ER number
-            # (e.g. "ER97054 - ARCH & TECH - APP ARCHITECTURE" → "ER97054", or blank → "ER97054"
-            # extracted from GL Line Description / Description).
             er_num_pattern = re.compile(r'\bER\d+\b', re.IGNORECASE)
             er_mask = self.data["Type"] == "ER"
             if er_mask.any():
                 def _clean_er_po(row):
-                    # Try PO column first
                     po_val = str(row[self.colmap['po']]).strip()
-                    m = er_num_pattern.search(po_val)
-                    if m:
-                        return m.group(0).upper()
-                    # Fall back to description columns
-                    for col in ("GL Line Description", "Description", "CO Doc Line Item Txt"):
+                    match = er_num_pattern.search(po_val)
+                    if match:
+                        return match.group(0).upper()
+                    for col in ("GL Line Description", "GL Transaction Description", "Description", "CO Doc Line Item Txt"):
                         if col in row.index:
                             txt = str(row[col]).strip()
                             if txt and txt.lower() not in ('nan', 'none', ''):
-                                m = er_num_pattern.search(txt)
-                                if m:
-                                    return m.group(0).upper()
-                    return po_val  # leave unchanged if no match found
+                                match = er_num_pattern.search(txt)
+                                if match:
+                                    return match.group(0).upper()
+                    return po_val
+
                 self.data.loc[er_mask, self.colmap['po']] = (
                     self.data[er_mask].apply(_clean_er_po, axis=1)
                 )
-                print(f"  Normalised {er_mask.sum()} ER row PO values to clean ER numbers.")
-
             print("Successfully loaded transactional data from valid sheets.")
 
         except Exception as e:
             print("Error loading transactional detail file:", e)
 
-    # Internal helper function that categorizes a row in TIES file as Actual, Accrual, Reversal, etc.
+    # Internal helper function that categorizes a row in CTIES file as Actual, Accrual, Reversal, etc.
     # Use by calling df["Type"] = df.apply(self._categorize_row, axis=1)
     def _categorize_row(self, row):
         '''
         Returns value for row 'Type' as a string.
 
-        For AP Voucher Numbers starting with "9":
-          - GL Line Description starts with "RC" → "Reclass"
-          - Any description (GL Line Description, Description, CO Doc Line Item Txt)
-            starts with "ER<digits>"              → "ER"
-          - Anything else                         → "Undefined" (9xx is NOT a Reclass
-                                                    unless GL Line Description says RC)
-        For all other vouchers:
-          "5xx" = Actual (vendor invoice)
-          "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
-        Fallback: CO Doc Line Item Txt keyword check.
+        Priority order:
+        1. 9xx vouchers:
+             - Any description containing ER<digits> = ER
+             - otherwise Reclass
+        2. "CO Doc Line Item Txt" description column — checked for keywords
+           (accrual, reversal, reclass, invoice) as the most reliable source.
+        3. AP Voucher Number prefix as fallback:
+             "5xx" = Actual (vendor invoice)
+             "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
+             "9xx" = Reclass
         '''
         classifier = str(row[self.colmap["classifier"]])
 
-        # Use GL Transaction Amount for sign on 2xx vouchers.
+        if classifier.startswith("9"):
+            for desc_col in ("GL Line Description", "GL Transaction Description", "Description", "CO Doc Line Item Txt"):
+                desc = str(row.get(desc_col, "")).strip()
+                if desc and desc.lower() not in ('nan', 'none', '') and re.search(r'\bER\d+\b', desc, re.IGNORECASE):
+                    return "ER"
+            return "Reclass"
+
+        # --- Step 1: check CO Doc Line Item Txt for explicit description ---
+        co_doc_col = "CO Doc Line Item Txt"
+        if co_doc_col in row.index:
+            desc = str(row[co_doc_col]).strip().lower()
+            if desc and desc not in ('nan', 'none', ''):
+                if 'reversal' in desc:
+                    return "Reversal"
+                if 'accrual' in desc:
+                    return "Accrual"
+                if 'reclass' in desc:
+                    return "Reclass"
+                if 'invoice' in desc or 'vendor' in desc:
+                    return "Actual"
+
+        # --- Step 2: fall back to AP Voucher Number prefix ---
+        # Use GL Transaction Amount for sign — always populated.
+        # Fall back to the configured amount column if the column is absent.
         gl_trans_col = "GL Transaction Amount"
         if gl_trans_col in row.index:
             try:
@@ -134,58 +149,19 @@ class TransactionalDetailReader:
             except (TypeError, ValueError):
                 sign_amount = 0.0
 
-        if classifier.startswith("9"):
-            # For 9xx AP Vouchers:
-            #   - "GL Line Description" starts with "RC"  → Reclass
-            #   - Any description starts with "ER<digits>" → ER
-            #   - Anything else                           → Undefined (not a Reclass)
-            #
-            # Check GL Line Description first for RC (strict requirement).
-            gl_line_desc = row.get("GL Line Description") if "GL Line Description" in row.index else None
-            if gl_line_desc is not None:
-                gl_line_desc_str = str(gl_line_desc).strip()
-                if gl_line_desc_str and gl_line_desc_str.lower() not in ('nan', 'none', ''):
-                    if re.match(r'^RC', gl_line_desc_str, re.IGNORECASE):
-                        return "Reclass"
-                    if re.match(r'^ER\d+', gl_line_desc_str, re.IGNORECASE):
-                        return "ER"
-
-            # GL Line Description didn't match RC — check other desc cols for ER only.
-            for desc_col in ("Description", "CO Doc Line Item Txt"):
-                if desc_col in row.index:
-                    desc = str(row[desc_col]).strip()
-                    if desc and desc.lower() not in ('nan', 'none', ''):
-                        if re.match(r'^ER\d+', desc, re.IGNORECASE):
-                            return "ER"
-
-            return "Undefined"  # 9xx without RC in GL Line Description is not a Reclass
-        elif classifier.startswith("5"):
+        if classifier.startswith("5"):
             return "Actual"
         elif classifier.startswith("2"):
             if sign_amount >= 0:
                 return "Accrual"
             else:
                 return "Reversal"
-
-        # --- Fallback: CO Doc Line Item Txt keyword check ---
-        co_doc_col = "CO Doc Line Item Txt"
-        if co_doc_col in row.index:
-            desc = str(row[co_doc_col]).strip().lower()
-            if desc and desc not in ('nan', 'none', ''):
-                if 'reversal' in desc:
-                    return "Reversal"
-                if 'accrual' in desc:
-                    return "Accrual"
-                if re.match(r'^rc', desc):
-                    return "Reclass"
-                if 'invoice' in desc or 'vendor' in desc:
-                    return "Actual"
-
-        return "Undefined"
+        else:
+            return "Undefined"
 
     def get_transactional_data(self) -> dict:
         '''
-        Method that gets transactional data from TIES file. 
+        Method that gets transactional data from C-TIES file. 
         Extracts all rows, categorizes them, and returns a dict w/ actuals and accruals.
         Aggregates by PO / month.
         Returns:
@@ -243,14 +219,6 @@ class TransactionalDetailReader:
             .sum()
             .reset_index()
         )
-        # Build month lookup dicts once (used inside the loop)
-        # Supports short names ("jan"), full names ("january"), integers (1-12), YYYYMM (202603)
-        month_name_map = {v.lower(): k for k, v in self.month_map.items()}  # e.g. 'jan'->1
-        full_names = {
-            'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,
-            'july':7,'august':8,'september':9,'october':10,'november':11,'december':12
-        }
-
         # Build results
         result = {}
         for _, row in grouped.iterrows():
@@ -261,28 +229,17 @@ class TransactionalDetailReader:
             cost_center = str(row[self.colmap["cost_center"]]).strip()
             wbs = str(row[self.colmap["wbs"]]).strip()
 
-            # Normalise month to a 1-12 integer.
-            # Supports:
-            #   - String month names: "Jan", "Mar", "March", etc.
-            #   - Plain integers 1-12
-            #   - YYYYMM format (e.g. 202603 → 3)
-            raw_month_str = str(raw_month).strip().lower()
-            if raw_month_str in month_name_map:
-                # Short name: "jan", "feb", "mar" etc.
-                month_num = month_name_map[raw_month_str]
-            elif raw_month_str in full_names:
-                # Full name: "january", "march" etc.
-                month_num = full_names[raw_month_str]
-            else:
-                try:
-                    raw_month_int = int(raw_month)
-                    if raw_month_int > 12:
-                        # YYYYMM format — extract last two digits
-                        month_num = raw_month_int % 100
-                    else:
-                        month_num = raw_month_int
-                except (TypeError, ValueError):
-                    continue  # unparseable month — skip row
+            # Normalise month to 1-12.
+            # Supports plain integers (1-12) and YYYYMM format (e.g. 202601 → 1).
+            try:
+                raw_month_int = int(raw_month)
+                if raw_month_int > 12:
+                    # YYYYMM format — extract last two digits
+                    month_num = raw_month_int % 100
+                else:
+                    month_num = raw_month_int
+            except (TypeError, ValueError):
+                continue  # unparseable month — skip row
 
             # Actual values belong to prior month
             if month_num == 1:
@@ -312,11 +269,9 @@ class TransactionalDetailReader:
                     "Reversal": 0,
                     "Reclass": 0
                 }
-            # Assign value — ER expense reports go into the Actual bucket (prior-month shift)
+            # Assign value
             if type_name in ["Actual", "ER"]:
-                result[po][actual_month]["Actual"] = (
-                    result[po][actual_month].get("Actual", 0) + value
-                )
+                result[po][actual_month]["Actual"] = result[po][actual_month].get("Actual", 0) + value
             elif type_name in ["Accrual", "Reversal", "Reclass"] and accrual_month:
                 result[po][accrual_month][type_name] = value
         # Sort months for readability, preserve cost_center and wbs
