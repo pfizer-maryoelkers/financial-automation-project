@@ -128,6 +128,87 @@ class TemplateWriter:
 
         return col_map
 
+    def insert_missing_po_rows(self, hierarchy: dict, pos: dict[str, int]) -> dict[str, int]:
+        """
+        Insert non-ER PO rows for cost centers that do not already have any written
+        PO rows in the template. Existing written PO/ER rows are left unchanged.
+        """
+        stop_row = None
+        for row_idx in range(1, (self.sheet.max_row or 1000) + 1):
+            cell_val = self.sheet[f"A{row_idx}"].value
+            if cell_val is not None and str(cell_val).strip() == "Previous Period Invoices":
+                stop_row = row_idx
+                break
+
+        if stop_row is None:
+            print("WARNING: 'Previous Period Invoices' marker not found – PO rows not inserted.")
+            return pos
+
+        po_col_idx = column_index_from_string(self.po_column)
+        cc_col_idx = 10
+        ref_row = self.header_row + 1
+        max_col = self.sheet.max_column or 1
+
+        ref_styles = {}
+        for col_idx in range(1, max_col + 1):
+            src = self.sheet.cell(row=ref_row, column=col_idx)
+            ref_styles[col_idx] = {
+                'font': copy(src.font),
+                'border': copy(src.border),
+                'alignment': copy(src.alignment),
+                'number_format': src.number_format,
+                'fill': copy(src.fill),
+            }
+        ref_height = self.sheet.row_dimensions[ref_row].height
+
+        existing_rows_by_cc = {}
+        for row_idx in range(self.header_row + 1, stop_row):
+            cc_val = self.sheet.cell(row=row_idx, column=cc_col_idx).value
+            po_val = self.sheet.cell(row=row_idx, column=po_col_idx).value
+            cc_text = str(cc_val).strip().split('/')[0].strip() if cc_val is not None and str(cc_val).strip() != "" else None
+            po_text = str(po_val).strip() if po_val is not None and str(po_val).strip() != "" else None
+            if cc_text and po_text:
+                existing_rows_by_cc.setdefault(cc_text, []).append(row_idx)
+
+        insert_at = stop_row
+        inserted = []
+        for cc_id, cost_center in hierarchy.items():
+            if existing_rows_by_cc.get(cc_id):
+                continue
+            po_numbers = []
+            for wbs_code, wbs in cost_center.wbs_codes.items():
+                if wbs_code.upper() == "ER":
+                    continue
+                for po_number in wbs.pos:
+                    if po_number not in pos and po_number not in po_numbers:
+                        po_numbers.append(po_number)
+
+            for po_number in po_numbers:
+                self.sheet.insert_rows(insert_at)
+                for col_idx in range(1, max_col + 1):
+                    new_cell = self.sheet.cell(row=insert_at, column=col_idx)
+                    s = ref_styles[col_idx]
+                    new_cell.font = copy(s['font'])
+                    new_cell.border = copy(s['border'])
+                    new_cell.alignment = copy(s['alignment'])
+                    new_cell.number_format = s['number_format']
+                    new_cell.fill = copy(s['fill'])
+                if ref_height:
+                    self.sheet.row_dimensions[insert_at].height = ref_height
+
+                self.sheet.cell(row=insert_at, column=cc_col_idx, value=cc_id)
+                self.sheet.cell(row=insert_at, column=po_col_idx, value=po_number)
+                self._write_total_formula(insert_at)
+                pos[po_number] = insert_at
+                inserted.append(po_number)
+                insert_at += 1
+
+        if inserted:
+            print(f"Inserted {len(inserted)} PO row(s) for blank cost centers: {inserted}")
+        else:
+            print("No additional PO rows needed for blank cost centers.")
+        return pos
+
     def insert_er_rows(self, hierarchy: dict, pos: dict[str, int]) -> dict[str, int]:
         """
         Collects all ER numbers from the hierarchy (those assigned WBS="ER" during
@@ -271,6 +352,14 @@ class TemplateWriter:
                             cell = self.sheet[f"{col_letter}{row}"]
                             if self.overwrite or cell.value is None or str(cell.value).strip() == "":
                                 cell.value = values.get(metric)
+
+                        actual_col = month_cols.get('Actual')
+                        accrual_col = month_cols.get('Accrual')
+                        if actual_col and accrual_col:
+                            variance_col = get_column_letter(column_index_from_string(actual_col) + 1)
+                            variance_cell = self.sheet[f"{variance_col}{row}"]
+                            if self.overwrite or variance_cell.value is None or str(variance_cell.value).strip() == "":
+                                variance_cell.value = f"={actual_col}{row}-{accrual_col}{row}"
                     # Write Total 2026 formula after all months are written for this PO
                     self._write_total_formula(row)
 

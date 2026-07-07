@@ -67,7 +67,8 @@ def main():
     )
     ## Step 3: Write to template
     print("Step 3: Writing template output\n")
-    template_writer.write_hierarchy(hierarchy, pos=template_reader.pos)
+    pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+    template_writer.write_hierarchy(hierarchy, pos=pos)
     template_writer.write_forecast_source_sheet(forecast_reader.data, pos=template_reader.pos)
     template_writer.write_transactional_source_sheet(transactional_reader.data, pos=template_reader.pos)
 

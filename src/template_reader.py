@@ -52,9 +52,13 @@ class TemplateReader:
             if self.cost_center_end_row is not None and row > self.cost_center_end_row:
                 break
             cell = self.sheet[f"{self.cost_center_col}{row}"].value
-            if cell is None or str(cell).strip() == "":
+            if cell is None:
                 break
-            cost_centers.append(str(cell).strip())
+            cell_text = str(cell).strip()
+            if cell_text == "" or cell_text.lower() == "expense":
+                break
+            cost_center = cell_text.split("/")[0].strip()
+            cost_centers.append(cost_center)
             row += 1
 
         if not cost_centers:
