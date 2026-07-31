@@ -16,6 +16,13 @@ class PO:
     monthly_data: dict[str, MonthlyMetrics] = field(default_factory=dict)
     reclass_adjustments: dict[str, list] = field(default_factory=dict)
     # reclass_adjustments: {month_label: [(amount, description), ...]}
+    legal_entity: Optional[str] = None
+    country: Optional[str] = None
+    vendor_name: Optional[str] = None
+    gl_account: Optional[str] = None
+    gross_po_value: Optional[float] = None
+    req_title: Optional[str] = None
+    real_wbs: Optional[str] = None  # Actual WBS from transactional file when PO is an ER
 @dataclass
 class WBSCode:
     wbs_code: str

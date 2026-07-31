@@ -27,11 +27,13 @@ class TransactionalDetailReader:
         self.file_path = file_path
         self.data = None
 
-        self.required_cols = set(required_cols) # Required columns for loading a valid sheet
-        
+        # Strip whitespace from required_cols and colmap values so they always
+        # match file headers regardless of accidental leading/trailing spaces in config.
+        self.required_cols = {c.strip() for c in required_cols}
+
         self.valid_types = valid_types # Valid types for reading (currently support Actuals, Accruals, Reversals) - open to extension
 
-        self.colmap = colmap # Column map for standardized writing. Can change values for dynamic column names
+        self.colmap = {k: v.strip() if isinstance(v, str) else v for k, v in colmap.items()}
 
         self.month_map = {
             1: 'Jan', 2: 'Feb', 3: 'Mar', 4: 'Apr', 5: 'May', 6: 'Jun',
@@ -40,20 +42,60 @@ class TransactionalDetailReader:
 
 
 
+    @staticmethod
+    def _strip_col_headers(df: 'pd.DataFrame') -> 'pd.DataFrame':
+        """Strip leading/trailing whitespace from all column names."""
+        df.columns = df.columns.str.strip()
+        return df
+
+    def _detect_header_row(self, sheet_name: str) -> int:
+        """Return the 0-based header row index for a sheet.
+        Tries rows 1, 2, and 3 (0, 1, 2) in order. Returns the first row that
+        contains all required columns. Defaults to 0 if none match.
+        Treats 'Month' as an alias for 'Accounting Period'.
+        """
+        for header in (0, 1, 2):
+            preview = pd.read_excel(self.file_path, sheet_name=sheet_name, header=header, nrows=5)
+            preview = self._strip_col_headers(preview)
+            if self._sheet_has_required_cols(preview):
+                return header
+        return 0  # fallback — let the caller surface the missing-column error
+
+    @staticmethod
+    def _normalise_period_col(df: 'pd.DataFrame') -> 'pd.DataFrame':
+        """If the DataFrame has a 'Month' column but no 'Accounting Period' column,
+        rename 'Month' → 'Accounting Period' so downstream logic always uses one name.
+        """
+        if 'Accounting Period' not in df.columns and 'Month' in df.columns:
+            df = df.rename(columns={'Month': 'Accounting Period'})
+        return df
+
+    def _sheet_has_required_cols(self, preview: 'pd.DataFrame') -> bool:
+        """Check required cols, treating 'Month' as an alias for 'Accounting Period'."""
+        cols = set(preview.columns)
+        # swap alias so the check passes even when the file uses 'Month'
+        if 'Accounting Period' not in cols and 'Month' in cols:
+            cols = (cols - {'Month'}) | {'Accounting Period'}
+        return self.required_cols.issubset(cols)
+
     def load_transactional_detail_file(self):
         """Load all valid sheets from the transactional Excel file.
-        Valid sheet defined by having the following columns: 'PO Number', 'Month', 'GL Transaction Amount'
+        Valid sheet defined by having the following columns: 'PO Number', 'Accounting Period', 'GL Transaction Amount'
+        Header row is auto-detected (row 1 or row 2). Column header whitespace is stripped automatically.
+        Files that use 'Month' instead of 'Accounting Period' are accepted and normalised automatically.
         """
         try:
             xls = pd.ExcelFile(self.file_path)
 
             valid_sheets = []
+            header_map: dict[str, int] = {}
             for sheet in xls.sheet_names:
-                # Read just a preview to check column names
-                preview = pd.read_excel(self.file_path, sheet_name=sheet, header=1, nrows=5)
-
-                if self.required_cols.issubset(preview.columns):
+                header = self._detect_header_row(sheet)
+                preview = pd.read_excel(self.file_path, sheet_name=sheet, header=header, nrows=5)
+                preview = self._strip_col_headers(preview)
+                if self._sheet_has_required_cols(preview):
                     valid_sheets.append(sheet)
+                    header_map[sheet] = header
 
             if not valid_sheets:
                 raise ValueError("No valid sheets found containing required transactional columns.")
@@ -61,13 +103,27 @@ class TransactionalDetailReader:
             print(f"Loading valid sheets: {valid_sheets}")
 
             dfs = [
-                pd.read_excel(self.file_path, sheet_name=sheet, header=1)
+                self._normalise_period_col(
+                    self._strip_col_headers(
+                        pd.read_excel(self.file_path, sheet_name=sheet, header=header_map[sheet])
+                    )
+                )
                 for sheet in valid_sheets
             ]
 
             self.data = pd.concat(dfs, ignore_index=True)
             self.data["Type"] = self.data.apply(self._categorize_row, axis=1)
-            self.data[self.colmap['po']] = self.data[self.colmap['po']].astype('str') # Change POs to strings
+            # Normalize PO column: convert to string and strip trailing ".0" from
+            # float-formatted integers (e.g. 9500905777.0 → "9500905777").
+            def _norm_po(v):
+                s = str(v).strip()
+                if s.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    try:
+                        return str(int(float(s)))
+                    except (ValueError, OverflowError):
+                        pass
+                return s
+            self.data[self.colmap['po']] = self.data[self.colmap['po']].apply(_norm_po)
 
             er_num_pattern = re.compile(r'\bER\d+\b', re.IGNORECASE)
             er_mask = self.data["Type"] == "ER"
@@ -187,15 +243,32 @@ class TransactionalDetailReader:
         # Load and preprocess (categorization happens during load)
         if self.data is None:
             self.load_transactional_detail_file()
+
+        # Compute total BER amount per PO across all rows (used for Gross PO Value)
+        ber_col = self.colmap["amount"]
+        po_col  = self.colmap["po"]
+        gross_by_po: dict = {}
+        if ber_col in self.data.columns:
+            ber_series = pd.to_numeric(self.data[ber_col], errors='coerce').fillna(0)
+            gross_by_po = (
+                ber_series.groupby(self.data[po_col]).sum().to_dict()
+            )
+
         # Filter to only the columns needed
+        country_col = self.colmap.get("country")
+        if country_col and country_col not in self.data.columns:
+            country_col = None
+
         cols = [
             self.colmap["po"],
             self.colmap["month"],
             self.colmap["amount"],
             self.colmap["cost_center"],
             self.colmap["wbs"],
-            self.colmap["type"]
+            self.colmap["type"],
         ]
+        if country_col:
+            cols.append(country_col)
         missing = [c for c in cols if c not in self.data.columns]
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
@@ -209,15 +282,27 @@ class TransactionalDetailReader:
         # contribute to the PO's Actual total.
         valid_with_reclass = list(self.valid_types) + ["Reclass"]
         data_copy = data_copy[data_copy[self.colmap["type"]].isin(valid_with_reclass)]
+        # Build a per-PO country lookup before grouping (country is not aggregatable)
+        _INTL_COUNTRIES = {'india', 'in'}
+        intl_po_set: set = set()
+        if country_col:
+            _po_col = self.colmap["po"]
+            _cc_data = data_copy[[_po_col, country_col]].copy()
+            _cc_data[country_col] = _cc_data[country_col].astype(str).str.strip().str.lower()
+            _cc_data = _cc_data[_cc_data[country_col].isin(_INTL_COUNTRIES)]
+            intl_po_set = set(_cc_data[_po_col].astype(str).str.strip().unique())
+
+        # Drop country column before grouping (it is not numeric)
+        group_cols = [
+            self.colmap["po"],
+            self.colmap["month"],
+            self.colmap["type"],
+            self.colmap["cost_center"],
+            self.colmap["wbs"],
+        ]
         # Group by PO / Month / Type / Cost Center / WBS
         grouped = (
-            data_copy.groupby([
-                self.colmap["po"],
-                self.colmap["month"],
-                self.colmap["type"],
-                self.colmap["cost_center"],
-                self.colmap["wbs"]
-            ])[self.colmap["amount"]]
+            data_copy.groupby(group_cols)[self.colmap["amount"]]
             .sum()
             .reset_index()
         )
@@ -243,39 +328,55 @@ class TransactionalDetailReader:
             except (TypeError, ValueError):
                 continue  # unparseable month — skip row
 
-            # Actual values belong to prior month
+            # Actuals/ER/Reclass always shift back 1 month (Jan posted → Dec, etc.).
             if month_num == 1:
-                actual_month = "Dec"
+                actual_month = "Dec (PY)"
             else:
                 actual_month = self.month_map.get(month_num - 1)
-            # Accruals/reversals belong to current month
-            accrual_month = self.month_map.get(month_num)
+
+            is_intl = str(po).strip() in intl_po_set
+
+            # Accruals/Reversals:
+            #   US POs  → current month (no shift).
+            #   Intl POs → same as Actuals, i.e. month − 1 (they operate identically
+            #              to US POs but their fiscal year closes in November, so every
+            #              transaction type is shifted back one month).
+            accrual_month = actual_month if is_intl else self.month_map.get(month_num)
+
             # Initialize PO
             if po not in result:
                 result[po] = {
                     "cost_center": cost_center,
-                    "wbs": wbs
+                    "wbs": wbs,
+                    "gross_ber_total": gross_by_po.get(po, 0.0),
                 }
-            # Initialize month bucket
-            if type_name in ["Actual", "ER", "Reclass"] and actual_month not in result[po]:
-                result[po][actual_month] = {
-                    "Actual": 0,
-                    "Accrual": 0,
-                    "Reversal": 0,
-                }
-            elif type_name in ["Accrual", "Reversal"] and accrual_month not in result[po]:
-                result[po][accrual_month] = {
-                    "Actual": 0,
-                    "Accrual": 0,
-                    "Reversal": 0,
-                }
-            # Assign value
+
+            # Determine which month slot each type writes into
             if type_name in ["Actual", "ER", "Reclass"]:
-                result[po][actual_month]["Actual"] = result[po][actual_month].get("Actual", 0) + value
-            elif type_name in ["Accrual", "Reversal"] and accrual_month:
-                result[po][accrual_month][type_name] = value
+                write_month = actual_month
+            elif type_name in ["Accrual", "Reversal"]:
+                write_month = accrual_month
+            else:
+                continue
+
+            # Initialize month bucket
+            if write_month and write_month not in result[po]:
+                result[po][write_month] = {
+                    "Actual": 0,
+                    "Accrual": 0,
+                    "Reversal": 0,
+                }
+
+            # Assign value
+            if not write_month:
+                continue
+            if type_name in ["Actual", "ER", "Reclass"]:
+                result[po][write_month]["Actual"] = result[po][write_month].get("Actual", 0) + value
+            elif type_name in ["Accrual", "Reversal"]:
+                result[po][write_month][type_name] = value
         # Sort months for readability, preserve cost_center and wbs
         month_order = [
+            "Dec (PY)",
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
         ]
@@ -283,6 +384,7 @@ class TransactionalDetailReader:
             result[po] = {
                 "cost_center": result[po]["cost_center"],
                 "wbs": result[po]["wbs"],
+                "gross_ber_total": result[po].get("gross_ber_total", 0.0),
                 **{
                     month: result[po][month]
                     for month in month_order
@@ -291,6 +393,29 @@ class TransactionalDetailReader:
             }
         return result
     
+
+
+    def get_intl_po_set(self) -> set:
+        """Return the set of PO numbers whose country marks them as international.
+
+        Uses the same _INTL_COUNTRIES check as get_transactional_data() so the
+        two are always consistent.  Result is derived from the raw loaded data so
+        it includes every row (Actuals, Accruals, Reclasses, etc.).
+        """
+        if self.data is None:
+            self.load_transactional_detail_file()
+
+        country_col = self.colmap.get("country")
+        if not country_col or country_col not in self.data.columns:
+            return set()
+
+        _INTL_COUNTRIES = {'india', 'in'}
+        po_col = self.colmap["po"]
+        cc_data = self.data[[po_col, country_col]].copy()
+        cc_data[country_col] = cc_data[country_col].astype(str).str.strip().str.lower()
+        intl = cc_data[cc_data[country_col].isin(_INTL_COUNTRIES)]
+        return set(intl[po_col].astype(str).str.strip().unique())
+
 
     def get_reclass_data(self) -> dict:
         """
@@ -338,7 +463,7 @@ class TransactionalDetailReader:
             # Reclass amounts are posted in the current period — use actual_month
             # (current month - 1) to stay consistent with how Actuals are placed.
             if month_num == 1:
-                month_label = "Dec"
+                month_label = "Dec (PY)"
             else:
                 month_label = self.month_map.get(month_num - 1)
             if not month_label:
@@ -392,7 +517,7 @@ class TransactionalDetailReader:
                 continue
 
             if month_num == 1:
-                month_label = "Dec"
+                month_label = "Dec (PY)"
             else:
                 month_label = self.month_map.get(month_num - 1)
             if not month_label:
@@ -445,7 +570,72 @@ class TransactionalDetailReader:
         missing_cols = [c for c in required if c not in self.data.columns]
         if missing_cols:
             raise ValueError(f"Missing required columns for hierarchy map: {missing_cols}")
-        
+
+        # Legal entity column is optional — gracefully absent when not in colmap or file
+        le_col = self.colmap.get("legal_entity")
+        if le_col and le_col not in self.data.columns:
+            le_col = None
+
+        # Country column is optional — gracefully absent when not in colmap or file
+        country_col = self.colmap.get("country")
+        if country_col and country_col not in self.data.columns:
+            country_col = None
+
+        # Vendor name column is optional — gracefully absent when not in colmap or file
+        vendor_col = self.colmap.get("vendor_name")
+        if vendor_col and vendor_col not in self.data.columns:
+            vendor_col = None
+
+        # Pre-compute the best (most frequent real) vendor name per PO.
+        # Uses case-insensitive filtering so "Not assigned", "NOT ASSIGNED", etc. are all excluded.
+        _PLACEHOLDER_LOWER = {'', 'nan', 'none', '#', 'not assigned'}
+        vendor_by_po: dict = {}
+        if vendor_col:
+            _po_col = self.colmap["po"]
+            _vc = self.data[[_po_col, vendor_col]].copy()
+            _vc[vendor_col] = _vc[vendor_col].astype(str).str.strip()
+            # Keep only rows whose vendor is a real value (case-insensitive)
+            _vc = _vc[~_vc[vendor_col].str.lower().isin(_PLACEHOLDER_LOWER)]
+            if not _vc.empty:
+                # Cast PO key to string to match the normalized po used in lookup
+                _vc = _vc.copy()
+                _vc[_po_col] = _vc[_po_col].astype(str).str.strip()
+                vendor_by_po = (
+                    _vc.groupby(_po_col)[vendor_col]
+                    .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else None)
+                    .to_dict()
+                )
+
+        # G/L Account column is optional — gracefully absent when not in colmap or file
+        gl_account_col = self.colmap.get("gl_account")
+        if gl_account_col and gl_account_col not in self.data.columns:
+            gl_account_col = None
+
+        # Requisition title column is optional — gracefully absent when not in colmap or file.
+        # Also try "GL Description" as a fallback if the configured name isn't present.
+        req_title_col = self.colmap.get("req_title")
+        if req_title_col and req_title_col not in self.data.columns:
+            # Try the alternate common column name
+            fallback = "GL Description" if req_title_col != "GL Description" else "GL Transaction Description"
+            req_title_col = fallback if fallback in self.data.columns else None
+
+        # Pre-compute the most frequent real req_title per PO (mode).
+        # Uses case-insensitive filtering so "Not assigned" etc. are excluded.
+        # PO key is cast to string+strip to match the normalized po used in the lookup.
+        req_title_by_po: dict = {}
+        if req_title_col:
+            po_col = self.colmap["po"]
+            cleaned = self.data[[po_col, req_title_col]].copy()
+            cleaned[po_col] = cleaned[po_col].astype(str).str.strip()
+            cleaned[req_title_col] = cleaned[req_title_col].astype(str).str.strip()
+            cleaned = cleaned[~cleaned[req_title_col].str.lower().isin(_PLACEHOLDER_LOWER)]
+            if not cleaned.empty:
+                req_title_by_po = (
+                    cleaned.groupby(po_col)[req_title_col]
+                    .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else None)
+                    .to_dict()
+                )
+
         # Description columns to search for ER numbers (check all that exist in the file)
         desc_col_names = {
             'gl_line_desc': 'GL Line Description',
@@ -454,8 +644,8 @@ class TransactionalDetailReader:
         }
         present_desc_cols = {key: col for key, col in desc_col_names.items() if col in self.data.columns}
         
-        # Placeholder values to treat as missing
-        MISSING_VALUES = {'', 'none', 'nan', '#'}
+        # Placeholder values to treat as missing (case-insensitive via .lower())
+        MISSING_VALUES = {'', 'none', 'nan', '#', 'not assigned'}
         result = {}
         for idx, row in self.data.iterrows():
             po = row[self.colmap["po"]]
@@ -476,6 +666,45 @@ class TransactionalDetailReader:
             cost_center = str(cost_center).strip() if pd.notna(cost_center) else None
             if cost_center and cost_center.lower() in MISSING_VALUES:
                 cost_center = None
+
+            # Normalize legal entity (Company code / Legal Entity)
+            legal_entity = None
+            if le_col:
+                le_val = row.get(le_col)
+                if pd.notna(le_val):
+                    try:
+                        # Strip trailing .0 from numeric values (e.g. 1400.0 → "1400")
+                        legal_entity = str(int(float(le_val)))
+                    except (ValueError, TypeError):
+                        legal_entity = str(le_val).strip()
+                    if legal_entity.lower() in MISSING_VALUES:
+                        legal_entity = None
+
+            # Normalize country
+            country = None
+            if country_col:
+                c_val = row.get(country_col)
+                country = str(c_val).strip() if pd.notna(c_val) else None
+                if country and country.lower() in MISSING_VALUES:
+                    country = None
+
+            # Vendor name — look up pre-computed best value for this PO
+            vendor_name = vendor_by_po.get(po) if po else None
+
+            # Normalize G/L account (numeric code — strip trailing .0)
+            gl_account = None
+            if gl_account_col:
+                gl_val = row.get(gl_account_col)
+                if pd.notna(gl_val):
+                    try:
+                        gl_account = str(int(float(gl_val)))
+                    except (ValueError, TypeError):
+                        gl_account = str(gl_val).strip()
+                    if gl_account.lower() in MISSING_VALUES:
+                        gl_account = None
+
+            # Requisition title — look up pre-computed mode for this PO
+            req_title = req_title_by_po.get(po) if po else None
             
             # Read all description columns for ER extraction
             desc_values = {}
@@ -487,6 +716,11 @@ class TransactionalDetailReader:
                 'po': po,
                 'cost_center': cost_center,
                 'wbs': wbs,
+                'legal_entity': legal_entity,
+                'country': country,
+                'vendor_name': vendor_name,
+                'gl_account': gl_account,
+                'req_title': req_title,
                 'gl_line_desc': desc_values.get('gl_line_desc'),
                 'gl_trans_desc': desc_values.get('gl_trans_desc'),
                 'description': desc_values.get('description'),

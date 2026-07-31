@@ -9,7 +9,7 @@ forecast_reader:
 transactional_detail_reader:
   required_cols:
   - PO Number
-  - Month
+  - Accounting Period
   - GL Transaction Amount
   valid_types:
   - Actual
@@ -19,11 +19,16 @@ transactional_detail_reader:
   - ER
   colmap:
     po: PO Number
-    month: Month
+    month: Accounting Period
     amount: GL BER Corp Amount
     classifier: AP Voucher Number
     cost_center: CC ID
     wbs: WBS Element
+    legal_entity: "Legal Entity"
+    country: Country
+    vendor_name: Vendor Name
+    gl_account: Expense Account Code
+    req_title: GL Transaction Description
     type: Type
 template_writer:
   output_path: template_output.xlsx
@@ -55,7 +60,6 @@ template_writer:
   - Description
   - GL Transaction Amount
   - GL BER Corp Amount
-  - Month
   - AP01
   - AP02
   - AP03

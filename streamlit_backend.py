@@ -232,6 +232,7 @@ class PipelineOrchestrator:
             reclass_data = transactional_reader.get_reclass_data()
             reclass_notes = transactional_reader.get_reclass_notes()
             hierarchy_map = transactional_reader.get_hierarchy_map()
+            intl_po_set = transactional_reader.get_intl_po_set()
             row_count = len(transactional_reader.data) if transactional_reader.data is not None else 0
             self.logger.info(f"Loaded transactional data: {row_count} rows")
             self._update_progress(30)
@@ -271,6 +272,8 @@ class PipelineOrchestrator:
                 transactional_df=transactional_reader.data,
                 reclass_data=reclass_data,
                 reclass_notes=reclass_notes,
+                template_pos=template_reader.pos,
+                intl_po_set=intl_po_set,
             )
             
             total_exceptions = len(self.exception_log.entries)

@@ -2,7 +2,7 @@
 # ============================
 ## Template (shared between reader and writer)
 template:
-  file_path: "data/templates/Ram 2026_Owen Testing.xlsx"
+  file_path: "data/templates/financial_template_v2_2026.xlsx"
   header_row: 16
   po_col: "B"
   po_stop_marker: "Previous Period Invoices"
@@ -12,8 +12,7 @@ template:
 ## Forecast Reader
 forecast_reader:
   file_paths:
-    - "data/forecasts/Other_Vendors_Forecasts.xlsx"
-    - "data/forecasts/2026-Feb-IBM Forecast_AP02.xlsx"
+    - "data/forecasts/IBM Forecast_AP07_July 2026.xlsx"
   po_col: "PO #"
 # ============================
 ## Transactional Detail Reader
@@ -21,7 +20,7 @@ transactional_detail_reader:
   file_path: "data/transactional/TIES AP03 2026.xlsx"
   required_cols:
     - "PO Number"
-    - "Month"
+    - "Accounting Period"
     - "GL Transaction Amount"
   valid_types:
     - "Actual"
@@ -31,11 +30,16 @@ transactional_detail_reader:
     - "ER"
   colmap:
     po: "PO Number"
-    month: "Month"
+    month: "Accounting Period"
     amount: "GL BER Corp Amount"
     classifier: "AP Voucher Number"
-    cost_center: "Cost Center*"
+    cost_center: "CC ID"
     wbs: "WBS Element"
+    legal_entity: "Legal Entity"
+    country: "Country"
+    vendor_name: "Vendor Name"
+    gl_account: "Cost Element"
+    req_title: "PO Line Item Desc"
     type: "Type"
 # ============================
 ## Template Writer
@@ -69,7 +73,7 @@ template_writer:
     - "Description"
     - "GL Transaction Amount"
     - "GL BER Corp Amount"
-    - "Month"
+    - "Accounting Period"
     - "AP01"
     - "AP02"
     - "AP03"

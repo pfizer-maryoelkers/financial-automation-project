@@ -223,7 +223,7 @@ def render_config_section():
         with st.expander("Transactional Settings", expanded=False):
             config.transactional_detail_reader.required_cols = st.multiselect(
                 "Required Columns",
-                options=["PO Number", "Month", "GL Transaction Amount", "Type", "Cost Center*", "WBS Element"],
+                options=["PO Number", "Accounting Period", "GL Transaction Amount", "Type", "Cost Center*", "WBS Element"],
                 default=config.transactional_detail_reader.required_cols,
                 help="Columns that must exist in transactional file",
                 key="trans_required_cols"
@@ -242,7 +242,7 @@ def render_config_section():
                 colmap = config.transactional_detail_reader.colmap
                 
                 colmap['po'] = st.text_input("PO Column", value=colmap['po'], help="Column name for PO numbers", key="trans_po_col")
-                colmap['month'] = st.text_input("Month Column", value=colmap['month'], help="Column name for month/period", key="trans_month_col")
+                colmap['month'] = st.text_input("Period Column", value=colmap['month'], help="Column name for accounting period (YYYYMM format, e.g. 202601 = Jan)", key="trans_month_col")
                 colmap['amount'] = st.text_input("Amount Column", value=colmap['amount'], help="Column name for transaction amount", key="trans_amount_col")
                 colmap['classifier'] = st.text_input("Classifier Column", value=colmap['classifier'], help="Column name for transaction classifier", key="trans_classifier_col")
                 colmap['cost_center'] = st.text_input("Cost Center Column", value=colmap['cost_center'], help="Column name for cost center", key="trans_cc_col")
@@ -298,7 +298,7 @@ def render_config_section():
                         "PO Number", "Accounting Period", "AP Voucher Number",
                         "Vendor Name", "WBS Element", "GL Invoice Date",
                         "GL Posting Date", "GL Line Description", "Description",
-                        "GL Transaction Amount", "GL BER Corp Amount", "Month",
+                        "GL Transaction Amount", "GL BER Corp Amount",
                         "AP01", "AP02", "AP03", "Type"
                     ],
                     default=config.template_writer.transactional_source_cols,

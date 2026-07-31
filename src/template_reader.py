@@ -34,28 +34,52 @@ class TemplateReader:
         self.cost_centers = self.get_existing_cost_centers()
         self.pos = self.get_existing_pos()
 
+    def _find_cost_center_start_row(self) -> int:
+        """Scan column A for a 'Cost Center' title cell and return the row after it.
+        Accepts any cell whose text equals 'cost center' (case-insensitive), so it
+        matches 'Cost Center', 'Chargeout Cost Center', etc.
+        Falls back to cost_center_start_row from config if the marker is not found.
+        """
+        max_row = self.sheet.max_row or 1000
+        for search_row in range(1, max_row + 1):
+            cell_val = self.sheet[f"{self.cost_center_col}{search_row}"].value
+            if cell_val is not None and "cost center" in str(cell_val).strip().lower():
+                return search_row + 1
+        # Marker not found — fall back to configured start row
+        print(
+            f"WARNING: 'Cost Center' marker not found in column {self.cost_center_col}. "
+            f"Falling back to configured cost_center_start_row={self.cost_center_start_row}."
+        )
+        return self.cost_center_start_row
+
     def get_existing_cost_centers(self) -> list[str]:
         """
-        Reads cost centers from configured column starting at configured row.
-        Stops at first blank cell.
+        Reads cost centers from column A starting immediately after the
+        'Chargeout Cost Center' header cell and stopping before any cell
+        whose text is blank or starts with 'Expense'.
+
+        The start row is auto-detected so the cost centers work regardless
+        of where they appear in the sheet. Falls back to cost_center_start_row
+        from config if the marker is not present.
+
         Returns:
             list[str]: e.g. ['1234', '2345', 'CC-999']
         """
 
-        #NOTE: Possible extension: verify cost centers with unique cost centers existing in column J (or whatever column cost centers are in)
-
+        start_row = self._find_cost_center_start_row()
         cost_centers = []
-        row = self.cost_center_start_row
+        row = start_row
 
         while True:
             # Stop at end row if configured
             if self.cost_center_end_row is not None and row > self.cost_center_end_row:
                 break
             cell = self.sheet[f"{self.cost_center_col}{row}"].value
-            if cell is None:
+            # Stop on blank or "Expense" marker
+            if cell is None or str(cell).strip() == "":
                 break
             cell_text = str(cell).strip()
-            if cell_text == "" or cell_text.lower() == "expense":
+            if cell_text.lower().startswith("expense"):
                 break
             cost_center = cell_text.split("/")[0].strip()
             cost_centers.append(cost_center)
@@ -103,8 +127,14 @@ class TemplateReader:
             cell_value = self.sheet[f"{self.po_col}{row}"].value
             
             if self._is_valid_po(cell_value):
-                po_number = str(cell_value).strip()
-                pos[po_number] = row
+                s = str(cell_value).strip()
+                # Normalize float-formatted integers (e.g. 9500905777.0 → "9500905777")
+                if s.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    try:
+                        s = str(int(float(s)))
+                    except (ValueError, OverflowError):
+                        pass
+                pos[s] = row
             
             row += 1
         

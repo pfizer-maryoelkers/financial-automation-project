@@ -6,7 +6,7 @@ from src.template_reader import TemplateReader
 from src.template_writer import TemplateWriter
 from src.models import ExceptionLog
 # Loading config file
-config_path = 'configs/config_chris2026_ap05.yaml'
+config_path = 'configs/config_base.yaml'
 base64 = False
 config = load_config(config_path)
 if base64:
@@ -54,6 +54,7 @@ def main():
     reclass_data = transactional_reader.get_reclass_data()
     reclass_notes = transactional_reader.get_reclass_notes()
     hierarchy_map = transactional_reader.get_hierarchy_map()
+    intl_po_set = transactional_reader.get_intl_po_set()
     print("Loaded transactional data\n")
     ## Step 2: Build hierarchy
     print("Step 2: Building hierarchy\n")
@@ -68,6 +69,8 @@ def main():
         transactional_df=transactional_reader.data,
         reclass_data=reclass_data,
         reclass_notes=reclass_notes,
+        template_pos=template_reader.pos,
+        intl_po_set=intl_po_set,
     )
     ## Step 3: Write to template
     print("Step 3: Writing template output\n")

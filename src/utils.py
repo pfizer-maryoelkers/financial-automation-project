@@ -52,6 +52,22 @@ def convert_base64(bytes_string: str):
     return excel_file_like_object
 
 
+# Forecast month shift: maps a 3-letter month key one step back.
+_FORECAST_MONTH_SHIFT = {
+    "Jan": "Dec",   # Jan forecast → Dec (prior year treated as Dec in same year for intl)
+    "Feb": "Jan",
+    "Mar": "Feb",
+    "Apr": "Mar",
+    "May": "Apr",
+    "Jun": "May",
+    "Jul": "Jun",
+    "Aug": "Jul",
+    "Sep": "Aug",
+    "Oct": "Sep",
+    "Nov": "Oct",
+    "Dec": "Nov",
+}
+
 def build_hierarchy(
     cost_centers: list[str],
     hierarchy_map: dict,
@@ -61,6 +77,8 @@ def build_hierarchy(
     transactional_df: pd.DataFrame,
     reclass_data: dict | None = None,
     reclass_notes: dict | None = None,
+    template_pos: dict | None = None,
+    intl_po_set: set | None = None,
 ) -> dict[str, CostCenter]:
     
     # Regex pattern to extract ER numbers (ER followed by digits)
@@ -84,14 +102,19 @@ def build_hierarchy(
         if row['cost_center'] in cost_centers:
             rows_by_cost_center[row['cost_center']].append((row_idx, row))
 
-    # Step 2: Pre-scan to identify duplicate WBS codes (WBS appearing under multiple cost centers)
+    # Step 2: Pre-scan to identify duplicate WBS codes and real WBS per ER number
     wbs_to_cost_centers = defaultdict(set)  # wbs -> set of cost_centers
+    er_real_wbs = {}  # er_number -> real WBS from any row that has both ER PO and a WBS
     for cc_id in cost_centers:
         for row_idx, row in rows_by_cost_center[cc_id]:
             wbs = row['wbs']
+            po = row['po']
             if wbs:  # Only track non-empty WBS
                 wbs_to_cost_centers[wbs].add(cc_id)
-    
+                # If the PO itself looks like an ER number and this row has a real WBS, capture it
+                if po and er_pattern.match(po) and po not in er_real_wbs:
+                    er_real_wbs[po] = wbs
+
     # Identify which WBS codes are duplicates (appear under multiple cost centers)
     duplicate_wbs_codes = {wbs for wbs, ccs in wbs_to_cost_centers.items() if len(ccs) > 1}
 
@@ -107,10 +130,15 @@ def build_hierarchy(
         for row_idx, row in rows_by_cost_center[cc_id]:
             po = row['po']
             wbs = row['wbs']
+            legal_entity = row.get('legal_entity')
+            country = row.get('country')
+            vendor_name = row.get('vendor_name')
+            gl_account = row.get('gl_account')
+            req_title = row.get('req_title')
 
             # Extract source row data from transactional DataFrame
             source_row_data = transactional_df.loc[row_idx].to_dict() if row_idx in transactional_df.index else {}
-            month = source_row_data.get('Month')
+            month = source_row_data.get('Accounting Period')
             amount = source_row_data.get('GL BER Corp Amount')
             trans_type = source_row_data.get('Type')
 
@@ -145,16 +173,17 @@ def build_hierarchy(
                     er_extracted_count += 1
                     # Continue processing with extracted ER as PO
                 else:
-                    # No ER found — log as missing WBS and PO
-                    exception_log.log(
-                        ExceptionType.MISSING_WBS_AND_PO,
-                        row_index=row_idx,
-                        cost_center=cc_id,
-                        month=month,
-                        amount=amount,
-                        transaction_type=trans_type,
-                        source_row_data=source_row_data
-                    )
+                    # No ER found — only flag when the template already has PO rows
+                    if template_pos:
+                        exception_log.log(
+                            ExceptionType.MISSING_WBS_AND_PO,
+                            row_index=row_idx,
+                            cost_center=cc_id,
+                            month=month,
+                            amount=amount,
+                            transaction_type=trans_type,
+                            source_row_data=source_row_data
+                        )
                     continue
 
             # Check 1b: PO exists but looks like a full ER description — extract clean ER number
@@ -173,31 +202,37 @@ def build_hierarchy(
 
             # Check 2: Individual missing checks
             if not wbs:
-                exception_log.log(
-                    ExceptionType.MISSING_WBS,
-                    row_index=row_idx,
-                    po=po,
-                    cost_center=cc_id,
-                    month=month,
-                    amount=amount,
-                    transaction_type=trans_type,
-                    source_row_data=source_row_data
-                )
+                # Only flag when the template already has PO rows
+                if template_pos:
+                    exception_log.log(
+                        ExceptionType.MISSING_WBS,
+                        row_index=row_idx,
+                        po=po,
+                        cost_center=cc_id,
+                        month=month,
+                        amount=amount,
+                        transaction_type=trans_type,
+                        source_row_data=source_row_data
+                    )
                 # Still place the PO on the first tab under a fallback WBS bucket
                 # so the data is visible even though no WBS code was found.
                 wbs = "NO_WBS"
             
             if not po:
-                exception_log.log(
-                    ExceptionType.MISSING_PO,
-                    row_index=row_idx,
-                    wbs=wbs,
-                    cost_center=cc_id,
-                    month=month,
-                    amount=amount,
-                    transaction_type=trans_type,
-                    source_row_data=source_row_data
-                )
+                # Only flag MISSING_PO when the template front tab already has PO rows.
+                # If the template is blank there is nothing to relate the transaction to,
+                # so suppressing the exception avoids noise for new/empty templates.
+                if template_pos:
+                    exception_log.log(
+                        ExceptionType.MISSING_PO,
+                        row_index=row_idx,
+                        wbs=wbs,
+                        cost_center=cc_id,
+                        month=month,
+                        amount=amount,
+                        transaction_type=trans_type,
+                        source_row_data=source_row_data
+                    )
                 continue
 
             # Check 3: Duplicate WBS (WBS owned by multiple cost centers)
@@ -243,15 +278,26 @@ def build_hierarchy(
             if wbs not in cost_center.wbs_codes:
                 cost_center.wbs_codes[wbs] = WBSCode(wbs_code=wbs, cost_center=cc_id)
             if po not in cost_center.wbs_codes[wbs].pos:
-                cost_center.wbs_codes[wbs].pos[po] = PO(po_number=po)
+                cost_center.wbs_codes[wbs].pos[po] = PO(
+                    po_number=po,
+                    legal_entity=legal_entity,
+                    country=country,
+                    vendor_name=vendor_name,
+                    gl_account=gl_account,
+                    req_title=req_title,
+                    real_wbs=er_real_wbs.get(po) if wbs == "ER" else None,
+                )
             po_obj = cost_center.wbs_codes[wbs].pos[po]
             
             # Fill MonthlyMetrics from transactional data
             po_lookup = str(po).strip().upper() if wbs == "ER" and po else po
             if po_lookup in transactional_data:
                 po_data = transactional_data[po_lookup]
+                # Capture gross BER total for Gross PO Value column
+                if po_obj.gross_po_value is None:
+                    po_obj.gross_po_value = po_data.get('gross_ber_total')
                 for month, values in po_data.items():
-                    if month in ('cost_center', 'wbs'):
+                    if month in ('cost_center', 'wbs', 'gross_ber_total'):
                         continue
                     if month not in po_obj.monthly_data:
                         po_obj.monthly_data[month] = MonthlyMetrics()
@@ -260,12 +306,19 @@ def build_hierarchy(
                     metrics.accrual = values.get('Accrual', 0.0)
                     metrics.accrual_reversal = values.get('Reversal', 0.0)
             
-            # Fill forecast from forecast data
+            # Fill forecast from forecast data (only for non-zero values).
+            # International POs shift the forecast month back by 1 (same rule as
+            # their transactional data) so Forecast and Actual land in the same column.
             if po in forecast_data:
+                is_intl_po = bool(intl_po_set and str(po).strip() in intl_po_set)
                 for month, values in forecast_data[po].items():
-                    if month not in po_obj.monthly_data:
-                        po_obj.monthly_data[month] = MonthlyMetrics()
-                    po_obj.monthly_data[month].forecast = values.get('Forecast', 0.0)
+                    fc_value = values.get('Forecast', 0.0)
+                    if not fc_value:  # skip 0 / None — leave monthly_data entry absent
+                        continue
+                    write_month = _FORECAST_MONTH_SHIFT.get(month, month) if is_intl_po else month
+                    if write_month not in po_obj.monthly_data:
+                        po_obj.monthly_data[write_month] = MonthlyMetrics()
+                    po_obj.monthly_data[write_month].forecast = fc_value
             # Note: MISSING_FORECAST exception removed - no longer tracking
 
         # Attach reclass notes once per PO after the row loop, so entries are
@@ -287,7 +340,7 @@ def build_hierarchy(
                     cost_center.wbs_codes[wbs_key].pos[po_number] = PO(po_number=po_number)
                     po_obj = cost_center.wbs_codes[wbs_key].pos[po_number]
                     for month, values in po_in_td.items():
-                        if month in ('cost_center', 'wbs'):
+                        if month in ('cost_center', 'wbs', 'gross_ber_total'):
                             continue
                         if month not in po_obj.monthly_data:
                             po_obj.monthly_data[month] = MonthlyMetrics()
