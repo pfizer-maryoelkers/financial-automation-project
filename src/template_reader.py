@@ -107,16 +107,20 @@ class TemplateReader:
         return pos
     
     def _find_stop_row(self) -> int:
-        """Find the row containing the stop marker."""
-        max_row = self.sheet.max_row or 1000  # Fallback to reasonable default
+        """Find the row containing the stop marker.
+        If the marker is not present (blank / new template), returns max_row + 1
+        so that _extract_pos_from_rows scans nothing and returns an empty dict
+        rather than raising an error."""
+        max_row = self.sheet.max_row or 1000
         for search_row in range(1, max_row + 1):
             if self.sheet[f"A{search_row}"].value == self.po_stop_marker:
                 return search_row
-        
-        raise ValueError(
-            f"Could not find '{self.po_stop_marker}' marker in template. "
-            "Please check the template format or update po_stop_marker in config."
+
+        print(
+            f"WARNING: '{self.po_stop_marker}' marker not found in template — "
+            "treating as blank template with no existing POs."
         )
+        return max_row + 1  # safe sentinel: loop in _extract_pos_from_rows finds nothing
     
     def _extract_pos_from_rows(self, stop_row: int) -> dict[str, int]:
         """Extract PO numbers from rows between header and stop marker."""

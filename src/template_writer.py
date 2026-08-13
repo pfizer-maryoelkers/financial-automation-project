@@ -1,14 +1,44 @@
-from openpyxl import load_workbook
-from openpyxl.formula.translate import Translator
-from openpyxl.utils import get_column_letter, column_index_from_string
-from openpyxl.worksheet.worksheet import Worksheet
-from openpyxl.worksheet.datavalidation import DataValidation
-from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
-from openpyxl.comments import Comment
+from collections import Counter, defaultdict
 from copy import copy
 import re
+
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.comments import Comment
+from openpyxl.formula.translate import Translator
+from openpyxl.styles import Alignment, Border, Color, Font, PatternFill, Side
+from openpyxl.utils import column_index_from_string, get_column_letter
+from openpyxl.workbook.defined_name import DefinedName
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.worksheet.worksheet import Worksheet
+
 from src.models import CostCenter, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType
+
+
+def _copy_color(c: Color) -> Color:
+    """Deep-copy a Color that may be rgb, theme, or indexed.
+    openpyxl's copy() drops theme/tint on theme-based colours."""
+    if c is None:
+        return Color()
+    if c.type == 'theme':
+        new = Color(theme=c.theme, tint=c.tint)
+    elif c.type == 'indexed':
+        new = Color(indexed=c.indexed)
+    else:
+        # rgb or auto
+        new = Color(rgb=c.rgb)
+    return new
+
+
+def _copy_fill(f: PatternFill) -> PatternFill:
+    """Deep-copy a PatternFill, preserving theme-based colours."""
+    if f is None or f.fill_type is None:
+        return PatternFill()
+    return PatternFill(
+        fill_type=f.fill_type,
+        fgColor=_copy_color(f.fgColor),
+        bgColor=_copy_color(f.bgColor),
+    )
 
 
 def month_sort_key(month_str):
@@ -25,50 +55,50 @@ def month_sort_key(month_str):
 
 class TemplateWriter:
 
-    def __init__(self, 
-                 file_path,
-                 output_path,
-                 overwrite,
-                 header_row, 
-                 po_column,
-                 dec_acc_reversal_col, 
-                 forecast_source_cols,
-                 transactional_source_cols
-        ):
-        
+    def __init__(
+        self,
+        file_path,
+        output_path,
+        overwrite,
+        header_row,
+        po_column,
+        dec_acc_reversal_col,
+        forecast_source_cols,
+        transactional_source_cols,
+        p3_id_column: str | None = None,
+    ):
         self.wb = load_workbook(file_path)
         self.sheet: Worksheet = self.wb.active  # type: ignore[assignment]
         if self.sheet is None:
             raise ValueError(f"Could not load active sheet from {file_path}")
 
         self.output_path = output_path
-
-        # Overwrites previous months data if true
         self.overwrite = overwrite
+        self.po_column = po_column
 
-        # Configs for template
-        self.header_row = header_row    # Header row
-        self.po_column = po_column    # Col where POs are entered
+        # Dynamically locate the header row by scanning the sheet; the config
+        # value is only used as a fallback when no header marker is found.
+        self.header_row = header_row
+        self.header_row = self._find_actual_header_row()
 
+        # Optional P3-ID column (project pipeline). None → OpEx default (col J).
+        self.p3_id_column: int | None = (
+            column_index_from_string(p3_id_column) if p3_id_column else None
+        )
 
-        # Cost centers, WBS codes, PO numbers, and their associated rows
-        self.cost_centers = {}
-        self.wbs_codes = {}
-
-        # Column map (dynamically created starting with Dec Accrual Reversal)
-        self.dec_acc_reversal_col = dec_acc_reversal_col # Col where first data entry exists
+        # Month → metric → column-letter map built from the header row.
+        self.dec_acc_reversal_col = dec_acc_reversal_col
         self.column_map = self.get_column_map(starting_col=self.dec_acc_reversal_col)
 
-        # Source sheet params
         self.forecast_source_cols = forecast_source_cols
         self.transactional_source_cols = transactional_source_cols
-
-        # PO columns
         self.forecast_po_col = self.forecast_source_cols[0]
         self.transactional_po_col = self.transactional_source_cols[0]
 
-        # Total 2026 column — found dynamically by scanning the header row
+        # Columns discovered dynamically from the header row.
         self.total_col = self._get_total_col()
+        self.po_value_col = self._get_po_value_col()
+        self.req_title_cols = self._get_req_title_cols()
 
     @staticmethod
     def _norm_po(v) -> str:
@@ -81,12 +111,52 @@ class TemplateWriter:
                 pass
         return s
 
+    def _should_write(self, existing) -> bool:
+        """Return True when a cell value should be overwritten.
+
+        Rules:
+        - Always write when overwrite=True.
+        - Never overwrite an existing formula when overwrite=False.
+        - Write when the cell is blank (None or empty string).
+        """
+        if self.overwrite:
+            return True
+        if isinstance(existing, str) and existing.startswith('='):
+            return False
+        return existing is None or str(existing).strip() == ""
+
+    def _get_po_value_col(self) -> int | None:
+        """Scan the header row for the column that receives the PO total value.
+        Prefers 'invoice amount'; falls back to 'gross po'. Returns None if neither found."""
+        fallback_col = None
+        for col in range(1, (self.sheet.max_column or 200) + 1):
+            val = self.sheet.cell(row=self.header_row, column=col).value
+            if not val:
+                continue
+            text = str(val).strip().lower()
+            if "invoice amount" in text:
+                return col
+            if "gross po" in text and fallback_col is None:
+                fallback_col = col
+        return fallback_col
+
+    def _get_req_title_cols(self) -> list[int]:
+        """Scan the header row for all requisition/description columns.
+        Returns a list of column indices (1-based); may be empty."""
+        found = []
+        for col in range(1, (self.sheet.max_column or 200) + 1):
+            val = self.sheet.cell(row=self.header_row, column=col).value
+            if not val:
+                continue
+            text = str(val).strip().lower()
+            if "requisition" in text or "gl transaction description" in text:
+                found.append(col)
+        return found
+
     def _get_total_col(self) -> str | None:
-        """Scan all rows up to and including the first data row for a cell containing
-        'Total' followed by a year (e.g. 'Total 2026'). Returns the column letter,
-        or None if not found."""
-        search_rows = range(1, self.header_row + 10)  # generous window above data
-        for row in search_rows:
+        """Scan a window around the header row for a 'Total YYYY' cell.
+        Returns the column letter, or None if not found."""
+        for row in range(1, self.header_row + 10):
             for col in range(1, (self.sheet.max_column or 200) + 1):
                 val = self.sheet.cell(row=row, column=col).value
                 if val and re.search(r'total\s+\d{4}', str(val), re.IGNORECASE):
@@ -97,11 +167,16 @@ class TemplateWriter:
         """Write the Total 2026 SUM formula into the total column for the given row.
         The formula picks the best available value per month:
         Actual → Accrual → Forecast (matching the pattern in the template).
-        Only writes if the total column was found and the cell is blank (or overwrite=True)."""
+        Only writes if the total column was found and the cell is blank (or overwrite=True).
+        Preserves any formula already in the cell."""
         if not self.total_col:
             return
         cell = self.sheet[f"{self.total_col}{row}"]
-        if not self.overwrite and cell.value not in (None, 0, ''):
+        existing = cell.value
+        # Preserve existing formula in this cell
+        if not self.overwrite and isinstance(existing, str) and existing.startswith('='):
+            return
+        if not self.overwrite and existing not in (None, 0, ''):
             return
         # Build SUM of per-month best-value: IF(Actual<>"", Actual, IF(Accrual<>"", Accrual, Forecast))
         parts = []
@@ -130,6 +205,48 @@ class TemplateWriter:
         "oct": "Oct", "nov": "Nov", "dec": "Dec",
     }
 
+    def _find_actual_header_row(self) -> int:
+        """Scan every cell in every row to find the real header row.
+
+        Two strategies are tried in order:
+
+        1. Look for a cell containing 'contact for po' (any column) — the
+           explicit label used in both the OpEx and project templates.
+        2. Look for a row that contains at least two metric+month header cells
+           (e.g. 'Forecast Jan', 'Actual Feb') — the same tokens that
+           get_column_map parses.  This catches templates where the label cell
+           is absent or worded differently.
+
+        Falls back to self.header_row (the config value) when neither signal
+        is found, so blank/unfamiliar templates still work.
+        """
+        _metric_kws = ("forecast", "accrual reversal", "accrual", "actual")
+        _month_kws  = set(self._HEADER_MONTH_ALIASES.keys())
+        max_col = self.sheet.max_column or 50
+        max_row = self.sheet.max_row or 1000
+
+        for r in range(1, max_row + 1):
+            metric_month_hits = 0
+            for c in range(1, max_col + 1):
+                v = self.sheet.cell(row=r, column=c).value
+                if v is None:
+                    continue
+                text = str(v).strip().lower()
+                # Strategy 1 — explicit label
+                if "contact for po" in text:
+                    return r
+                # Strategy 2 — metric+month header cell
+                for kw in _metric_kws:
+                    if text.startswith(kw):
+                        words = text.split()
+                        if words and words[-1].rstrip('.,') in _month_kws:
+                            metric_month_hits += 1
+                        break
+            if metric_month_hits >= 2:
+                return r
+
+        return self.header_row  # fallback
+
     def get_column_map(self, starting_col):
         """Build month→metric→column-letter map by scanning the template header row.
 
@@ -155,8 +272,12 @@ class TemplateWriter:
         dec_py_seen = False  # first 'Dec' Accrual Reversal is Dec (PY)
         max_col = self.sheet.max_column or 200
 
+        # Use the actual header row position rather than the config value so this
+        # works correctly on blank templates and row-shifted files.
+        actual_header_row = self._find_actual_header_row()
+
         for col_idx in range(1, max_col + 1):
-            raw = self.sheet.cell(row=self.header_row, column=col_idx).value
+            raw = self.sheet.cell(row=actual_header_row, column=col_idx).value
             if not raw:
                 continue
             text = str(raw).strip()
@@ -184,6 +305,33 @@ class TemplateWriter:
 
             if month_key not in col_map:
                 col_map[month_key] = {}
+
+            # Guard against duplicate headers (e.g. two "Accrual May" cells where
+            # the second should have been "Actual May").  If this metric slot is
+            # already filled for this month, check whether the *next* unused metric
+            # for this month fits better and warn so the template can be corrected.
+            if matched_metric in col_map[month_key]:
+                existing_col = col_map[month_key][matched_metric]
+                # Determine which metric slot is missing for this month and fill it
+                expected_order = ["Forecast", "Accrual", "Actual", "Accrual Reversal"]
+                missing = [m for m in expected_order if m not in col_map[month_key]]
+                if missing:
+                    fallback = missing[0]
+                    print(
+                        f"WARNING: Duplicate header '{text}' at col "
+                        f"{get_column_letter(col_idx)} (already mapped from col "
+                        f"{existing_col}). Treating as '{fallback} {month_key}' — "
+                        f"please correct the template header."
+                    )
+                    col_map[month_key][fallback] = get_column_letter(col_idx)
+                else:
+                    print(
+                        f"WARNING: Duplicate header '{text}' at col "
+                        f"{get_column_letter(col_idx)} ignored — all slots for "
+                        f"{month_key} are already filled."
+                    )
+                continue
+
             col_map[month_key][matched_metric] = get_column_letter(col_idx)
 
         if col_map:
@@ -236,35 +384,77 @@ class TemplateWriter:
             return pos
 
         po_col_idx = column_index_from_string(self.po_column)
-        cc_col_idx = 10
+        # Use configured p3_id_column when available (project template), otherwise
+        # fall back to column J (index 10) used by the OpEx template.
+        cc_col_idx = self.p3_id_column if self.p3_id_column else 10
         wbs_col_idx = 6  # Column F
-        ref_row = self.header_row + 1
         max_col = self.sheet.max_column or 1
 
-        ref_styles = {}
-        for col_idx in range(1, max_col + 1):
-            src = self.sheet.cell(row=ref_row, column=col_idx)
-            ref_styles[col_idx] = {
-                'font': copy(src.font),
-                'border': copy(src.border),
-                'alignment': copy(src.alignment),
-                'number_format': src.number_format,
-                'fill': copy(src.fill),
-            }
-        ref_height = self.sheet.row_dimensions[ref_row].height
+        # Determine whether a dedicated CC / P3-ID label column exists in the data rows.
+        # If cc_col_idx is occupied by a metric column (e.g. "Accrual Reversal Dec" in the
+        # project template) we must NOT write the label there.
+        _data_col_indices: set[int] = set()
+        for _mc in self.column_map.values():
+            for _cl in _mc.values():
+                _data_col_indices.add(column_index_from_string(_cl))
+        _has_cc_label_col: bool = (
+            self.p3_id_column is not None          # explicitly configured
+            or cc_col_idx not in _data_col_indices  # col J is free (OpEx template)
+        )
+
+        # Build a reverse map: po_number → cc_id from the hierarchy so that
+        # _scan_existing_rows_by_cc can find which group owns each existing PO
+        # row even when there is no explicit CC-label column in the sheet
+        # (e.g. the project template).
+        _po_to_cc: dict[str, str] = {}
+        for _cc_id, _cc_obj in hierarchy.items():
+            for _wbs_code, _wbs_obj in _cc_obj.wbs_codes.items():
+                for _po_num in _wbs_obj.pos:
+                    _po_to_cc[self._norm_po(_po_num)] = _cc_id
+
+        def _get_ref_styles(ref_row: int) -> tuple[dict, float | None]:
+            """Snapshot per-column styles from ref_row."""
+            styles = {}
+            for col_idx in range(1, max_col + 1):
+                src = self.sheet.cell(row=ref_row, column=col_idx)
+                styles[col_idx] = {
+                    'font': copy(src.font),
+                    'border': copy(src.border),
+                    'alignment': copy(src.alignment),
+                    'number_format': src.number_format,
+                    'fill': _copy_fill(src.fill),
+                }
+            return styles, self.sheet.row_dimensions[ref_row].height
 
         def _scan_existing_rows_by_cc() -> dict:
-            """Re-scan the sheet to get the last existing row per cost center."""
+            """Re-scan the sheet to get the last existing row per cost center / P3 ID.
+
+            Two strategies are tried in order:
+            1. If a dedicated CC/P3-ID label column exists (cc_col_idx has a value
+               and it isn't a known data column), read the label directly from that cell.
+            2. Otherwise resolve the CC for each row via the PO→CC reverse map built
+               from the hierarchy (used by the project template where there is no
+               separate label column in the data rows).
+            """
             result = {}
             for row_idx in range(self.header_row + 1, (self.sheet.max_row or 1000) + 1):
                 cell_val = self.sheet[f"A{row_idx}"].value
                 if cell_val is not None and str(cell_val).strip() == "Previous Period Invoices":
                     break
-                cc_val = self.sheet.cell(row=row_idx, column=cc_col_idx).value
                 po_val = self.sheet.cell(row=row_idx, column=po_col_idx).value
-                cc_text = str(cc_val).strip().split('/')[0].strip() if cc_val is not None and str(cc_val).strip() != "" else None
-                po_text = str(po_val).strip() if po_val is not None and str(po_val).strip() != "" else None
-                if cc_text and po_text:
+                po_text = self._norm_po(str(po_val).strip()) if po_val is not None and str(po_val).strip() else None
+                if not po_text:
+                    continue
+                # Strategy 1: read CC label directly from the dedicated column
+                cc_text = None
+                if self.p3_id_column:
+                    cc_raw = self.sheet.cell(row=row_idx, column=cc_col_idx).value
+                    if cc_raw is not None and str(cc_raw).strip():
+                        cc_text = str(cc_raw).strip().split('/')[0].strip()
+                # Strategy 2: look up the PO in the hierarchy reverse map
+                if not cc_text:
+                    cc_text = _po_to_cc.get(po_text)
+                if cc_text:
                     result[cc_text] = row_idx  # keep updating → ends at last row for this CC
             return result
 
@@ -305,35 +495,68 @@ class TemplateWriter:
                 # CC already has rows — insert new rows immediately after the last one
                 insert_at = existing_last_row_by_cc[cc_id] + 1
             else:
-                # CC has no rows yet — insert just above the stop marker
-                # Re-find stop_row since it shifts with every insertion
-                insert_at = None
+                # CC has no rows yet — find the stop marker then scan backward
+                # past any trailing blank rows so inserted rows land directly
+                # after the last content row (no blank gap).
+                stop_row_cur = None
                 for row_idx in range(1, (self.sheet.max_row or 1000) + 1):
                     if self.sheet[f"A{row_idx}"].value is not None and \
                             str(self.sheet[f"A{row_idx}"].value).strip() == "Previous Period Invoices":
-                        insert_at = row_idx
+                        stop_row_cur = row_idx
                         break
-                if insert_at is None:
+                if stop_row_cur is None:
                     print("WARNING: stop marker disappeared during insertion.")
                     break
+                # Walk backward from stop_row_cur - 1 looking for the last row
+                # that has a real PO number in the PO column.  We intentionally
+                # ignore everything else (labels, zero-filled variance formulas,
+                # cost-center labels, etc.) because those are template scaffolding
+                # that appears in placeholder rows even when no PO has been written.
+                # If no PO row is found at all, fall back to header_row + 1 so the
+                # first insertion lands directly under the header.
+                insert_at = self.header_row + 1
+                for row_idx in range(stop_row_cur - 1, self.header_row, -1):
+                    po_val = self.sheet.cell(row=row_idx, column=po_col_idx).value
+                    if po_val is not None:
+                        po_str = str(po_val).strip()
+                        if po_str and po_str.lower() != "none" and not po_str.startswith("="):
+                            insert_at = row_idx + 1
+                            break
 
             for po_number in po_numbers:
+                # Use the row immediately before the insertion point (but not the
+                # header row) as the style reference, so inserted rows inherit the
+                # same fill and font as their adjacent neighbours regardless of
+                # whether those neighbours have a PO number in them.
+                style_source_row = self.header_row + 1   # safe fallback
+                for _sr in range(insert_at - 1, self.header_row, -1):
+                    # Skip the header row itself (bold/coloured) — use any other row
+                    if _sr != self.header_row:
+                        style_source_row = _sr
+                        break
+                ref_styles, ref_height = _get_ref_styles(style_source_row)
                 self.sheet.insert_rows(insert_at)
                 for col_idx in range(1, max_col + 1):
                     new_cell = self.sheet.cell(row=insert_at, column=col_idx)
+                    # openpyxl copies the value from the displaced row into the
+                    # new row — clear it so no stale formula survives.
+                    new_cell.value = None
                     s = ref_styles[col_idx]
                     new_cell.font = copy(s['font'])
                     new_cell.border = copy(s['border'])
                     new_cell.alignment = copy(s['alignment'])
                     new_cell.number_format = s['number_format']
-                    new_cell.fill = copy(s['fill'])
+                    new_cell.fill = _copy_fill(s['fill'])
                 if ref_height:
                     self.sheet.row_dimensions[insert_at].height = ref_height
 
                 vendor_val = po_vendor_map.get(po_number)
                 if vendor_val is not None:
                     self.sheet.cell(row=insert_at, column=5, value=vendor_val)
-                self.sheet.cell(row=insert_at, column=cc_col_idx, value=cc_id)
+                # Write the CC / P3-ID label only when a dedicated label column exists
+                # (controlled by _has_cc_label_col set above the loop).
+                if _has_cc_label_col:
+                    self.sheet.cell(row=insert_at, column=cc_col_idx, value=cc_id)
                 self.sheet.cell(row=insert_at, column=po_col_idx, value=po_number)
                 self.sheet.cell(row=insert_at, column=wbs_col_idx, value=po_wbs_map.get(po_number))
                 gl_val = po_gl_map.get(po_number)
@@ -346,12 +569,12 @@ class TemplateWriter:
                 if country_val is not None:
                     self.sheet.cell(row=insert_at, column=9, value=country_val)
                 gross_val = po_gross_map.get(po_number)
-                if gross_val is not None:
-                    self.sheet.cell(row=insert_at, column=11, value=round(gross_val, 2))
+                if gross_val is not None and self.po_value_col is not None:
+                    self.sheet.cell(row=insert_at, column=self.po_value_col, value=round(gross_val, 2))
                 req_val = po_req_map.get(po_number)
                 if req_val is not None:
-                    self.sheet.cell(row=insert_at, column=12, value=req_val)
-                self._write_total_formula(insert_at)
+                    for _col in self.req_title_cols:
+                        self.sheet.cell(row=insert_at, column=_col, value=req_val)
                 pos[po_number] = insert_at
                 inserted.append(po_number)
 
@@ -434,37 +657,63 @@ class TemplateWriter:
         header_cell = self.sheet.cell(row=self.header_row, column=po_col_idx)
         header_cell.value = "PO Number/ER Number"
 
-        # Green fill for ER cells
-        green_fill = PatternFill(fill_type="solid", fgColor="00B050")
+        # Light green fill for ER cells
+        green_fill = PatternFill(fill_type="solid", fgColor="C6EFCE")
 
-        # Reference row: use the first data row (header_row + 1) as the style source.
-        # This ensures we always copy from a well-formed row regardless of how many
-        # ERs have already been inserted above stop_row.
-        ref_row = self.header_row + 1
         max_col = self.sheet.max_column or 1
 
-        # Build per-column style snapshots from the reference row once
-        ref_styles = {}
-        for col_idx in range(1, max_col + 1):
-            src = self.sheet.cell(row=ref_row, column=col_idx)
-            ref_styles[col_idx] = {
-                'font': copy(src.font),
-                'border': copy(src.border),
-                'alignment': copy(src.alignment),
-                'number_format': src.number_format,
-                'fill': copy(src.fill),
-            }
-        ref_height = self.sheet.row_dimensions[ref_row].height
+        # Reuse the same CC-label-column logic as insert_missing_po_rows.
+        _er_cc_col_idx = self.p3_id_column if self.p3_id_column else 10
+        _er_data_cols: set[int] = set()
+        for _mc in self.column_map.values():
+            for _cl in _mc.values():
+                _er_data_cols.add(column_index_from_string(_cl))
+        _er_has_cc_col: bool = (
+            self.p3_id_column is not None
+            or _er_cc_col_idx not in _er_data_cols
+        )
 
-        # Insert one row per ER above stop_row (insert in reverse to preserve ordering)
-        # After inserting N rows, stop_row shifts by N – track the insertion point
-        insert_at = stop_row  # rows are inserted BEFORE this row
+        def _get_er_ref_styles(ref_row: int) -> tuple[dict, float | None]:
+            """Snapshot per-column styles from ref_row for ER insertion."""
+            styles = {}
+            for col_idx in range(1, max_col + 1):
+                src = self.sheet.cell(row=ref_row, column=col_idx)
+                styles[col_idx] = {
+                    'font': copy(src.font),
+                    'border': copy(src.border),
+                    'alignment': copy(src.alignment),
+                    'number_format': src.number_format,
+                    'fill': _copy_fill(src.fill),
+                }
+            return styles, self.sheet.row_dimensions[ref_row].height
+
+        # Find the last row that has a real PO number and insert ER rows after it.
+        # Falls back to header_row + 1 when no PO rows exist yet.
+        insert_at = self.header_row + 1
+        for row_idx in range(stop_row - 1, self.header_row, -1):
+            po_val = self.sheet.cell(row=row_idx, column=po_col_idx).value
+            if po_val is not None:
+                po_str = str(po_val).strip()
+                if po_str and po_str.lower() != "none" and not po_str.startswith("="):
+                    insert_at = row_idx + 1
+                    break
+
         for er in er_numbers:
+            # Use the row immediately before the insertion point (not the header)
+            # as the style reference so inserted rows match their neighbours.
+            style_source_row = self.header_row + 1   # safe fallback
+            for _sr in range(insert_at - 1, self.header_row, -1):
+                if _sr != self.header_row:
+                    style_source_row = _sr
+                    break
+            ref_styles, ref_height = _get_er_ref_styles(style_source_row)
             self.sheet.insert_rows(insert_at)
 
             # Apply reference row formatting to every cell in the new row
             for col_idx in range(1, max_col + 1):
                 new_cell = self.sheet.cell(row=insert_at, column=col_idx)
+                # Clear any value openpyxl copied from the displaced row.
+                new_cell.value = None
                 s = ref_styles[col_idx]
                 new_cell.font = copy(s['font'])
                 # Normalise top border: always use 'thin' so each new row looks
@@ -478,11 +727,11 @@ class TemplateWriter:
                 )
                 new_cell.alignment = copy(s['alignment'])
                 new_cell.number_format = s['number_format']
-                # Fill: green on PO column, no fill on all other columns
+                # Fill: green on PO column, same as neighbour on all other columns
                 if col_idx == po_col_idx:
                     new_cell.fill = green_fill
                 else:
-                    new_cell.fill = copy(s['fill'])
+                    new_cell.fill = _copy_fill(s['fill'])
 
             if ref_height:
                 self.sheet.row_dimensions[insert_at].height = ref_height
@@ -494,10 +743,10 @@ class TemplateWriter:
             vendor_val = er_vendor_map.get(er)
             if vendor_val is not None:
                 self.sheet.cell(row=insert_at, column=5, value=vendor_val)
-            # Write Cost Center into column J
+            # Write Cost Center / P3-ID label only when a dedicated column exists.
             cc_val = er_cc_map.get(er)
-            if cc_val is not None:
-                self.sheet.cell(row=insert_at, column=10, value=cc_val)
+            if cc_val is not None and _er_has_cc_col:
+                self.sheet.cell(row=insert_at, column=_er_cc_col_idx, value=cc_val)
             # Write G/L Account into column G
             gl_val = er_gl_map.get(er)
             if gl_val is not None:
@@ -510,17 +759,15 @@ class TemplateWriter:
             country_val = er_country_map.get(er)
             if country_val is not None:
                 self.sheet.cell(row=insert_at, column=9, value=country_val)
-            # Write Gross PO Value into column K
+            # Write PO total into the correct column (Gross PO Value or Invoice Amount)
             gross_val = er_gross_map.get(er)
-            if gross_val is not None:
-                self.sheet.cell(row=insert_at, column=11, value=round(gross_val, 2))
-            # Write Requisition Title into column L
+            if gross_val is not None and self.po_value_col is not None:
+                self.sheet.cell(row=insert_at, column=self.po_value_col, value=round(gross_val, 2))
+            # Write Requisition Title into all matching columns
             req_val = er_req_map.get(er)
             if req_val is not None:
-                self.sheet.cell(row=insert_at, column=12, value=req_val)
-
-            # Write Total 2026 formula for this ER row
-            self._write_total_formula(insert_at)
+                for _col in self.req_title_cols:
+                    self.sheet.cell(row=insert_at, column=_col, value=req_val)
 
             pos[er] = insert_at
             insert_at += 1  # next ER goes after the one just inserted
@@ -529,7 +776,7 @@ class TemplateWriter:
         return pos
 
     def _get_comments_col(self) -> str | None:
-        """Scan the header row for a cell containing 'Comments'. Returns the column letter or None."""
+        """Scan the header row for a 'Comments' column. Returns the column letter or None."""
         for col in range(1, (self.sheet.max_column or 200) + 1):
             val = self.sheet.cell(row=self.header_row, column=col).value
             if val and 'comment' in str(val).strip().lower():
@@ -545,6 +792,17 @@ class TemplateWriter:
         reclass_fill = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
         comments_col = self._get_comments_col()
 
+        # Determine the CC/P3-ID label column, and whether one exists at all.
+        _cc_write_col = self.p3_id_column if self.p3_id_column else 10
+        _wh_data_cols: set[int] = set()
+        for _mc in self.column_map.values():
+            for _cl in _mc.values():
+                _wh_data_cols.add(column_index_from_string(_cl))
+        _has_cc_label_col: bool = (
+            self.p3_id_column is not None
+            or _cc_write_col not in _wh_data_cols
+        )
+
         for cc_id, cost_center in hierarchy.items():
             for wbs_code, wbs in cost_center.wbs_codes.items():
                 for po_number, po in wbs.pos.items():
@@ -555,174 +813,116 @@ class TemplateWriter:
                         print(f"PO '{po_number}' not found in template. Skipping.")
                         continue
                     row = pos[po_number]
-                    # Write Cost Center into column J if blank (or overwrite=True)
-                    cc_cell = self.sheet.cell(row=row, column=10)
-                    if self.overwrite or cc_cell.value is None or str(cc_cell.value).strip() == "":
-                        cc_cell.value = cc_id
-                    # Write Vendor Name into column E if blank/placeholder (or overwrite=True)
+
+                    # Cost Center / P3-ID label (skipped for project template — no label column)
+                    if _has_cc_label_col:
+                        cc_cell = self.sheet.cell(row=row, column=_cc_write_col)
+                        if self._should_write(cc_cell.value):
+                            cc_cell.value = cc_id
+
+                    # Vendor name (col E) — also skip "not assigned" placeholder
                     if po.vendor_name is not None:
                         vendor_cell = self.sheet.cell(row=row, column=5)
-                        existing = str(vendor_cell.value).strip() if vendor_cell.value is not None else ""
-                        if self.overwrite or existing == "" or existing.lower() == "not assigned":
-                            vendor_cell.value = po.vendor_name
-                    # Write WBS code into column F if blank (or overwrite=True)
-                    # For ER rows use the real WBS from the transactional file if available
+                        existing = vendor_cell.value
+                        if not (not self.overwrite and isinstance(existing, str) and existing.startswith('=')):
+                            existing_str = str(existing).strip() if existing is not None else ""
+                            if self.overwrite or existing_str == "" or existing_str.lower() == "not assigned":
+                                vendor_cell.value = po.vendor_name
+
+                    # WBS code (col F) — use real_wbs for ER rows when available
                     wbs_to_write = po.real_wbs if (wbs_code == "ER" and po.real_wbs) else wbs_code
                     wbs_cell = self.sheet.cell(row=row, column=6)
-                    if self.overwrite or wbs_cell.value is None or str(wbs_cell.value).strip() == "":
+                    if self._should_write(wbs_cell.value):
                         wbs_cell.value = wbs_to_write
-                    # Write G/L Account into column G if blank (or overwrite=True)
+
+                    # G/L Account (col G)
                     if po.gl_account is not None:
                         gl_cell = self.sheet.cell(row=row, column=7)
-                        if self.overwrite or gl_cell.value is None or str(gl_cell.value).strip() == "":
+                        if self._should_write(gl_cell.value):
                             gl_cell.value = po.gl_account
-                    # Write LE (legal entity) into column H if blank (or overwrite=True)
+
+                    # Legal Entity (col H)
                     if po.legal_entity is not None:
                         le_cell = self.sheet.cell(row=row, column=8)
-                        if self.overwrite or le_cell.value is None or str(le_cell.value).strip() == "":
+                        if self._should_write(le_cell.value):
                             le_cell.value = po.legal_entity
-                    # Write Country into column I if blank (or overwrite=True)
+
+                    # Country (col I)
                     if po.country is not None:
                         country_cell = self.sheet.cell(row=row, column=9)
-                        if self.overwrite or country_cell.value is None or str(country_cell.value).strip() == "":
+                        if self._should_write(country_cell.value):
                             country_cell.value = po.country
-                    # Write Gross PO Value into column K if blank (or overwrite=True)
-                    if po.gross_po_value is not None:
-                        gross_cell = self.sheet.cell(row=row, column=11)
-                        if self.overwrite or gross_cell.value is None or str(gross_cell.value).strip() == "":
+
+                    # PO total (Gross PO Value or Invoice Amount column)
+                    if po.gross_po_value is not None and self.po_value_col is not None:
+                        gross_cell = self.sheet.cell(row=row, column=self.po_value_col)
+                        if self._should_write(gross_cell.value):
                             gross_cell.value = round(po.gross_po_value, 2)
-                    # Write Requisition Title into column L if blank (or overwrite=True)
+
+                    # Requisition title
                     if po.req_title is not None:
-                        req_cell = self.sheet.cell(row=row, column=12)
-                        if self.overwrite or req_cell.value is None or str(req_cell.value).strip() == "":
-                            req_cell.value = po.req_title
+                        for _col in self.req_title_cols:
+                            req_cell = self.sheet.cell(row=row, column=_col)
+                            if self._should_write(req_cell.value):
+                                req_cell.value = po.req_title
+
+                    # Monthly metric values
                     for month, metrics in po.monthly_data.items():
                         if month not in self.column_map:
                             continue
                         month_cols = self.column_map[month]
                         values = {
                             'Accrual Reversal': metrics.accrual_reversal,
-                            'Forecast': metrics.forecast,
-                            'Accrual': metrics.accrual,
-                            'Actual': metrics.actual
+                            'Forecast':         metrics.forecast,
+                            'Accrual':          metrics.accrual,
+                            'Actual':           metrics.actual,
                         }
                         for metric, col_letter in month_cols.items():
                             cell = self.sheet[f"{col_letter}{row}"]
                             value = values.get(metric)
-                            # Skip writing zero/None — avoids polluting blank template cells
-                            # with 0 when there is genuinely no data for this metric/month.
-                            # Always write when overwrite=True so existing values can be cleared.
-                            if not self.overwrite and (value is None or value == 0 or value == 0.0):
+                            # Skip zero/None to avoid polluting blank cells with 0.
+                            if not self.overwrite and (value is None or value == 0):
                                 continue
-                            if self.overwrite or cell.value is None or str(cell.value).strip() == "":
+                            if self._should_write(cell.value):
                                 cell.value = value
 
-                        actual_col = month_cols.get('Actual')
+                        actual_col  = month_cols.get('Actual')
                         accrual_col = month_cols.get('Accrual')
-                        if actual_col and accrual_col:
-                            variance_col = get_column_letter(column_index_from_string(actual_col) + 1)
+                        has_actual  = metrics.actual  is not None and metrics.actual  != 0
+                        has_accrual = metrics.accrual is not None and metrics.accrual != 0
+                        if actual_col and accrual_col and (has_actual or has_accrual):
+                            variance_col  = get_column_letter(column_index_from_string(actual_col) + 1)
                             variance_cell = self.sheet[f"{variance_col}{row}"]
-                            if self.overwrite or variance_cell.value is None or str(variance_cell.value).strip() == "":
-                                variance_cell.value = f"={actual_col}{row}-{accrual_col}{row}"
+                            if self._should_write(variance_cell.value):
+                                variance_cell.value = f"={accrual_col}{row}-{actual_col}{row}"
 
-                        # Annotate Actual cell if reclass adjustments exist for this month
+                        # Highlight and annotate Actual cell if reclass adjustments exist
                         reclass_entries = po.reclass_adjustments.get(month, [])
                         if reclass_entries and actual_col:
                             actual_cell = self.sheet[f"{actual_col}{row}"]
-                            # Highlight cell in light yellow
                             actual_cell.fill = reclass_fill
-                            # Build comment text
-                            lines = ["Reclass adjustment(s) included in Actual:"]
+                            total_reclass = sum(amt for amt, _ in reclass_entries)
+                            original = (metrics.actual or 0) - total_reclass
+                            lines = [
+                                f"Original: ${original:,.2f}",
+                                "Reclass adjustment(s) included in Actual:",
+                            ]
                             for amt, desc in reclass_entries:
                                 sign = "+" if amt >= 0 else ""
                                 lines.append(f"  {sign}${amt:,.2f}  —  {desc}")
-                            note_text = "\n".join(lines)
-                            # Add cell comment (tooltip)
-                            comment = Comment(note_text, "Financial Automation")
-                            comment.width = 400
-                            comment.height = 120 + 20 * len(reclass_entries)
+                            lines.append(f"Adjusted Total: ${metrics.actual:,.2f}")
+                            comment = Comment("\n".join(lines), "Financial Automation")
+                            comment.width  = 400
+                            comment.height = 120 + 20 * (len(reclass_entries) + 2)
                             actual_cell.comment = comment
-                            # Also write to Comments column if it exists
-                            if comments_col:
-                                comments_cell = self.sheet[f"{comments_col}{row}"]
-                                existing = comments_cell.value or ""
-                                separator = "\n" if existing else ""
-                                comments_cell.value = existing + separator + note_text
-                    # Write Total 2026 formula after all months are written for this PO
-                    self._write_total_formula(row)
 
-        # After all PO data is written, refresh the summary row formulas so they
-        # cover the full data range (rows header_row+1 … last data row).
-        self._update_summary_formulas()
+                    # Total formula — only when the PO has monthly data
+                    if po.monthly_data:
+                        self._write_total_formula(row)
 
 
-    def _update_summary_formulas(self):
-        """Rewrite range references in summary rows (rows 1 … header_row-1) so
-        they span from header_row+1 to the actual last data row.
-
-        The template ships with hardcoded ranges like K17:K18 (only 2 placeholder
-        rows).  After PO rows are inserted those ranges need updating to cover all
-        real data rows, otherwise SUBTOTAL / SUM / SUMIFS totals show wrong values.
-
-        Strategy: for every formula cell above the header row, replace every
-        occurrence of <COL><start_row>:<COL><end_row> where start_row equals
-        header_row+1 with the correct end row.  Handles plain string formulas
-        and ArrayFormula objects.
-        """
-        from openpyxl.worksheet.formula import ArrayFormula
-        import re
-
-        data_first = self.header_row + 1  # first real data row (e.g. 17)
-
-        # Find the actual last data row (row before 'Previous Period Invoices')
-        data_last = data_first
-        for r in range(data_first, (self.sheet.max_row or 1000) + 1):
-            val = self.sheet.cell(row=r, column=1).value
-            if val is not None and str(val).strip() in (
-                "Previous Period Invoices", "EXPENSE END"
-            ):
-                data_last = r - 1
-                break
-            data_last = r
-
-        if data_last < data_first:
-            return  # nothing to do (empty template)
-
-        def _replace_range(formula_text: str) -> str:
-            """Replace <COL><data_first>:<COL><old_end> with <COL><data_first>:<COL><data_last>."""
-            def replacer(m):
-                col1, row1, col2 = m.group(1), m.group(2), m.group(3)
-                if int(row1) == data_first:
-                    return f"{col1}{row1}:{col2}{data_last}"
-                return m.group(0)
-            return re.sub(r'([A-Z]+)(\d+):([A-Z]+)\d+', replacer, formula_text)
-
-        updated = 0
-        for row in range(1, self.header_row):
-            for col in range(1, (self.sheet.max_column or 200) + 1):
-                cell = self.sheet.cell(row=row, column=col)
-                v = cell.value
-                if v is None:
-                    continue
-                if isinstance(v, ArrayFormula):
-                    new_text = _replace_range(v.text)
-                    if new_text != v.text:
-                        cell.value = ArrayFormula(v.ref, new_text)
-                        updated += 1
-                elif isinstance(v, str) and v.startswith('='):
-                    new_formula = _replace_range(v)
-                    if new_formula != v:
-                        cell.value = new_formula
-                        updated += 1
-
-        if updated:
-            print(f"Updated {updated} summary formula(s) to cover rows "
-                  f"{data_first}:{data_last}.")
-
-
-    ## Methods to write source sheets
     def write_forecast_source_sheet(self, forecast_df, pos: dict[str, int]):
-        # Method to write forecast source sheet. 
+        """Write forecast data to a new 'Forecast Source Data' sheet, filtered to template POs."""
         # Filter to template POs
         if self.forecast_po_col not in forecast_df.columns:
             raise KeyError(f"Expected {self.forecast_po_col} column not found in forecast dataframe.")
@@ -781,9 +981,8 @@ class TemplateWriter:
             )
 
     def write_transactional_source_sheet(self, transactions_df, pos: dict[str, int]):
-        # Method to write transactional detail source sheet
-        # Include rows where PO is in the template OR where Type is Reclass
-        # (Reclass rows have no PO so they would otherwise be filtered out)
+        """Write transactional detail to a new 'Transactions Source Data' sheet.
+        Includes rows where PO is in the template, plus all Reclass rows."""
         if self.transactional_po_col not in transactions_df.columns:
             raise KeyError(f"Expected {self.transactional_po_col} column not found in transactional dataframe.")
 
@@ -840,80 +1039,178 @@ class TemplateWriter:
                 return match.group(1).upper()
         return po_value
 
-    def write_exception_sheet(self, exception_log, transactional_df):
+    def write_exception_sheet(self, exception_log, transactional_df, pos: dict | None = None):
+        """Write the Exceptions sheet.
+
+        PO_NOT_ON_TEMPLATE entries are grouped by PO and shown with a per-month
+        breakdown followed by a subtotal row.  Any PO that was subsequently
+        inserted by insert_missing_po_rows (i.e. appears in *pos*) is excluded —
+        those POs are now on the template and no longer need an exception entry.
+
+        All other exception types are written in a flat table below a divider.
+        """
         ws = self.wb.create_sheet("Exceptions")
 
-        # Exclude reclasses from the exceptions tab
-        class _FilteredLog:
-            def __init__(self, entries):
-                self.entries = entries
-        exception_log = _FilteredLog([
+        # Separate the two categories
+        not_on_template = [
             e for e in exception_log.entries
-            if e.exception_type != ExceptionType.RECLASS
-        ])
-
-        # Define visible columns - include Description and GL Line Description from transactional data
-        visible_headers = [
-            'Cost Center', 'Accounting Period', 'WBS', 'PO/ER Number',
-            'Exception Type', 'Source Row', 'Amount', 'Type', 'Description', 'GL Line Description'
+            if e.exception_type == ExceptionType.PO_NOT_ON_TEMPLATE
+            # Exclude POs that were inserted into the template after hierarchy build
+            and (pos is None or self._norm_po(e.po) not in pos)
         ]
-        
-        # Get all transactional columns for hidden section
-        # Exclude columns already shown in visible section
-        excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number', 'Accounting Period', 'GL BER Corp Amount', 'Type', 'Description', 'GL Line Description'}
-        hidden_headers = [col for col in transactional_df.columns if col not in excluded_cols]
-        
-        all_headers = visible_headers + hidden_headers
-        
-        # Write headers
-        for col_idx, header in enumerate(all_headers, start=1):
-            ws.cell(row=1, column=col_idx, value=header)
-        
-        # Write data rows
-        for row_idx, entry in enumerate(exception_log.entries, start=2):
-            # Visible columns
-            ws.cell(row=row_idx, column=1, value=entry.cost_center)
-            ws.cell(row=row_idx, column=2, value=entry.month)
-            ws.cell(row=row_idx, column=3, value=entry.wbs)
-            ws.cell(row=row_idx, column=4, value=self._extract_er_number(entry.po))
-            ws.cell(row=row_idx, column=5, value=entry.exception_type.value)
-            ws.cell(row=row_idx, column=6, value=entry.row_index)
-            ws.cell(row=row_idx, column=7, value=entry.amount)
-            ws.cell(row=row_idx, column=8, value=entry.transaction_type)
-            # Description from source row data
-            ws.cell(row=row_idx, column=9, value=entry.source_row_data.get('Description') if entry.source_row_data else None)
-            # GL Line Description from source row data
-            ws.cell(row=row_idx, column=10, value=entry.source_row_data.get('GL Line Description') if entry.source_row_data else None)
-            
-            # Hidden columns (remaining source row data)
-            if entry.source_row_data:
-                for col_idx_hidden, col_name in enumerate(hidden_headers, start=11):
-                    ws.cell(row=row_idx, column=col_idx_hidden,
-                           value=entry.source_row_data.get(col_name))
-        
-        # Apply formatting
-        ws.auto_filter.ref = ws.dimensions
-        ws.freeze_panes = "A2"
-        
-        # Auto-size visible columns
-        for col_idx in range(1, len(visible_headers) + 1):
-            letter = get_column_letter(col_idx)
-            max_len = len(str(all_headers[col_idx - 1]))
-            for row_idx in range(2, len(exception_log.entries) + 2):
-                cell_value = ws.cell(row=row_idx, column=col_idx).value
-                if cell_value is not None:
-                    max_len = max(max_len, len(str(cell_value)))
-            ws.column_dimensions[letter].width = min(max_len + 2, 50)
-        
-        # Group and hide supplementary columns
-        if hidden_headers:
-            start_idx = len(visible_headers) + 1
-            end_idx = len(all_headers)
-            ws.column_dimensions.group(
-                get_column_letter(start_idx),
-                get_column_letter(end_idx),
-                hidden=True
+        other_entries = [
+            e for e in exception_log.entries
+            if e.exception_type not in (ExceptionType.RECLASS,
+                                        ExceptionType.PO_NOT_ON_TEMPLATE)
+        ]
+
+        # ── colour palette ───────────────────────────────────────────────────
+        hdr_fill   = PatternFill("solid", fgColor="1F4E79")   # dark blue
+        sub_fill   = PatternFill("solid", fgColor="BDD7EE")   # light blue
+        total_fill = PatternFill("solid", fgColor="DDEBF7")   # pale blue
+        other_fill = PatternFill("solid", fgColor="2F5496")   # medium blue
+        hdr_font   = Font(bold=True, color="FFFFFF")
+        bold_font  = Font(bold=True)
+
+        row = 1
+
+        # ── Section 1: POs not on template ───────────────────────────────────
+        if not_on_template:
+            # Section header
+            sec_hdr = ws.cell(row=row, column=1,
+                              value="POs with transactions not shown on template")
+            sec_hdr.font = Font(bold=True, color="FFFFFF", size=12)
+            sec_hdr.fill = hdr_fill
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=9)
+            row += 1
+
+            # Column headers
+            col_hdrs = ['Cost Center / P3 ID', 'PO Number', 'Vendor',
+                        'WBS', 'Month', 'Amount', 'Type', 'WBS Code', 'Note']
+            for ci, h in enumerate(col_hdrs, 1):
+                c = ws.cell(row=row, column=ci, value=h)
+                c.font = hdr_font
+                c.fill = sub_fill
+                c.font = Font(bold=True)
+            row += 1
+            col_hdr_row = row - 1
+
+            # Group by PO
+            po_groups: dict = defaultdict(list)
+            for e in not_on_template:
+                po_groups[self._norm_po(e.po)].append(e)
+
+            for po_num, entries in sorted(po_groups.items()):
+                first = entries[0]
+                # One row per period
+                for e in sorted(entries, key=lambda x: str(x.month or '')):
+                    ws.cell(row=row, column=1, value=e.cost_center)
+                    ws.cell(row=row, column=2, value=self._norm_po(e.po))
+                    ws.cell(row=row, column=3, value=e.vendor_name)
+                    ws.cell(row=row, column=4, value=e.wbs)
+                    ws.cell(row=row, column=5, value=e.month)
+                    amt_cell = ws.cell(row=row, column=6, value=e.amount)
+                    amt_cell.number_format = '#,##0.00'
+                    ws.cell(row=row, column=7, value=e.transaction_type)
+                    ws.cell(row=row, column=8, value=e.wbs)
+                    ws.cell(row=row, column=9,
+                            value="Not on template — included below for review")
+                    row += 1
+
+                # Subtotal row for this PO
+                total_amt = sum((e.amount or 0) for e in entries)
+                t1 = ws.cell(row=row, column=1, value=first.cost_center)
+                t2 = ws.cell(row=row, column=2, value=self._norm_po(first.po))
+                t3 = ws.cell(row=row, column=3, value=first.vendor_name)
+                t4 = ws.cell(row=row, column=5, value="TOTAL")
+                t5 = ws.cell(row=row, column=6, value=total_amt)
+                t5.number_format = '#,##0.00'
+                for cell in (t1, t2, t3, t4, t5):
+                    cell.fill = total_fill
+                    cell.font = bold_font
+                row += 1
+
+            # Auto-filter on column headers
+            ws.auto_filter.ref = (
+                f"A{col_hdr_row}:{get_column_letter(len(col_hdrs))}{row - 1}"
             )
+            row += 1  # blank separator
+
+        # ── Section 2: Other exceptions ──────────────────────────────────────
+        if other_entries:
+            # Section header
+            sec2 = ws.cell(row=row, column=1, value="Exceptions")
+            sec2.font = Font(bold=True, color="FFFFFF", size=12)
+            sec2.fill = other_fill
+            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+            row += 1
+
+            # Column headers
+            visible_headers = [
+                'Cost Center', 'Accounting Period', 'WBS', 'PO/ER Number',
+                'Exception Type', 'Source Row', 'Amount', 'Type',
+                'Description', 'GL Line Description'
+            ]
+            excluded_cols = {'Cost Center*', 'WBS Element', 'PO Number',
+                             'Accounting Period', 'GL BER Corp Amount', 'Type',
+                             'Description', 'GL Line Description'}
+            hidden_headers = [c for c in transactional_df.columns
+                              if c not in excluded_cols]
+
+            for ci, h in enumerate(visible_headers + hidden_headers, 1):
+                c = ws.cell(row=row, column=ci, value=h)
+                c.font = Font(bold=True)
+                c.fill = sub_fill
+            row += 1
+            other_hdr_row = row - 1
+
+            for entry in other_entries:
+                ws.cell(row=row, column=1, value=entry.cost_center)
+                ws.cell(row=row, column=2, value=entry.month)
+                ws.cell(row=row, column=3, value=entry.wbs)
+                ws.cell(row=row, column=4, value=self._extract_er_number(entry.po))
+                ws.cell(row=row, column=5, value=entry.exception_type.value)
+                ws.cell(row=row, column=6, value=entry.row_index)
+                ws.cell(row=row, column=7, value=entry.amount)
+                if entry.amount is not None:
+                    ws.cell(row=row, column=7).number_format = '#,##0.00'
+                ws.cell(row=row, column=8, value=entry.transaction_type)
+                ws.cell(row=row, column=9,
+                        value=entry.source_row_data.get('Description')
+                        if entry.source_row_data else None)
+                ws.cell(row=row, column=10,
+                        value=entry.source_row_data.get('GL Line Description')
+                        if entry.source_row_data else None)
+                if entry.source_row_data:
+                    for ci_h, col_name in enumerate(hidden_headers, start=11):
+                        ws.cell(row=row, column=ci_h,
+                                value=entry.source_row_data.get(col_name))
+                row += 1
+
+            # Auto-filter
+            ws.auto_filter.ref = (
+                f"A{other_hdr_row}:{get_column_letter(len(visible_headers))}{row - 1}"
+            )
+
+            # Group and hide supplementary columns
+            if hidden_headers:
+                si = len(visible_headers) + 1
+                ei = len(visible_headers) + len(hidden_headers)
+                ws.column_dimensions.group(
+                    get_column_letter(si), get_column_letter(ei), hidden=True
+                )
+
+        ws.freeze_panes = "A2"
+
+        # Auto-size first 9 columns
+        for ci in range(1, 10):
+            letter = get_column_letter(ci)
+            max_len = 12
+            for r in range(1, row):
+                v = ws.cell(row=r, column=ci).value
+                if v is not None:
+                    max_len = max(max_len, len(str(v)))
+            ws.column_dimensions[letter].width = min(max_len + 2, 55)
 
     def write_exception_data_sheet(self, exception_log):
         """Write raw exception data to hidden sheet for formula reference"""
@@ -956,7 +1253,6 @@ class TemplateWriter:
             e for e in exception_log.entries
             if e.exception_type != ExceptionType.RECLASS
         ]
-        from collections import Counter
         class _FilteredLog:
             def __init__(self, entries):
                 self.entries = entries
@@ -1023,7 +1319,6 @@ class TemplateWriter:
         ws['B1'].font = Font(size=11)
         
         # Define named range for the filter cell
-        from openpyxl.workbook.defined_name import DefinedName
         defined_name = DefinedName('MonthFilter', attr_text=f"'{ws.title}'!$B$1")
         self.wb.defined_names['MonthFilter'] = defined_name
         

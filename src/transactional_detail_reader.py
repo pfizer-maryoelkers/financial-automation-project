@@ -44,38 +44,252 @@ class TransactionalDetailReader:
 
     @staticmethod
     def _strip_col_headers(df: 'pd.DataFrame') -> 'pd.DataFrame':
-        """Strip leading/trailing whitespace from all column names."""
-        df.columns = df.columns.str.strip()
+        """Strip leading/trailing whitespace from all column names and
+        collapse any runs of internal whitespace to a single space.
+        This handles column names like 'WBS/Internal Order ' (trailing space)
+        or 'Cost  Center' (double space) that appear in some source files."""
+        df.columns = df.columns.str.strip().str.replace(r'\s+', ' ', regex=True)
         return df
+
+    def _parse_month_num(self, raw_month) -> 'int | None':
+        """Parse a raw month value from any supported format to a 1-12 integer.
+
+        Handles:
+          • plain integers 1-12
+          • YYYYMM integers (e.g. 202601 → 1)
+          • "Period 01 2026" / "Period 01" strings
+          • pandas Timestamps (uses .month)
+
+        Returns None when the value cannot be parsed or is out of range.
+        """
+        import pandas as _pd
+        if isinstance(raw_month, _pd.Timestamp):
+            return raw_month.month
+        try:
+            raw_str = str(raw_month).strip()
+            period_match = re.search(r'period\s+(\d+)', raw_str, re.IGNORECASE)
+            if period_match:
+                month_num = int(period_match.group(1))
+            else:
+                raw_int = int(float(raw_str))
+                month_num = raw_int % 100 if raw_int > 12 else raw_int
+        except (TypeError, ValueError):
+            return None
+        return month_num if 1 <= month_num <= 12 else None
 
     def _detect_header_row(self, sheet_name: str) -> int:
         """Return the 0-based header row index for a sheet.
-        Tries rows 1, 2, and 3 (0, 1, 2) in order. Returns the first row that
-        contains all required columns. Defaults to 0 if none match.
-        Treats 'Month' as an alias for 'Accounting Period'.
+
+        Scans the first 10 rows (indices 0-9).  For each candidate row the
+        sheet is read with that row as the header; the column names are stripped
+        and checked against the required-column alias list.  Returns the first
+        matching row index.
+
+        Skips any candidate row whose columns are all numeric (summary/totals
+        rows that appear above the real header in many Consolidated files).
+
+        Falls back to 0 when nothing matches — the caller surfaces the error.
         """
-        for header in (0, 1, 2):
-            preview = pd.read_excel(self.file_path, sheet_name=sheet_name, header=header, nrows=5)
+        for header in range(10):
+            try:
+                preview = pd.read_excel(
+                    self.file_path, sheet_name=sheet_name,
+                    header=header, nrows=5
+                )
+            except Exception:
+                break
             preview = self._strip_col_headers(preview)
+            # Skip rows whose column names are all numeric — those are totals rows
+            non_numeric_cols = [
+                c for c in preview.columns
+                if not str(c).strip().lstrip('-').replace('.', '', 1).isdigit()
+            ]
+            if not non_numeric_cols:
+                continue
             if self._sheet_has_required_cols(preview):
                 return header
-        return 0  # fallback — let the caller surface the missing-column error
+        return 0  # fallback
 
-    @staticmethod
-    def _normalise_period_col(df: 'pd.DataFrame') -> 'pd.DataFrame':
-        """If the DataFrame has a 'Month' column but no 'Accounting Period' column,
-        rename 'Month' → 'Accounting Period' so downstream logic always uses one name.
+    def _normalise_cols(self, df: 'pd.DataFrame') -> 'pd.DataFrame':
+        """Rename format-specific column names to the standard names used by all
+        downstream logic.  Handles two Consolidated Actuals variants and C-TIES:
+
+        • C-TIES                 — standard format, minimal renames needed
+        • Consolidated AP07 2026 — WBS HIERARCHY, Document Number / PO#,
+                                   Fiscal Year/Period, Vendor Desc, Company code
+        • Consolidated Shalisha  — WBS/Internal Order, Document num/PO#,
+                                   Period, Vendor Description, Company Code
+        Both Consolidated variants carry a 'P3 ID' column which is the reliable
+        cost-center identifier — mapped to the cost_center target so downstream
+        P3 ID matching works correctly (Cost Center is '#' / not assigned in both).
         """
-        if 'Accounting Period' not in df.columns and 'Month' in df.columns:
-            df = df.rename(columns={'Month': 'Accounting Period'})
+        rename: dict[str, str] = {}
+
+        # ── Period / Month ───────────────────────────────────────────────────
+        if 'Accounting Period' not in df.columns:
+            for alias in ('Month', 'Fiscal Year/Period', 'Period'):
+                if alias in df.columns:
+                    rename[alias] = 'Accounting Period'
+                    break
+
+        # ── PO Number ────────────────────────────────────────────────────────
+        po_target  = self.colmap.get('po', 'PO Number')
+        cls_target = self.colmap.get('classifier', 'AP Voucher Number')
+        if po_target not in df.columns:
+            for alias in (
+                'Document Number / PO#',   # AP07 2026
+                'Document num/PO#',        # Shalisha AP12
+            ):
+                if alias in df.columns:
+                    # When the Consolidated file also has a Vendor Invoice column,
+                    # that column is the real classifier (2=Accrual/Reversal,
+                    # 5=Invoice, 9=Reclass).  Do NOT copy the PO column into
+                    # cls_target — leave cls_target to be filled by Vendor Invoice
+                    # in the classifier block below so _categorize_row works correctly.
+                    if (
+                        cls_target != po_target
+                        and cls_target not in df.columns
+                        and 'Vendor Invoice' not in df.columns
+                    ):
+                        df = df.copy()
+                        df[cls_target] = df[alias]
+                    rename[alias] = po_target
+                    break
+
+        # ── WBS ──────────────────────────────────────────────────────────────
+        wbs_target = self.colmap.get('wbs', 'WBS Element')
+        if wbs_target not in df.columns:
+            for alias in (
+                'WBS HIERARCHY',        # AP07 2026
+                'WBS Hierarchy',        # Shalisha AP03
+                'WBS Element',
+                'WBS/Internal Order',   # Shalisha AP12 (trailing space normalised by _strip_col_headers)
+            ):
+                if alias in df.columns:
+                    rename[alias] = wbs_target
+                    break
+
+        # ── Amount (BER) ─────────────────────────────────────────────────────
+        amt_target = self.colmap.get('amount', 'GL BER Corp Amount')
+        if amt_target not in df.columns:
+            for alias in ('Amount - BER', 'Amount - MAR', 'Amount'):
+                if alias in df.columns:
+                    rename[alias] = amt_target
+                    break
+
+        # ── Cost Center / P3 ID ──────────────────────────────────────────────
+        # Both Consolidated formats have a 'P3 ID' column that holds the real
+        # project identifier.  'Cost Center' is '#' / not assigned in both files.
+        # Map 'P3 ID' → cc_target so downstream P3-ID matching works correctly.
+        cc_target = self.colmap.get('cost_center', 'Cost Center*')
+        if cc_target not in df.columns:
+            for alias in ('P3 ID', 'Cost Center'):
+                if alias in df.columns:
+                    rename[alias] = cc_target
+                    break
+        elif 'P3 ID' in df.columns and cc_target in df.columns:
+            # cc_target exists but may be '#' — overwrite with the real P3 ID value
+            # where cc_target is blank/placeholder and P3 ID is populated.
+            _placeholder = {'#', '', 'nan', 'none', 'not assigned', 'wapc/not assigned'}
+            _cc_blank = df[cc_target].astype(str).str.strip().str.lower().isin(_placeholder)
+            _p3_valid = df['P3 ID'].notna() & ~df['P3 ID'].astype(str).str.strip().str.lower().isin(_placeholder)
+            df = df.copy()
+            df.loc[_cc_blank & _p3_valid, cc_target] = df.loc[_cc_blank & _p3_valid, 'P3 ID']
+
+        # ── Legal Entity ─────────────────────────────────────────────────────
+        le_target = self.colmap.get('legal_entity', 'Legal Entity')
+        if le_target not in df.columns:
+            for alias in (
+                'Company code',   # AP07 2026
+                'Company Code',   # Shalisha AP12
+            ):
+                if alias in df.columns:
+                    rename[alias] = le_target
+                    break
+
+        # ── Vendor Name ──────────────────────────────────────────────────────
+        vendor_target = self.colmap.get('vendor_name', 'Vendor Name')
+        if vendor_target not in df.columns:
+            for alias in (
+                'Vendor Desc',          # AP07 2026
+                'Vendor Description',   # Shalisha AP12
+            ):
+                if alias in df.columns:
+                    rename[alias] = vendor_target
+                    break
+
+        # ── Classifier (AP Voucher Number) ───────────────────────────────────
+        # Vendor Invoice is the real classifier for the Consolidated format
+        # (2=Accrual/Reversal, 5=Invoice/Actual, 9=Reclass).  When it exists,
+        # always prefer it over anything already in cls_target (which may have
+        # been filled from the PO column above).
+        if 'Vendor Invoice' in df.columns:
+            if 'Vendor Invoice' not in rename.values():  # not already being renamed
+                df = df.copy()
+                df[cls_target] = df['Vendor Invoice']
+        elif cls_target not in df.columns:
+            for alias in ('AP Voucher Number',):
+                if alias in df.columns:
+                    rename[alias] = cls_target
+                    break
+
+        # Apply all renames at once
+        if rename:
+            df = df.rename(columns=rename)
+
+        # ── Synthetic Type column — Consolidated has no Type column;
+        #    every row in that file is an actual transaction.
+        type_col = self.colmap.get('type', 'Type')
+        if type_col not in df.columns:
+            df[type_col] = 'Actual'
+
         return df
 
     def _sheet_has_required_cols(self, preview: 'pd.DataFrame') -> bool:
-        """Check required cols, treating 'Month' as an alias for 'Accounting Period'."""
+        """Check required cols, accepting all known column-name aliases across
+        the three supported source formats (C-TIES, Chargeout, Consolidated)."""
         cols = set(preview.columns)
-        # swap alias so the check passes even when the file uses 'Month'
-        if 'Accounting Period' not in cols and 'Month' in cols:
-            cols = (cols - {'Month'}) | {'Accounting Period'}
+
+        def _swap(aliases: list[str], target: str) -> None:
+            """Replace the first matching alias in cols with target."""
+            if target not in cols:
+                for alias in aliases:
+                    if alias in cols:
+                        cols.discard(alias)
+                        cols.add(target)
+                        break
+
+        # Period
+        _swap(['Month', 'Fiscal Year/Period', 'Period'], 'Accounting Period')
+        # PO Number — both Consolidated variants
+        _swap(['GL PO Number', 'Document Number / PO#', 'Document num/PO#'],
+              self.colmap.get('po', 'PO Number'))
+        # WBS — all variants (_strip_col_headers normalises trailing/extra spaces)
+        _swap(['WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order'],
+              self.colmap.get('wbs', 'WBS Element'))
+        _swap(['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount'))
+        _swap(['GL Transaction Amount', 'Amount - BER', 'Amount'], 'GL Transaction Amount')
+        _swap(['Vendor Invoice', 'AP Voucher Number', 'Document Number / PO#', 'Document num/PO#'],
+              self.colmap.get('classifier', 'AP Voucher Number'))
+
+        # Treat any required col that matches a normalised alias as satisfied.
+        # Also ensure Type is considered present — Consolidated synthesises it.
+        type_col = self.colmap.get('type', 'Type')
+        cols.add(type_col)
+        # Mirror any required-col aliases so the subset check passes
+        for req in list(self.required_cols):
+            if req not in cols:
+                for alias_list, target in [
+                    (['Month', 'Fiscal Year/Period', 'Period'], 'Accounting Period'),
+                    (['GL PO Number', 'Document Number / PO#', 'Document num/PO#'],
+                     self.colmap.get('po', 'PO Number')),
+                    (['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount')),
+                    (['GL Transaction Amount', 'Amount'], 'GL Transaction Amount'),
+                ]:
+                    if req in alias_list and target in cols:
+                        cols.add(req)
+                        break
+
         return self.required_cols.issubset(cols)
 
     def load_transactional_detail_file(self):
@@ -103,7 +317,7 @@ class TransactionalDetailReader:
             print(f"Loading valid sheets: {valid_sheets}")
 
             dfs = [
-                self._normalise_period_col(
+                self._normalise_cols(
                     self._strip_col_headers(
                         pd.read_excel(self.file_path, sheet_name=sheet, header=header_map[sheet])
                     )
@@ -112,43 +326,284 @@ class TransactionalDetailReader:
             ]
 
             self.data = pd.concat(dfs, ignore_index=True)
-            self.data["Type"] = self.data.apply(self._categorize_row, axis=1)
-            # Normalize PO column: convert to string and strip trailing ".0" from
-            # float-formatted integers (e.g. 9500905777.0 → "9500905777").
-            def _norm_po(v):
-                s = str(v).strip()
-                if s.replace('.', '', 1).replace('-', '', 1).isdigit():
-                    try:
-                        return str(int(float(s)))
-                    except (ValueError, OverflowError):
-                        pass
-                return s
-            self.data[self.colmap['po']] = self.data[self.colmap['po']].apply(_norm_po)
 
-            er_num_pattern = re.compile(r'\bER\d+\b', re.IGNORECASE)
-            er_mask = self.data["Type"] == "ER"
-            if er_mask.any():
-                def _clean_er_po(row):
-                    po_val = str(row[self.colmap['po']]).strip()
-                    match = er_num_pattern.search(po_val)
-                    if match:
-                        return match.group(0).upper()
-                    for col in ("GL Line Description", "GL Transaction Description", "Description", "CO Doc Line Item Txt"):
-                        if col in row.index:
-                            txt = str(row[col]).strip()
-                            if txt and txt.lower() not in ('nan', 'none', ''):
-                                match = er_num_pattern.search(txt)
-                                if match:
-                                    return match.group(0).upper()
-                    return po_val
-
-                self.data.loc[er_mask, self.colmap['po']] = (
-                    self.data[er_mask].apply(_clean_er_po, axis=1)
+            type_col = self.colmap.get('type', 'Type')
+            # Detect whether the source already supplied a real Type column.
+            # _normalise_cols fills a synthetic all-'Actual' column when the
+            # source has no Type column at all (both Consolidated variants).
+            # That synthetic fill does NOT count as "supplied" — we re-classify.
+            type_was_present = type_col in self.data.columns and not (
+                (self.data[type_col] == 'Actual').all()
+                and 'AP Voucher Number' in self.data.columns
+            )
+            if not type_was_present:
+                po_col  = self.colmap['po']
+                cls_col = self.colmap.get('classifier', 'AP Voucher Number')
+                # Detect Consolidated format: the classifier column carries 2/5/9
+                # prefixes (Vendor Invoice) while PO numbers start with 95 / ER###.
+                # When >50% of rows have matching PO==classifier the PO was copied
+                # into the classifier slot — use the PO-based categoriser instead.
+                _is_consolidated = (
+                    cls_col in self.data.columns
+                    and po_col in self.data.columns
+                    and (
+                        self.data[cls_col].astype(str).str.strip()
+                        == self.data[po_col].astype(str).str.strip()
+                    ).mean() > 0.5
                 )
+                if _is_consolidated:
+                    self.data[type_col] = self._categorize_vectorised_consolidated()
+                else:
+                    self.data[type_col] = self._categorize_vectorised()
+
+            # ── Normalise PO column (vectorised) ────────────────────────────────
+            # Convert float-formatted integers: 9500905777.0 → "9500905777".
+            # Strategy: try to cast the whole column to Int64 first (fast), then
+            # fix up anything that failed individually.
+            po_col_name = self.colmap['po']
+            _po_s = self.data[po_col_name].astype(str).str.strip()
+            # Rows that look like plain integers (digits only, optionally .0)
+            _int_mask = _po_s.str.fullmatch(r'-?\d+(?:\.\d+)?')
+            if _int_mask.any():
+                _po_s = _po_s.copy()
+                try:
+                    _po_s[_int_mask] = (
+                        pd.to_numeric(_po_s[_int_mask], errors='coerce')
+                        .dropna()
+                        .astype('int64')
+                        .astype(str)
+                    )
+                except (ValueError, OverflowError):
+                    pass
+            self.data[po_col_name] = _po_s
+
+            # ── Resolve non-95 PO rows via CO Doc Line Item Txt (vectorised) ────
+            # Rows where Document num/PO# does NOT start with '95' are not real
+            # vendor POs.  The actual PO may be embedded in CO Doc Line Item Txt:
+            #   "AC01-- 9500852590 -AMPS ACCELERATION AP01 ACCRUALS"
+            # Vectorised: use Series.str.extract (regex engine stays in C).
+            type_col_name = self.colmap.get('type', 'Type')
+            _co_doc_col   = 'CO Doc Line Item Txt'
+            if po_col_name in self.data.columns:
+                po_series  = self.data[po_col_name].astype(str).str.strip()
+                is_real_po = po_series.str.startswith('95')
+                is_er_row  = (
+                    self.data[type_col_name] == 'ER'
+                    if type_col_name in self.data.columns
+                    else pd.Series(False, index=self.data.index)
+                )
+                non_po_mask = ~is_real_po & ~is_er_row
+
+                if non_po_mask.any() and _co_doc_col in self.data.columns:
+                    # str.extract returns the first capture group (vectorised C loop)
+                    extracted = (
+                        self.data.loc[non_po_mask, _co_doc_col]
+                        .astype(str)
+                        .str.extract(r'\b(95\d{8,})\b', expand=False)
+                    )
+                    resolved   = extracted.notna()
+                    # Build full-length unresolved mask without dtype mismatch
+                    unresolved = non_po_mask & ~resolved.reindex(self.data.index, fill_value=False)
+
+                    self.data.loc[non_po_mask & resolved.reindex(self.data.index, fill_value=False), po_col_name] = (
+                        extracted[resolved].values
+                    )
+                    self.data.loc[unresolved, po_col_name] = None
+
+                    n_resolved   = int(resolved.sum())
+                    n_unresolved = int(unresolved.sum())
+                    if n_resolved:
+                        print(f"  - Resolved {n_resolved} non-PO rows via CO Doc Line Item Txt.")
+                    if n_unresolved:
+                        print(f"  - {n_unresolved} rows have no PO in either column "
+                              f"— will be logged to exceptions tab (MISSING_PO).")
+
+            # ── ER PO cleanup (vectorised) ───────────────────────────────────────
+            er_num_rx = r'(?i)\b(ER\d+)\b'
+            er_mask   = self.data[type_col] == 'ER'
+
+            if er_mask.any():
+                po_col_name    = self.colmap['po']
+                er_number_col  = 'ER Number' if 'ER Number' in self.data.columns else None
+                er_sub         = self.data[er_mask].copy()
+
+                # Start with the PO column itself as the base
+                best = er_sub[po_col_name].astype(str).str.strip()
+
+                # Build candidate columns in priority order
+                candidate_cols: list[str] = []
+                if er_number_col:
+                    candidate_cols.append(er_number_col)
+                candidate_cols += [c for c in (
+                    'GL Line Description', 'GL Transaction Description',
+                    'Description', 'CO Doc Line Item Txt', 'ER Description',
+                ) if c in er_sub.columns]
+
+                for col in candidate_cols:
+                    extracted = (
+                        er_sub[col].astype(str)
+                        .str.extract(er_num_rx, expand=False)
+                        .str.upper()
+                    )
+                    # Fill positions where we haven't found an ER number yet
+                    needs_fill = ~best.str.match(r'(?i)^ER\d+$')
+                    best = best.where(~needs_fill | extracted.isna(), extracted)
+
+                self.data.loc[er_mask, po_col_name] = best.values
             print("Successfully loaded transactional data from valid sheets.")
 
         except Exception as e:
             print("Error loading transactional detail file:", e)
+
+    def _categorize_vectorised(self) -> 'pd.Series':
+        """Vectorised replacement for df.apply(_categorize_row, axis=1).
+
+        Priority order (same as _categorize_row):
+        1. CO Doc Line Item Txt keywords → ER / Reversal / Accrual / Reclass / Actual
+        2. Classifier (AP Voucher Number) prefix: 5→Actual, 2→Accrual|Reversal, 9→Reclass|ER
+        3. Amount sign fallback for unresolved rows.
+        """
+        df   = self.data
+        n    = len(df)
+        result = pd.Series(['Undefined'] * n, index=df.index, dtype=object)
+
+        # ── Step 1: CO Doc Line Item Txt ────────────────────────────────────
+        co_col = 'CO Doc Line Item Txt'
+        if co_col in df.columns:
+            desc = df[co_col].astype(str).str.strip().str.lower()
+            valid = desc.notna() & ~desc.isin({'nan', 'none', ''})
+            result = result.where(~(valid & desc.str.contains(r'\bER\d+\b', regex=True, na=False)), 'ER')
+            result = result.where(result != 'Undefined', 'Undefined')  # no-op, keeps logic readable
+            unset = result == 'Undefined'
+            result[unset & valid & desc.str.contains('reversal', na=False)] = 'Reversal'
+            unset = result == 'Undefined'
+            result[unset & valid & desc.str.contains('accrual', na=False)] = 'Accrual'
+            unset = result == 'Undefined'
+            result[unset & valid & desc.str.contains('reclass', na=False)] = 'Reclass'
+            unset = result == 'Undefined'
+            result[unset & valid & (desc.str.contains('invoice', na=False) | desc.str.contains('vendor', na=False))] = 'Actual'
+
+        # ── Step 2: Classifier prefix ────────────────────────────────────────
+        cls_col = self.colmap.get('classifier', 'AP Voucher Number')
+        if cls_col in df.columns:
+            cls = df[cls_col].astype(str).str.strip()
+            unset = result == 'Undefined'
+
+            # "5xx" → Actual
+            result[unset & cls.str.startswith('5')] = 'Actual'
+            unset = result == 'Undefined'
+
+            # "9xx" → Reclass (unless a desc col contains ER###)
+            nine_mask = unset & cls.str.startswith('9')
+            result[nine_mask] = 'Reclass'
+            for desc_col in ('GL Line Description', 'GL Transaction Description', 'Description', co_col):
+                if desc_col in df.columns:
+                    er_in_desc = df[desc_col].astype(str).str.contains(r'\bER\d+\b', regex=True, na=False)
+                    result[(result == 'Reclass') & nine_mask & er_in_desc] = 'ER'
+            unset = result == 'Undefined'
+
+            # "2xx" → Accrual (positive) or Reversal (negative)
+            two_mask = unset & cls.str.startswith('2')
+            amt_col  = self.colmap.get('amount', 'GL BER Corp Amount')
+            gl_col   = 'GL Transaction Amount'
+            sign_col = gl_col if gl_col in df.columns else (amt_col if amt_col in df.columns else None)
+            if sign_col:
+                amt = pd.to_numeric(df[sign_col], errors='coerce').fillna(0)
+            else:
+                amt = pd.Series(0.0, index=df.index)
+            result[two_mask & (amt >= 0)] = 'Accrual'
+            result[two_mask & (amt < 0)]  = 'Reversal'
+
+        # ── Step 3: Amount-sign fallback ─────────────────────────────────────
+        unset = result == 'Undefined'
+        if unset.any():
+            amt_col = self.colmap.get('amount', 'GL BER Corp Amount')
+            if amt_col in df.columns:
+                amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
+                result[unset & (amt < 0)] = 'Reversal'
+                result[unset & (amt > 0)] = 'Accrual'
+            result[result == 'Undefined'] = 'Actual'
+
+        return result
+
+    def _categorize_vectorised_consolidated(self) -> 'pd.Series':
+        """Vectorised replacement for df.apply(_categorize_consolidated_row, axis=1).
+
+        Priority order (same as _categorize_consolidated_row):
+        1. CO Doc Line Item Txt keywords → ER / Reversal / Accrual / Reclass / Actual
+        2. PO column: ER### pattern → ER
+        3. Vendor Invoice (classifier) prefix: 5→Actual, 2→Accrual|Reversal, 9→Reclass|ER
+        4. Amount sign fallback.
+        5. Default → Actual
+        """
+        df     = self.data
+        result = pd.Series(['Undefined'] * len(df), index=df.index, dtype=object)
+
+        # ── Step 1: CO Doc Line Item Txt ────────────────────────────────────
+        co_col = 'CO Doc Line Item Txt'
+        if co_col in df.columns:
+            desc  = df[co_col].astype(str).str.strip().str.lower()
+            valid = ~desc.isin({'nan', 'none', ''})
+            result[valid & desc.str.contains(r'\bER\d+\b', regex=True, na=False)] = 'ER'
+            unset = result == 'Undefined'
+            result[unset & valid & desc.str.contains('reversal', na=False)] = 'Reversal'
+            unset = result == 'Undefined'
+            result[unset & valid & desc.str.contains('accrual', na=False)] = 'Accrual'
+            unset = result == 'Undefined'
+            result[unset & valid & desc.str.contains('reclass', na=False)] = 'Reclass'
+            unset = result == 'Undefined'
+            result[unset & valid & (
+                desc.str.contains('invoice', na=False) |
+                desc.str.contains('vendor', na=False) |
+                desc.str.contains('capitalised', na=False) |
+                desc.str.contains('capitalized', na=False)
+            )] = 'Actual'
+
+        # ── Step 2: PO column — ER### pattern ────────────────────────────────
+        po_col = self.colmap['po']
+        if po_col in df.columns:
+            po_s  = df[po_col].astype(str).str.strip()
+            unset = result == 'Undefined'
+            result[unset & po_s.str.match(r'(?i)^ER\d+$')] = 'ER'
+
+        # ── Step 3: Vendor Invoice / classifier prefix ────────────────────────
+        cls_col = self.colmap.get('classifier', 'AP Voucher Number')
+        if cls_col in df.columns:
+            cls   = df[cls_col].astype(str).str.strip()
+            unset = result == 'Undefined'
+            result[unset & cls.str.startswith('5')] = 'Actual'
+
+            unset     = result == 'Undefined'
+            nine_mask = unset & cls.str.startswith('9')
+            result[nine_mask] = 'Reclass'
+            for desc_col in ('GL Line Description', 'GL Transaction Description', 'Description'):
+                if desc_col in df.columns:
+                    er_in_desc = df[desc_col].astype(str).str.contains(r'\bER\d+\b', regex=True, na=False)
+                    result[(result == 'Reclass') & nine_mask & er_in_desc] = 'ER'
+
+            unset    = result == 'Undefined'
+            two_mask = unset & cls.str.startswith('2')
+            amt_col  = self.colmap.get('amount', 'GL BER Corp Amount')
+            if amt_col in df.columns:
+                amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
+            else:
+                amt = pd.Series(0.0, index=df.index)
+            result[two_mask & (amt >= 0)] = 'Accrual'
+            result[two_mask & (amt < 0)]  = 'Reversal'
+
+        # ── Step 4: Amount-sign fallback ─────────────────────────────────────
+        unset = result == 'Undefined'
+        if unset.any():
+            amt_col = self.colmap.get('amount', 'GL BER Corp Amount')
+            if amt_col in df.columns:
+                amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
+                result[unset & (amt < 0)] = 'Reversal'
+                result[unset & (amt > 0)] = 'Accrual'
+
+        # ── Step 5: default ───────────────────────────────────────────────────
+        result[result == 'Undefined'] = 'Actual'
+        return result
+
 
     # Internal helper function that categorizes a row in CTIES file as Actual, Accrual, Reversal, etc.
     # Use by calling df["Type"] = df.apply(self._categorize_row, axis=1)
@@ -157,30 +612,28 @@ class TransactionalDetailReader:
         Returns value for row 'Type' as a string.
 
         Priority order:
-        1. 9xx vouchers:
-             - Any description containing ER<digits> = ER
-             - otherwise Reclass
-        2. "CO Doc Line Item Txt" description column — checked for keywords
-           (accrual, reversal, reclass, invoice) as the most reliable source.
-        3. AP Voucher Number prefix as fallback:
+        1. CO Doc Line Item Txt — most reliable; checked first across all rows.
+           Keywords: reversal, accrual, reclass, invoice / vendor.
+           Also scanned for ER<digits> pattern → ER.
+        2. Vendor Invoice / AP Voucher Number prefix:
              "5xx" = Actual (vendor invoice)
              "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
-             "9xx" = Reclass
+             "9xx" = Reclass (or ER if a description column contains ER<digits>)
+        3. Amount sign fallback for "2xx" rows when description is ambiguous:
+             positive → Accrual, negative → Reversal
         '''
         classifier = str(row[self.colmap["classifier"]])
 
-        if classifier.startswith("9"):
-            for desc_col in ("GL Line Description", "GL Transaction Description", "Description", "CO Doc Line Item Txt"):
-                desc = str(row.get(desc_col, "")).strip()
-                if desc and desc.lower() not in ('nan', 'none', '') and re.search(r'\bER\d+\b', desc, re.IGNORECASE):
-                    return "ER"
-            return "Reclass"
-
-        # --- Step 1: check CO Doc Line Item Txt for explicit description ---
+        # --- Step 1: CO Doc Line Item Txt — authoritative description check ---
+        # Checked before the classifier prefix because the description is the
+        # most reliable signal the user reviews manually.
         co_doc_col = "CO Doc Line Item Txt"
         if co_doc_col in row.index:
             desc = str(row[co_doc_col]).strip().lower()
             if desc and desc not in ('nan', 'none', ''):
+                # ER number anywhere in the description takes priority
+                if re.search(r'\bER\d+\b', desc, re.IGNORECASE):
+                    return "ER"
                 if 'reversal' in desc:
                     return "Reversal"
                 if 'accrual' in desc:
@@ -190,30 +643,128 @@ class TransactionalDetailReader:
                 if 'invoice' in desc or 'vendor' in desc:
                     return "Actual"
 
-        # --- Step 2: fall back to AP Voucher Number prefix ---
-        # Use GL Transaction Amount for sign — always populated.
-        # Fall back to the configured amount column if the column is absent.
-        gl_trans_col = "GL Transaction Amount"
-        if gl_trans_col in row.index:
-            try:
-                sign_amount = float(row[gl_trans_col])
-            except (TypeError, ValueError):
-                sign_amount = 0.0
-        else:
-            try:
-                sign_amount = float(row[self.colmap["amount"]])
-            except (TypeError, ValueError):
-                sign_amount = 0.0
+        # --- Step 2: Vendor Invoice / AP Voucher Number prefix ---
+        # "2" → Accrual/Reversal, "5" → vendor invoice (Actual), "9" → Reclass.
+        # Not always conclusive on its own — description check above takes precedence.
+
+        # For "9xx": scan all description columns for an ER number before
+        # defaulting to Reclass.
+        if classifier.startswith("9"):
+            for desc_col in ("GL Line Description", "GL Transaction Description",
+                             "Description", "CO Doc Line Item Txt"):
+                txt = str(row.get(desc_col, "")).strip()
+                if txt and txt.lower() not in ('nan', 'none', ''):
+                    if re.search(r'\bER\d+\b', txt, re.IGNORECASE):
+                        return "ER"
+            return "Reclass"
 
         if classifier.startswith("5"):
             return "Actual"
-        elif classifier.startswith("2"):
-            if sign_amount >= 0:
-                return "Accrual"
+
+        # "2xx": use GL Transaction Amount sign to distinguish Accrual vs Reversal.
+        if classifier.startswith("2"):
+            gl_trans_col = "GL Transaction Amount"
+            if gl_trans_col in row.index:
+                try:
+                    sign_amount = float(row[gl_trans_col])
+                except (TypeError, ValueError):
+                    sign_amount = 0.0
             else:
-                return "Reversal"
-        else:
-            return "Undefined"
+                try:
+                    sign_amount = float(row[self.colmap["amount"]])
+                except (TypeError, ValueError):
+                    sign_amount = 0.0
+            return "Accrual" if sign_amount >= 0 else "Reversal"
+
+        return "Undefined"
+
+    def _categorize_consolidated_row(self, row):
+        """Categorise a row from a Consolidated Actuals file.
+
+        The Consolidated file has no AP Voucher Number in the C-TIES sense —
+        the Document number column carries the PO number, and the Vendor Invoice
+        column carries a classifier prefix ("2" = accrual/reversal, "5" = vendor
+        invoice, "9" = reclass).  Classification rules in priority order:
+
+        1. CO Doc Line Item Txt — most reliable; reviewed manually first.
+           Keywords: reversal, accrual, reclass, invoice/vendor, capitalised.
+           Also scanned for ER<digits> pattern → ER.
+        2. Document number (PO column):
+             starts with '9' → vendor invoice (Actual)
+             matches ER\\d+  → ER
+        3. Vendor Invoice / classifier prefix:
+             "5xx" → Actual
+             "2xx" → Accrual (positive amount) or Reversal (negative amount)
+             "9xx" → Reclass (after checking descriptions for ER<digits>)
+        4. Amount sign fallback for rows not resolved above:
+             positive → Accrual, negative → Reversal
+        5. Default → Actual
+        """
+        po_val = str(row[self.colmap['po']]).strip()
+
+        # --- Rule 1: CO Doc Line Item Txt — authoritative description ---
+        co_doc_col = 'CO Doc Line Item Txt'
+        if co_doc_col in row.index:
+            desc = str(row[co_doc_col]).strip().lower()
+            if desc and desc not in ('nan', 'none', ''):
+                # ER number in the description takes priority over everything
+                if re.search(r'\bER\d+\b', desc, re.IGNORECASE):
+                    return 'ER'
+                if 'reversal' in desc:
+                    return 'Reversal'
+                if 'accrual' in desc:
+                    return 'Accrual'
+                if 'reclass' in desc:
+                    return 'Reclass'
+                if 'invoice' in desc or 'vendor' in desc:
+                    return 'Actual'
+                if 'capitalised' in desc or 'capitalized' in desc:
+                    return 'Actual'
+
+        # --- Rule 2: Document number (PO column) ---
+        # Real project POs start with '95'.  An ER### identifier means ER.
+        # Note: do NOT return 'Actual' just because the PO starts with '9' —
+        # the Vendor Invoice column (classifier) carries the authoritative prefix.
+        if re.match(r'^ER\d+$', po_val, re.IGNORECASE):
+            return 'ER'
+
+        # --- Rule 3: Vendor Invoice / classifier prefix ---
+        # "5" = vendor invoice, "2" = accrual/reversal, "9" = reclass.
+        # Not always conclusive — description check above takes precedence.
+        classifier = str(row.get(self.colmap.get('classifier', 'AP Voucher Number'), '')).strip()
+
+        if classifier.startswith('5'):
+            return 'Actual'
+
+        if classifier.startswith('9'):
+            # Scan all description columns for an ER number before defaulting to Reclass
+            for desc_col in ('GL Line Description', 'GL Transaction Description', 'Description'):
+                if desc_col in row.index:
+                    txt = str(row[desc_col]).strip()
+                    if txt and txt.lower() not in ('nan', 'none', ''):
+                        if re.search(r'\bER\d+\b', txt, re.IGNORECASE):
+                            return 'ER'
+            return 'Reclass'
+
+        if classifier.startswith('2'):
+            try:
+                amt = float(row[self.colmap['amount']])
+            except (TypeError, ValueError):
+                amt = 0.0
+            return 'Reversal' if amt < 0 else 'Accrual'
+
+        # --- Rule 4: amount sign fallback ---
+        try:
+            amt = float(row[self.colmap['amount']])
+        except (TypeError, ValueError):
+            amt = 0.0
+        if amt < 0:
+            return 'Reversal'
+        if amt > 0:
+            return 'Accrual'
+
+        # --- Rule 5: default ---
+        return 'Actual'
 
     def get_transactional_data(self) -> dict:
         '''
@@ -316,17 +867,9 @@ class TransactionalDetailReader:
             cost_center = str(row[self.colmap["cost_center"]]).strip()
             wbs = str(row[self.colmap["wbs"]]).strip()
 
-            # Normalise month to 1-12.
-            # Supports plain integers (1-12) and YYYYMM format (e.g. 202601 → 1).
-            try:
-                raw_month_int = int(raw_month)
-                if raw_month_int > 12:
-                    # YYYYMM format — extract last two digits
-                    month_num = raw_month_int % 100
-                else:
-                    month_num = raw_month_int
-            except (TypeError, ValueError):
-                continue  # unparseable month — skip row
+            month_num = self._parse_month_num(raw_month)
+            if month_num is None:
+                continue
 
             # Actuals/ER/Reclass always shift back 1 month (Jan posted → Dec, etc.).
             if month_num == 1:
@@ -454,10 +997,8 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            try:
-                raw_month_int = int(raw_month)
-                month_num = raw_month_int % 100 if raw_month_int > 12 else raw_month_int
-            except (TypeError, ValueError):
+            month_num = self._parse_month_num(raw_month)
+            if month_num is None:
                 continue
 
             # Reclass amounts are posted in the current period — use actual_month
@@ -510,10 +1051,8 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            try:
-                raw_month_int = int(raw_month)
-                month_num = raw_month_int % 100 if raw_month_int > 12 else raw_month_int
-            except (TypeError, ValueError):
+            month_num = self._parse_month_num(raw_month)
+            if month_num is None:
                 continue
 
             if month_num == 1:
@@ -612,12 +1151,21 @@ class TransactionalDetailReader:
             gl_account_col = None
 
         # Requisition title column is optional — gracefully absent when not in colmap or file.
-        # Also try "GL Description" as a fallback if the configured name isn't present.
+        # Try the configured name first, then fall back through common alternate names.
         req_title_col = self.colmap.get("req_title")
-        if req_title_col and req_title_col not in self.data.columns:
-            # Try the alternate common column name
-            fallback = "GL Description" if req_title_col != "GL Description" else "GL Transaction Description"
-            req_title_col = fallback if fallback in self.data.columns else None
+        if not req_title_col or req_title_col not in self.data.columns:
+            for _fallback in (
+                "GL Line Description",
+                "GL Transaction Description",
+                "GL Description",
+                "Description",
+                "PO Line Item Desc",
+            ):
+                if _fallback in self.data.columns:
+                    req_title_col = _fallback
+                    break
+            else:
+                req_title_col = None
 
         # Pre-compute the most frequent real req_title per PO (mode).
         # Uses case-insensitive filtering so "Not assigned" etc. are excluded.
@@ -636,101 +1184,107 @@ class TransactionalDetailReader:
                     .to_dict()
                 )
 
-        # Description columns to search for ER numbers (check all that exist in the file)
+        # ── Vectorised build — no iterrows ───────────────────────────────────
+        _PLACEHOLDER_LOWER = {'', 'none', 'nan', '#', 'not assigned'}
+
+        def _clean_series(s: pd.Series) -> pd.Series:
+            """Strip, cast to str, replace placeholders with None (as object)."""
+            cleaned = s.astype(str).str.strip()
+            cleaned[cleaned.str.lower().isin(_PLACEHOLDER_LOWER)] = None
+            cleaned[s.isna()] = None
+            return cleaned
+
+        po_s  = _clean_series(self.data[self.colmap["po"]])
+        wbs_s = _clean_series(self.data[self.colmap["wbs"]])
+        cc_s  = _clean_series(self.data[self.colmap["cost_center"]])
+
+        # Legal entity — strip trailing .0 from numeric values
+        if le_col:
+            le_raw = self.data[le_col]
+            le_num = pd.to_numeric(le_raw, errors='coerce')
+            le_s   = le_num.dropna().astype('int64').astype(str)
+            le_s   = le_s.reindex(self.data.index)
+            # Fill non-numeric positions with the original string value
+            le_fallback = le_raw.astype(str).str.strip()
+            le_s = le_s.fillna(le_fallback)
+            le_s[le_s.str.lower().isin(_PLACEHOLDER_LOWER) | le_raw.isna()] = None
+        else:
+            le_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
+
+        # Country
+        if country_col:
+            country_s = _clean_series(self.data[country_col])
+        else:
+            country_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
+
+        # Vendor — map pre-computed best value via PO key
+        if vendor_by_po:
+            vendor_s = po_s.map(vendor_by_po)
+        else:
+            vendor_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
+
+        # G/L account — strip trailing .0
+        if gl_account_col:
+            gl_raw = self.data[gl_account_col]
+            gl_num = pd.to_numeric(gl_raw, errors='coerce')
+            gl_s   = gl_num.dropna().astype('int64').astype(str)
+            gl_s   = gl_s.reindex(self.data.index)
+            gl_fallback = gl_raw.astype(str).str.strip()
+            gl_s = gl_s.fillna(gl_fallback)
+            gl_s[gl_s.str.lower().isin(_PLACEHOLDER_LOWER) | gl_raw.isna()] = None
+        else:
+            gl_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
+
+        # Requisition title — map pre-computed mode via PO key
+        if req_title_by_po:
+            req_s = po_s.map(req_title_by_po)
+        else:
+            req_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
+
+        # Description columns
         desc_col_names = {
-            'gl_line_desc': 'GL Line Description',
+            'gl_line_desc':  'GL Line Description',
             'gl_trans_desc': 'GL Transaction Description',
-            'description': 'Description',
+            'description':   'Description',
         }
-        present_desc_cols = {key: col for key, col in desc_col_names.items() if col in self.data.columns}
-        
-        # Placeholder values to treat as missing (case-insensitive via .lower())
-        MISSING_VALUES = {'', 'none', 'nan', '#', 'not assigned'}
-        result = {}
-        for idx, row in self.data.iterrows():
-            po = row[self.colmap["po"]]
-            wbs = row[self.colmap["wbs"]]
-            cost_center = row[self.colmap["cost_center"]]
-            
-            # Normalize PO
-            po = str(po).strip() if pd.notna(po) else None
-            if po and po.lower() in MISSING_VALUES:
-                po = None
-            
-            # Normalize WBS
-            wbs = str(wbs).strip() if pd.notna(wbs) else None
-            if wbs and wbs.lower() in MISSING_VALUES:
-                wbs = None
-            
-            # Normalize cost center
-            cost_center = str(cost_center).strip() if pd.notna(cost_center) else None
-            if cost_center and cost_center.lower() in MISSING_VALUES:
-                cost_center = None
+        desc_series: dict[str, pd.Series] = {}
+        for key, col in desc_col_names.items():
+            if col in self.data.columns:
+                s = self.data[col].astype(str).str.strip()
+                s[s.str.lower().isin({'', 'nan', 'none'})] = None
+                s[self.data[col].isna()] = None
+                desc_series[key] = s
+            else:
+                desc_series[key] = pd.Series([None] * len(self.data),
+                                             index=self.data.index, dtype=object)
 
-            # Normalize legal entity (Company code / Legal Entity)
-            legal_entity = None
-            if le_col:
-                le_val = row.get(le_col)
-                if pd.notna(le_val):
-                    try:
-                        # Strip trailing .0 from numeric values (e.g. 1400.0 → "1400")
-                        legal_entity = str(int(float(le_val)))
-                    except (ValueError, TypeError):
-                        legal_entity = str(le_val).strip()
-                    if legal_entity.lower() in MISSING_VALUES:
-                        legal_entity = None
-
-            # Normalize country
-            country = None
-            if country_col:
-                c_val = row.get(country_col)
-                country = str(c_val).strip() if pd.notna(c_val) else None
-                if country and country.lower() in MISSING_VALUES:
-                    country = None
-
-            # Vendor name — look up pre-computed best value for this PO
-            vendor_name = vendor_by_po.get(po) if po else None
-
-            # Normalize G/L account (numeric code — strip trailing .0)
-            gl_account = None
-            if gl_account_col:
-                gl_val = row.get(gl_account_col)
-                if pd.notna(gl_val):
-                    try:
-                        gl_account = str(int(float(gl_val)))
-                    except (ValueError, TypeError):
-                        gl_account = str(gl_val).strip()
-                    if gl_account.lower() in MISSING_VALUES:
-                        gl_account = None
-
-            # Requisition title — look up pre-computed mode for this PO
-            req_title = req_title_by_po.get(po) if po else None
-            
-            # Read all description columns for ER extraction
-            desc_values = {}
-            for key, col in present_desc_cols.items():
-                val = row.get(col)
-                desc_values[key] = str(val).strip() if pd.notna(val) and str(val).strip() else None
-            
-            result[idx] = {
-                'po': po,
-                'cost_center': cost_center,
-                'wbs': wbs,
-                'legal_entity': legal_entity,
-                'country': country,
-                'vendor_name': vendor_name,
-                'gl_account': gl_account,
-                'req_title': req_title,
-                'gl_line_desc': desc_values.get('gl_line_desc'),
-                'gl_trans_desc': desc_values.get('gl_trans_desc'),
-                'description': desc_values.get('description'),
+        # Assemble into list-of-dicts then convert to indexed dict
+        # zip over numpy arrays is ~10× faster than iterrows
+        records = list(zip(
+            self.data.index,
+            po_s,  wbs_s, cc_s, le_s, country_s,
+            vendor_s, gl_s, req_s,
+            desc_series['gl_line_desc'],
+            desc_series['gl_trans_desc'],
+            desc_series['description'],
+        ))
+        result = {
+            idx: {
+                'po':           po   if po   != 'None' and po   is not None else None,
+                'wbs':          wbs  if wbs  != 'None' and wbs  is not None else None,
+                'cost_center':  cc   if cc   != 'None' and cc   is not None else None,
+                'legal_entity': le   if le   != 'None' and le   is not None else None,
+                'country':      ctr  if ctr  != 'None' and ctr  is not None else None,
+                'vendor_name':  vnd  if isinstance(vnd, str) and vnd else None,
+                'gl_account':   gl   if gl   != 'None' and gl   is not None else None,
+                'req_title':    req  if isinstance(req, str) and req else None,
+                'gl_line_desc': gld  if gld  != 'None' and gld  is not None else None,
+                'gl_trans_desc':gtd  if gtd  != 'None' and gtd  is not None else None,
+                'description':  dsc  if dsc  != 'None' and dsc  is not None else None,
             }
-        
-        # Ensure no rows were dropped
-        assert len(result) == len(self.data), (
-            f"Row count mismatch: expected {len(self.data)} rows, "
-            f"got {len(result)}. Some rows may have been lost."
-        )
+            for idx, po, wbs, cc, le, ctr, vnd, gl, req, gld, gtd, dsc in records
+        }
+
         print(f"Hierarchy map built: {len(result)} rows processed.")
         print(f"  - Missing PO:          {sum(1 for v in result.values() if v['po'] is None)}")
         print(f"  - Missing WBS:         {sum(1 for v in result.values() if v['wbs'] is None)}")

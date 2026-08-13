@@ -1,27 +1,36 @@
-# configs/config_base.yaml
+# configs/config_project.yaml
 # ============================
-## Template (shared between reader and writer)
+# Configuration for the CapEx / Project pipeline.
+# Uses WBS root codes (e.g. CE-BTS21076) as the top-level grouping key
+# instead of Cost Center IDs.
+# ============================
+
+## Project Template (reader + writer share this)
 template:
-  file_path: "data/templates/financial_template_v2_2026.xlsx"
-  header_row: 16
+  file_path: "data/templates/Projects Financial Template.xlsx"
+  header_row: 12
   po_col: "B"
   po_stop_marker: "Previous Period Invoices"
-  cost_center_col: "A"
-  cost_center_start_row: 9
+  wbs_col: "A"
+  p3_id_col: "B"
+  wbs_start_row: 2
+
 # ============================
 ## Forecast Reader
 forecast_reader:
   file_paths:
     - "data/forecasts/IBM Forecast_AP07_July 2026.xlsx"
   po_col: "PO #"
+
 # ============================
 ## Transactional Detail Reader
+# Transactional detail for projects uses the Consolidated Actuals file.
+# Column aliases (Document Number / PO#, Fiscal Year/Period, etc.) are
+# normalised automatically by TransactionalDetailReader.
 transactional_detail_reader:
-  file_path: "data/transactional/C-TIES AP09 2025.xlsx"
+  file_path: "data/transactional/AP07 2026 Actuals Consolidated File PGS & ES.xlsx"
   required_cols:
-    - "PO Number"
-    - "Accounting Period"
-    - "GL Transaction Amount"
+    - "Amount - BER"
   valid_types:
     - "Actual"
     - "Accrual"
@@ -36,15 +45,15 @@ transactional_detail_reader:
     cost_center: "Cost Center*"
     wbs: "WBS Element"
     legal_entity: "Legal Entity"
-    country: "Country"
     vendor_name: "Vendor Name"
     gl_account: "Cost Element"
-    req_title: "PO Line Item Desc"
+    req_title: "CO Doc Line Item Txt"
     type: "Type"
+
 # ============================
 ## Template Writer
 template_writer:
-  output_path: "data/templates/template_AP03.xlsx"
+  output_path: "data/templates/template_project.xlsx"
   overwrite: False
   dec_acc_reversal_col: "N"
   forecast_source_cols:
@@ -73,8 +82,4 @@ template_writer:
     - "Description"
     - "GL Transaction Amount"
     - "GL BER Corp Amount"
-    - "Accounting Period"
-    - "AP01"
-    - "AP02"
-    - "AP03"
     - "Type"

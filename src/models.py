@@ -28,9 +28,24 @@ class WBSCode:
     wbs_code: str
     cost_center: Optional[str] = None
     pos: dict[str, PO] = field(default_factory=dict)
+    charge_type: Optional[str] = None  # 'Capital' | 'Expense' — set by project pipeline
 @dataclass
 class CostCenter:
     cost_center_id: str
+    wbs_codes: dict[str, WBSCode] = field(default_factory=dict)
+@dataclass
+class Project:
+    """Top-level grouping for the CapEx / project pipeline.
+    Groups by WBS root (e.g. 'CE-BTS21076') which is the prefix shared by
+    all child WBS codes (CE-BTS21076-02-10, CE-BTS21076-02-EX, etc.)."""
+    project_id: str          # e.g. 'CE-BTS21076'
+    wbs_codes: dict[str, WBSCode] = field(default_factory=dict)
+
+@dataclass
+class P3ID:
+    """Top-level grouping for the Projects pipeline (acts like Cost Center).
+    Groups by P3 ID which contains WBS codes and POs."""
+    p3_id: str
     wbs_codes: dict[str, WBSCode] = field(default_factory=dict)
 
     
@@ -45,6 +60,9 @@ class ExceptionType(Enum):
     DUPLICATE_PO = "DUPLICATE_PO"
     DUPLICATE_WBS = "DUPLICATE_WBS"
     RECLASS = "Reclass"
+    UNMATCHED_TRANSACTION = "Unmatched Transaction"
+    PO_NOT_ON_TEMPLATE = "PO Not on Template"
+    UNMATCHED_P3 = "Unmatched P3 ID"
 @dataclass
 class ExceptionEntry:
     exception_type: ExceptionType
@@ -55,6 +73,7 @@ class ExceptionEntry:
     month: Optional[str] = None
     amount: Optional[float] = None
     transaction_type: Optional[str] = None
+    vendor_name: Optional[str] = None
     source_row_data: Optional[dict] = None
 @dataclass
 class ExceptionLog:

@@ -3,6 +3,9 @@ Streamlit UI for Financial Automation Report Generator.
 Phase 1: Basic UI with file upload and report generation.
 """
 
+import os
+import tempfile
+
 import streamlit as st
 from pathlib import Path
 from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
@@ -16,6 +19,175 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
+# Global typography — Inter for everything
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+    /* Pull the whole app up by reducing Streamlit's default top padding */
+    .block-container {
+        padding-top: 1.2rem !important;
+    }
+
+    html, body, [class*="css"], h2, h3, h4, button, input, label, p {
+        font-family: 'Inter', sans-serif !important;
+        font-size: 15px !important;
+    }
+
+    h1 {
+        font-family: 'Inter', sans-serif !important;
+    }
+
+
+    /* Section headers */
+    h2 { font-size: 1.3rem !important; }
+
+    /* Sub-headers */
+    h3 { font-size: 1.1rem !important; }
+
+    /* Buttons */
+    .stButton > button {
+        font-size: 15px !important;
+    }
+
+    /* Softer red for primary buttons and the download button */
+    .stButton > button[kind="primary"],
+    [data-testid="stDownloadButton"] > button {
+        background-color: #c0392b !important;
+        border-color: #c0392b !important;
+        color: #fff !important;
+    }
+    .stButton > button[kind="primary"]:hover,
+    [data-testid="stDownloadButton"] > button:hover {
+        background-color: #a93226 !important;
+        border-color: #a93226 !important;
+    }
+
+    /* Muted success (green) alerts */
+    [data-testid="stAlert"][kind="success"],
+    div[data-baseweb="notification"][kind="positive"] {
+        background-color: #dceedd !important;
+        border-left-color: #5a8a5e !important;
+        color: #2d4f30 !important;
+    }
+    [data-testid="stAlert"][kind="success"] svg,
+    div[data-baseweb="notification"][kind="positive"] svg {
+        fill: #5a8a5e !important;
+    }
+
+    /* Muted warning (yellow) alerts */
+    [data-testid="stAlert"][kind="warning"],
+    div[data-baseweb="notification"][kind="warning"] {
+        background-color: #faf0d0 !important;
+        border-left-color: #b89a2a !important;
+        color: #5a4a10 !important;
+    }
+    [data-testid="stAlert"][kind="warning"] svg,
+    div[data-baseweb="notification"][kind="warning"] svg {
+        fill: #b89a2a !important;
+    }
+    /* Muted info (blue) alerts */
+    [data-testid="stAlert"][kind="info"],
+    div[data-baseweb="notification"][kind="info"] {
+        background-color: #eef1f7 !important;
+        border-left-color: #6b7fa0 !important;
+        color: #2c3a52 !important;
+    }
+    [data-testid="stAlert"][kind="info"] svg,
+    div[data-baseweb="notification"][kind="info"] svg {
+        fill: #6b7fa0 !important;
+    }
+
+    /* File uploader — replace Streamlit's accent red with muted green */
+
+    /* "Browse files" button — solid green to match the Add button */
+    [data-testid="stFileUploaderDropzoneInput"] + div button,
+    [data-testid="baseButton-secondary"] {
+        background-color: #5a8a5e !important;
+        border-color: #5a8a5e !important;
+        color: #fff !important;
+    }
+    [data-testid="baseButton-secondary"]:hover {
+        background-color: #3d6b41 !important;
+        border-color: #3d6b41 !important;
+        color: #fff !important;
+    }
+
+    /* Dropzone */
+    [data-testid="stFileUploaderDropzone"] {
+        border-color: #8a9bb5 !important;
+    }
+    [data-testid="stFileUploaderDropzone"]:hover {
+        background-color: #eef1f7 !important;
+        border-color: #6b7fa0 !important;
+    }
+
+    /* Uploaded file name row */
+    [data-testid="stFileUploaderFile"] {
+        border-color: #8a9bb5 !important;
+        background-color: #eef1f7 !important;
+    }
+
+    /* Progress bar */
+    [data-testid="stFileUploaderProgressBar"] > div {
+        background-color: #5a8a5e !important;
+    }
+
+    /* Multiselect selected tag/chip */
+    [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
+        background-color: #5a8a5e !important;
+        border-color: #5a8a5e !important;
+        color: #fff !important;
+    }
+    /* X (remove) icon inside the tag */
+    [data-testid="stMultiSelect"] span[data-baseweb="tag"] span[role="presentation"] svg {
+        fill: #fff !important;
+    }
+    /* Dropdown option highlight on hover */
+    [data-testid="stMultiSelect"] li[aria-selected="true"],
+    [data-testid="stMultiSelect"] li:hover {
+        background-color: #dceedd !important;
+        color: #2d4f30 !important;
+    }
+
+    /* Add-type toggle buttons */
+    div.add-type-toggle .stButton > button {
+        background-color: #fff !important;
+        border: 1.5px solid #5a8a5e !important;
+        color: #2d4f30 !important;
+        font-weight: 500 !important;
+        border-radius: 6px !important;
+    }
+    div.add-type-toggle .stButton > button:hover {
+        background-color: #dceedd !important;
+    }
+    div.add-type-toggle .stButton > button[kind="primary"] {
+        background-color: #5a8a5e !important;
+        border-color: #5a8a5e !important;
+        color: #fff !important;
+    }
+
+    /* "Add" identifier button — green, scoped to its wrapper div */
+    div.add-btn .stButton > button {
+        background-color: #5a8a5e !important;
+        border-color: #5a8a5e !important;
+        color: #fff !important;
+    }
+    div.add-btn .stButton > button:hover {
+        background-color: #3d6b41 !important;
+        border-color: #3d6b41 !important;
+    }
+
+    /* Any remaining accent/primary colour Streamlit injects via CSS vars */
+    :root {
+        --primary-color: #5a8a5e !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # Initialize session state
 if 'temp_dir' not in st.session_state:
     st.session_state.temp_dir = None
@@ -27,6 +199,8 @@ if 'extracted_cost_centers' not in st.session_state:
     st.session_state.extracted_cost_centers = []
 if 'selected_cost_centers' not in st.session_state:
     st.session_state.selected_cost_centers = []
+if 'template_type' not in st.session_state:
+    st.session_state.template_type = 'opex'   # 'opex' or 'project'
 # Always reload config from disk so stale session-state fields never persist
 st.session_state.app_config = ConfigManager.load_config()
 
@@ -309,21 +483,36 @@ def render_config_section():
 
 
 # Header
-st.title("Financial Automation Report Generator")
-st.markdown("""
-Upload your files and generate a comprehensive financial report with forecast data,
-transactional details, and exception tracking.
-""")
+st.markdown(
+    """
+    <h1 style='
+        text-align: center;
+        font-size: 1.4rem !important;
+        font-weight: 700 !important;
+        line-height: 1.2 !important;
+        margin-bottom: 0.2rem;
+        color: #1f2328;
+    '>Financial Automation Report Generator</h1>
+    <p style='
+        text-align: center;
+        font-family: Inter, sans-serif;
+        font-size: 0.95rem;
+        font-weight: 400;
+        color: #666;
+        margin-top: 0;
+        margin-bottom: 0.5rem;
+    '>Upload your budget template, TIES transactional detail, and<br>
+    vendor forecast files to generate a consolidated financial report.</p>
+    """,
+    unsafe_allow_html=True,
+)
 
 st.divider()
 
-# File Upload Section
-st.header("Upload Files")
+# ── Three-column uploader row ─────────────────────────────────────────────────
+up_col1, up_col2, up_col3 = st.columns(3)
 
-# First row: Template File and Generate By Cost Center (TBD)
-row1_col1, row1_col2 = st.columns(2)
-
-with row1_col1:
+with up_col1:
     st.subheader("Template File")
     template_file = st.file_uploader(
         "template_label",
@@ -332,88 +521,69 @@ with row1_col1:
         key="template_upload",
         label_visibility="collapsed"
     )
-    
-    # Extract cost centers when template is uploaded
+
+    # Detect template type and extract identifiers when template is uploaded
     if template_file is not None:
         try:
-            # Save template temporarily to extract cost centers
-            import tempfile
             with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
                 tmp_file.write(template_file.getvalue())
                 tmp_path = tmp_file.name
-            
-            # Extract cost centers using TemplateReader
-            from src.template_reader import TemplateReader
+
+            from src.utils import detect_template_type
+            ttype = detect_template_type(tmp_path)
+            st.session_state.template_type = ttype
             app_config = st.session_state.app_config
-            temp_reader = TemplateReader(
-                file_path=tmp_path,
-                header_row=app_config.template.header_row,
-                po_col=app_config.template.po_col,
-                po_stop_marker=app_config.template.po_stop_marker,
-                cost_center_col=app_config.template.cost_center_col,
-                cost_center_start_row=app_config.template.cost_center_start_row
-            )
-            
-            # Update session state with extracted cost centers
-            st.session_state.extracted_cost_centers = temp_reader.cost_centers
-            
-            # Initialize selected cost centers if not already set
-            if not st.session_state.selected_cost_centers:
-                st.session_state.selected_cost_centers = temp_reader.cost_centers.copy()
-            
-            # Clean up temp file
-            import os
+
+            if ttype == 'project':
+                from src.project_template_reader import ProjectTemplateReader
+                temp_reader = ProjectTemplateReader(
+                    file_path=tmp_path,
+                    header_row=app_config.template.header_row,
+                    po_col=app_config.template.po_col,
+                    po_stop_marker=app_config.template.po_stop_marker,
+                    wbs_col='A',
+                    p3_id_col='B',
+                    wbs_start_row=2,
+                )
+                identifiers = list(temp_reader.p3_wbs_map.keys())
+            else:
+                from src.template_reader import TemplateReader
+                temp_reader = TemplateReader(
+                    file_path=tmp_path,
+                    header_row=app_config.template.header_row,
+                    po_col=app_config.template.po_col,
+                    po_stop_marker=app_config.template.po_stop_marker,
+                    cost_center_col=app_config.template.cost_center_col,
+                    cost_center_start_row=app_config.template.cost_center_start_row,
+                )
+                identifiers = temp_reader.cost_centers
+
+            prev = st.session_state.extracted_cost_centers
+            if set(identifiers) != set(prev):
+                st.session_state.extracted_cost_centers = identifiers
+                st.session_state.selected_cost_centers = list(identifiers)
+
             os.unlink(tmp_path)
-            
-            st.success(f"Extracted {len(temp_reader.cost_centers)} cost centers from template")
-            
+
         except Exception as e:
-            st.error(f"Error extracting cost centers: {str(e)}")
+            st.error(f"Error reading template: {str(e)}")
 
-with row1_col2:
-    st.subheader("Select Cost Centers")
-    
-    if st.session_state.extracted_cost_centers:
-        # Display extracted cost centers
-        st.write(f"**Found {len(st.session_state.extracted_cost_centers)} cost centers:**")
-        
-        # Multiselect for cost centers
-        st.session_state.selected_cost_centers = st.multiselect(
-            "Select cost centers to process",
-            options=st.session_state.extracted_cost_centers,
-            default=st.session_state.selected_cost_centers,
-            help="Select which cost centers to include in the report generation"
-        )
-        
-        # Option to add custom cost centers
-        st.write("**Add Cost Center:**")
-        col_input, col_button = st.columns([3, 1])
-        with col_input:
-            new_cc = st.text_input("Enter cost center ID", key="new_cost_center", label_visibility="collapsed", placeholder="Enter cost center ID")
-        with col_button:
-            if st.button("Add", use_container_width=True):
-                if new_cc and new_cc not in st.session_state.extracted_cost_centers:
-                    st.session_state.extracted_cost_centers.append(new_cc)
-                    st.session_state.selected_cost_centers.append(new_cc)
-                    st.success(f"Added: {new_cc}")
-                    st.rerun()
-                elif new_cc in st.session_state.extracted_cost_centers:
-                    st.warning("Already exists")
-                else:
-                    st.warning("Enter a cost center ID")
-        
-        # Show selection summary
-        if st.session_state.selected_cost_centers:
-            st.info(f"Selected: {len(st.session_state.selected_cost_centers)} of {len(st.session_state.extracted_cost_centers)} cost centers")
-        else:
-            st.warning("No cost centers selected - report will include all cost centers")
+    # Inline status + type banner
+    if template_file is not None:
+        if st.session_state.get('template_type'):
+            is_proj = st.session_state.template_type == 'project'
+            banner_color = "#b5651d" if is_proj else "#6b4fa0"
+            banner_label = "📂 Project / P3 Template" if is_proj else "📋 OpEx Template"
+            st.markdown(
+                f'<div style="background:{banner_color};color:#fff;padding:6px 14px;'
+                f'border-radius:6px;font-size:13px;font-weight:600;margin-top:8px;">'
+                f'{banner_label}</div>',
+                unsafe_allow_html=True,
+            )
     else:
-        st.info("Upload a template file to extract cost centers")
+        st.info("Template File Required")
 
-# Second row: Transactional File and Forecast Files
-row2_col1, row2_col2 = st.columns(2)
-
-with row2_col1:
+with up_col2:
     st.subheader("Transactional Detail File")
     transactional_file = st.file_uploader(
         "transactional_label",
@@ -422,8 +592,12 @@ with row2_col1:
         key="transactional_upload",
         label_visibility="collapsed"
     )
+    if transactional_file:
+        st.success("Transactional File Uploaded")
+    else:
+        st.info("Transactional File Required")
 
-with row2_col2:
+with up_col3:
     st.subheader("Forecast Files")
     forecast_files = st.file_uploader(
         "forecast_label",
@@ -433,52 +607,97 @@ with row2_col2:
         key="forecast_upload",
         label_visibility="collapsed"
     )
-    
     if forecast_files:
-        st.info(f"{len(forecast_files)} forecast file(s) uploaded")
+        st.success(f"{len(forecast_files)} Forecast File(s) Uploaded")
+    else:
+        st.info("At Least One Forecast File Required")
 
 st.divider()
 
-# File status indicators
-st.subheader("Upload Status")
-status_col1, status_col2, status_col3 = st.columns(3)
+# ── Cost Center / P3 ID selection — centered single panel ────────────────────
+_, center_col, _ = st.columns([1, 3, 1])
 
-with status_col1:
-    if template_file:
-        st.success("Template file uploaded")
-    else:
-        st.warning("Template file required")
+with center_col:
+    st.markdown(
+        "<h3 style='text-align:center;margin-bottom:0.5rem;'>Select Cost Centers / P3 IDs</h3>",
+        unsafe_allow_html=True,
+    )
 
-with status_col2:
-    if transactional_file:
-        st.success("Transactional file uploaded")
-    else:
-        st.warning("Transactional file required")
+    if st.session_state.extracted_cost_centers:
+        is_project = st.session_state.template_type == 'project'
+        id_label   = "P3 IDs" if is_project else "Cost Centers"
 
-with status_col3:
-    if forecast_files:
-        st.success(f"{len(forecast_files)} forecast file(s) uploaded")
+        st.session_state.selected_cost_centers = st.multiselect(
+            f"Select {id_label.lower()} to process",
+            options=st.session_state.extracted_cost_centers,
+            default=st.session_state.selected_cost_centers,
+            help=f"Select which {id_label.lower()} to include in the report"
+        )
+
+        if st.session_state.selected_cost_centers:
+            sel_pill_html = "".join(
+                f'<span style="display:inline-block;background:#d4edda;color:#155724;'
+                f'border:1px solid #82c99b;border-radius:14px;padding:3px 12px;'
+                f'margin:3px 4px 3px 0;font-size:13px;font-weight:600;">✓ {_id}</span>'
+                for _id in st.session_state.selected_cost_centers
+            )
+            st.markdown(sel_pill_html, unsafe_allow_html=True)
+            st.caption(f"{len(st.session_state.selected_cost_centers)} of {len(st.session_state.extracted_cost_centers)} selected")
+        else:
+            st.warning("No identifiers selected — report will include all")
+
+        # Add manually row
+        st.markdown("<p style='margin-top:0.8rem;margin-bottom:0.3rem;font-weight:600;'>Add Manually</p>", unsafe_allow_html=True)
+        if 'add_type' not in st.session_state:
+            st.session_state.add_type = "Cost Center"
+
+        st.markdown('<div class="add-type-toggle">', unsafe_allow_html=True)
+        tog_col1, tog_col2, _ = st.columns([1, 1, 2])
+        with tog_col1:
+            if st.button("Cost Center", use_container_width=True, type="primary", key="toggle_cc"):
+                st.session_state.add_type = "Cost Center"
+                st.rerun()
+        with tog_col2:
+            if st.button(
+                "P3 ID",
+                use_container_width=True,
+                type="primary" if st.session_state.add_type == "P3 ID" else "secondary",
+                key="toggle_p3",
+            ):
+                st.session_state.add_type = "P3 ID"
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+        add_type = st.session_state.add_type
+        inp_col, btn_col = st.columns([4, 1])
+        with inp_col:
+            new_cc = st.text_input(
+                f"Enter {add_type}",
+                key="new_cost_center",
+                label_visibility="collapsed",
+                placeholder="e.g. P322-0008813" if add_type == "P3 ID" else "e.g. 12345"
+            )
+        with btn_col:
+            st.markdown('<div class="add-btn">', unsafe_allow_html=True)
+            if st.button("Add", use_container_width=True, key="add_identifier_btn"):
+                if new_cc and new_cc not in st.session_state.extracted_cost_centers:
+                    st.session_state.extracted_cost_centers.append(new_cc)
+                    st.session_state.selected_cost_centers.append(new_cc)
+                    st.success(f"Added: {new_cc}")
+                    st.rerun()
+                elif new_cc in st.session_state.extracted_cost_centers:
+                    st.warning("Already exists")
+                else:
+                    st.warning(f"Enter a {add_type}")
+            st.markdown('</div>', unsafe_allow_html=True)
     else:
-        st.warning("At least one forecast file required")
+        st.info("Upload a template file to load cost centers / P3 IDs")
 
 st.divider()
 
-# Configuration Settings
-st.subheader("Configuration Settings")
-render_config_section()
-
-st.divider()
-
-# Generate Report Section
-st.header("Generate Report")
-
-# Check if all required files are uploaded
+# ── Generate button ───────────────────────────────────────────────────────────
 all_files_uploaded = all([template_file, forecast_files, transactional_file])
 
-if not all_files_uploaded:
-    st.info("Please upload all required files to enable report generation.")
-
-# Generate button
 generate_button = st.button(
     "Generate Report",
     type="primary",

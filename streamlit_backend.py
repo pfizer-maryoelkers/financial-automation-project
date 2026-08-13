@@ -13,8 +13,10 @@ from datetime import datetime
 from src.forecast_reader import ForecastReader
 from src.transactional_detail_reader import TransactionalDetailReader
 from src.template_reader import TemplateReader
+from src.project_template_reader import ProjectTemplateReader
 from src.template_writer import TemplateWriter
-from src.utils import build_hierarchy
+from src.utils import build_hierarchy, detect_template_type
+from src.project_utils import build_project_hierarchy
 from src.models import ExceptionLog
 
 
@@ -194,148 +196,287 @@ class PipelineOrchestrator:
     def run(self, file_paths: Dict[str, str], selected_cost_centers: Optional[List[str]] = None) -> str:
         """
         Execute the pipeline with uploaded files.
-        
+        Auto-detects the template type (OpEx vs Project) and routes accordingly.
+
         Args:
             file_paths: Dictionary with keys 'template', 'forecast', 'transactional'
-            selected_cost_centers: Optional list of cost centers to process. If None, processes all.
-            
+            selected_cost_centers: Cost centers (OpEx) or P3 IDs (Project) to process.
+                                   If None/empty, processes all.
+
         Returns:
             Path to generated output file
-            
-        Raises:
-            Exception: If pipeline execution fails
         """
         try:
             self.logger.start()
             self.logger.info("Starting pipeline execution...")
             self._update_progress(0)
-            
-            # Step 1: Initialize readers and load data
-            self.logger.info("Step 1/4: Loading data...")
-            self._update_progress(10)
-            
-            forecast_reader = ForecastReader(
-                file_paths=file_paths['forecast'] if isinstance(file_paths['forecast'], list) else [file_paths['forecast']],
-                po_col=self.config['forecast_reader']['po_col']
-            )
-            forecast_data = forecast_reader.get_forecast_data()
-            self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
-            self._update_progress(20)
-            
-            transactional_reader = TransactionalDetailReader(
-                file_path=file_paths['transactional'],
-                required_cols=self.config['transactional_detail_reader']['required_cols'],
-                valid_types=self.config['transactional_detail_reader']['valid_types'],
-                colmap=self.config['transactional_detail_reader']['colmap']
-            )
-            transactional_data = transactional_reader.get_transactional_data()
-            reclass_data = transactional_reader.get_reclass_data()
-            reclass_notes = transactional_reader.get_reclass_notes()
-            hierarchy_map = transactional_reader.get_hierarchy_map()
-            intl_po_set = transactional_reader.get_intl_po_set()
-            row_count = len(transactional_reader.data) if transactional_reader.data is not None else 0
-            self.logger.info(f"Loaded transactional data: {row_count} rows")
-            self._update_progress(30)
-            
-            template_reader = TemplateReader(
-                file_path=file_paths['template'],
-                header_row=self.config['template']['header_row'],
-                po_col=self.config['template']['po_col'],
-                po_stop_marker=self.config['template']['po_stop_marker'],
-                cost_center_col=self.config['template']['cost_center_col'],
-                cost_center_start_row=self.config['template']['cost_center_start_row']
-            )
-            self.logger.info(f"Loaded template: {len(template_reader.cost_centers)} cost centers")
-            self._update_progress(40)
-            
-            # Filter cost centers if selection provided
-            cost_centers_to_process = template_reader.cost_centers
-            if selected_cost_centers:
-                cost_centers_to_process = [cc for cc in template_reader.cost_centers if cc in selected_cost_centers]
-                self.logger.info(f"Filtering to {len(cost_centers_to_process)} selected cost centers")
-            
-            # Step 2: Build hierarchy
-            self.logger.info("Step 2/4: Building hierarchy...")
-            self._update_progress(45)
-            self.exception_log = ExceptionLog()
-            
-            # Ensure transactional data is loaded
-            if transactional_reader.data is None:
-                raise Exception("Transactional data failed to load")
-            
-            hierarchy = build_hierarchy(
-                cost_centers=cost_centers_to_process,
-                hierarchy_map=hierarchy_map,
-                transactional_data=transactional_data,
-                forecast_data=forecast_data,
-                exception_log=self.exception_log,
-                transactional_df=transactional_reader.data,
-                reclass_data=reclass_data,
-                reclass_notes=reclass_notes,
-                template_pos=template_reader.pos,
-                intl_po_set=intl_po_set,
-            )
-            
-            total_exceptions = len(self.exception_log.entries)
-            self.logger.info(f"Built hierarchy: {total_exceptions} exceptions found")
-            self._update_progress(60)
-            
-            # Step 3: Write to template
-            self.logger.info("Step 3/4: Writing template output...")
-            self._update_progress(65)
-            
-            # Determine output path - use just the filename in temp directory
-            output_filename = self.config['template_writer'].get('output_path', 'template_output.xlsx')
-            # Extract just the filename if it's a path
-            output_filename = Path(output_filename).name
-            output_path = Path(file_paths['template']).parent / output_filename
-            
-            template_writer = TemplateWriter(
-                file_path=file_paths['template'],
-                header_row=self.config['template']['header_row'],
-                po_column=self.config['template']['po_col'],
-                output_path=str(output_path),
-                overwrite=self.config['template_writer']['overwrite'],
-                dec_acc_reversal_col=self.config['template_writer']['dec_acc_reversal_col'],
-                forecast_source_cols=self.config['template_writer']['forecast_source_cols'],
-                transactional_source_cols=self.config['template_writer']['transactional_source_cols']
-            )
-            self._update_progress(70)
-            
-            pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
-            pos = template_writer.insert_er_rows(hierarchy, pos=pos)
-            template_writer.write_hierarchy(hierarchy, pos=pos)
-            self._update_progress(75)
-            template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
-            self._update_progress(80)
-            template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
-            self.logger.info("Template data written")
-            self._update_progress(85)
-            
-            # Step 4: Generate exception reports
-            self.logger.info("Step 4/4: Generating exception reports...")
-            self._update_progress(90)
-            
-            template_writer.write_exception_data_sheet(self.exception_log)
-            template_writer.write_exception_sheet(self.exception_log, transactional_reader.data)
-            template_writer.write_exception_summary_sheet(self.exception_log)
-            self._update_progress(95)
-            template_writer.save()
-            
-            self.logger.info("Exception reports generated")
-            self._update_progress(100)
-            
-            # Success
-            self.output_path = str(output_path)
-            execution_time = self.logger.get_execution_time()
-            self.logger.success(f"Pipeline completed successfully in {execution_time:.2f} seconds!")
-            
-            return self.output_path
-            
+
+            # ── Detect template type ──────────────────────────────────────────
+            ttype = detect_template_type(file_paths['template'])
+            self.logger.info(f"Detected template type: {ttype.upper()}")
+
+            if ttype == 'project':
+                return self._run_project(file_paths, selected_cost_centers)
+            else:
+                return self._run_opex(file_paths, selected_cost_centers)
+
         except Exception as e:
             import traceback
             self.logger.error(f"Pipeline failed: {str(e)}\n{traceback.format_exc()}")
             raise
+
+    def _run_opex(self, file_paths: Dict[str, str], selected_cost_centers: Optional[List[str]]) -> str:
+        """OpEx pipeline (C-TIES / cost-center driven)."""
+        # Step 1: Load data
+        self.logger.info("Step 1/4: Loading data...")
+        self._update_progress(10)
+
+        forecast_reader = ForecastReader(
+            file_paths=file_paths['forecast'] if isinstance(file_paths['forecast'], list) else [file_paths['forecast']],
+            po_col=self.config['forecast_reader']['po_col']
+        )
+        forecast_data = forecast_reader.get_forecast_data()
+        self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
+        self._update_progress(20)
+
+        transactional_reader = TransactionalDetailReader(
+            file_path=file_paths['transactional'],
+            required_cols=self.config['transactional_detail_reader']['required_cols'],
+            valid_types=self.config['transactional_detail_reader']['valid_types'],
+            colmap=self.config['transactional_detail_reader']['colmap']
+        )
+        transactional_data = transactional_reader.get_transactional_data()
+        reclass_data       = transactional_reader.get_reclass_data()
+        reclass_notes      = transactional_reader.get_reclass_notes()
+        hierarchy_map      = transactional_reader.get_hierarchy_map()
+        intl_po_set        = transactional_reader.get_intl_po_set()
+        row_count = len(transactional_reader.data) if transactional_reader.data is not None else 0
+        self.logger.info(f"Loaded transactional data: {row_count} rows")
+        self._update_progress(30)
+
+        template_reader = TemplateReader(
+            file_path=file_paths['template'],
+            header_row=self.config['template']['header_row'],
+            po_col=self.config['template']['po_col'],
+            po_stop_marker=self.config['template']['po_stop_marker'],
+            cost_center_col=self.config['template']['cost_center_col'],
+            cost_center_start_row=self.config['template']['cost_center_start_row']
+        )
+        self.logger.info(f"Loaded template: {len(template_reader.cost_centers)} cost centers")
+        self._update_progress(40)
+
+        cost_centers_to_process = template_reader.cost_centers
+        if selected_cost_centers:
+            cost_centers_to_process = [cc for cc in template_reader.cost_centers if cc in selected_cost_centers]
+            self.logger.info(f"Filtering to {len(cost_centers_to_process)} selected cost centers")
+
+        # Step 2: Build hierarchy
+        self.logger.info("Step 2/4: Building hierarchy...")
+        self._update_progress(45)
+        self.exception_log = ExceptionLog()
+
+        if transactional_reader.data is None:
+            raise Exception("Transactional data failed to load")
+
+        hierarchy = build_hierarchy(
+            cost_centers=cost_centers_to_process,
+            hierarchy_map=hierarchy_map,
+            transactional_data=transactional_data,
+            forecast_data=forecast_data,
+            exception_log=self.exception_log,
+            transactional_df=transactional_reader.data,
+            reclass_data=reclass_data,
+            reclass_notes=reclass_notes,
+            template_pos=template_reader.pos,
+            intl_po_set=intl_po_set,
+        )
+
+        total_exceptions = len(self.exception_log.entries)
+        self.logger.info(f"Built hierarchy: {total_exceptions} exceptions found")
+        self._update_progress(60)
+
+        # Step 3: Write to template
+        self.logger.info("Step 3/4: Writing template output...")
+        self._update_progress(65)
+
+        output_filename = Path(self.config['template_writer'].get('output_path', 'template_output.xlsx')).name
+        output_path = Path(file_paths['template']).parent / output_filename
+
+        template_writer = TemplateWriter(
+            file_path=file_paths['template'],
+            header_row=self.config['template']['header_row'],
+            po_column=self.config['template']['po_col'],
+            output_path=str(output_path),
+            overwrite=self.config['template_writer']['overwrite'],
+            dec_acc_reversal_col=self.config['template_writer']['dec_acc_reversal_col'],
+            forecast_source_cols=self.config['template_writer']['forecast_source_cols'],
+            transactional_source_cols=self.config['template_writer']['transactional_source_cols']
+        )
+        self._update_progress(70)
+
+        pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+        pos = template_writer.insert_er_rows(hierarchy, pos=pos)
+        template_writer.write_hierarchy(hierarchy, pos=pos)
+        self._update_progress(75)
+        template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
+        self._update_progress(80)
+        template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
+        self.logger.info("Template data written")
+        self._update_progress(85)
+
+        # Step 4: Exception reports
+        self.logger.info("Step 4/4: Generating exception reports...")
+        self._update_progress(90)
+        template_writer.write_exception_data_sheet(self.exception_log)
+        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
+        template_writer.write_exception_summary_sheet(self.exception_log)
+        self._update_progress(95)
+        template_writer.save()
+
+        self.logger.info("Exception reports generated")
+        self._update_progress(100)
+
+        self.output_path = str(output_path)
+        execution_time = self.logger.get_execution_time()
+        self.logger.success(f"Pipeline completed successfully in {execution_time:.2f} seconds!")
+        return self.output_path
+
+    def _run_project(self, file_paths: Dict[str, str], selected_p3_ids: Optional[List[str]]) -> str:
+        """Project / CapEx pipeline (Consolidated Actuals / P3-ID driven)."""
+        from src.utils import load_config as _load_yaml_config
+
+        # Step 1: Load data
+        self.logger.info("Step 1/4: Loading data...")
+        self._update_progress(10)
+
+        forecast_reader = ForecastReader(
+            file_paths=file_paths['forecast'] if isinstance(file_paths['forecast'], list) else [file_paths['forecast']],
+            po_col=self.config['forecast_reader']['po_col']
+        )
+        forecast_data = forecast_reader.get_forecast_data()
+        self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
+        self._update_progress(20)
+
+        # Use project-specific colmap — Amount - BER is the required col
+        proj_colmap = {
+            'po':           'PO Number',
+            'month':        'Accounting Period',
+            'amount':       'GL BER Corp Amount',
+            'classifier':   'AP Voucher Number',
+            'cost_center':  'Cost Center*',
+            'wbs':          'WBS Element',
+            'legal_entity': 'Legal Entity',
+            'vendor_name':  'Vendor Name',
+            'gl_account':   'Cost Element',
+            'req_title':    'CO Doc Line Item Txt',
+            'type':         'Type',
+        }
+        transactional_reader = TransactionalDetailReader(
+            file_path=file_paths['transactional'],
+            required_cols=['Amount - BER'],
+            valid_types=['Actual', 'Accrual', 'Reversal', 'Reclass', 'ER'],
+            colmap=proj_colmap,
+        )
+        transactional_data = transactional_reader.get_transactional_data()
+        reclass_data       = transactional_reader.get_reclass_data()
+        reclass_notes      = transactional_reader.get_reclass_notes()
+        hierarchy_map      = transactional_reader.get_hierarchy_map()
+        intl_po_set        = transactional_reader.get_intl_po_set()
+        row_count = len(transactional_reader.data) if transactional_reader.data is not None else 0
+        self.logger.info(f"Loaded transactional data: {row_count} rows")
+        self._update_progress(30)
+
+        template_reader = ProjectTemplateReader(
+            file_path=file_paths['template'],
+            header_row=self.config['template']['header_row'],
+            po_col=self.config['template']['po_col'],
+            po_stop_marker=self.config['template'].get('po_stop_marker', 'Previous Period Invoices'),
+            wbs_col='A',
+            p3_id_col='B',
+            wbs_start_row=2,
+        )
+        self.logger.info(f"Loaded project template: {len(template_reader.p3_wbs_map)} P3 IDs, {len(template_reader.pos)} POs")
+        self._update_progress(40)
+
+        # Filter P3 IDs if a selection was provided
+        p3_wbs_map = template_reader.p3_wbs_map
+        if selected_p3_ids:
+            p3_wbs_map = {k: v for k, v in p3_wbs_map.items() if k in selected_p3_ids}
+            self.logger.info(f"Filtering to {len(p3_wbs_map)} selected P3 IDs")
+
+        # Step 2: Build hierarchy
+        self.logger.info("Step 2/4: Building project hierarchy...")
+        self._update_progress(45)
+        self.exception_log = ExceptionLog()
+
+        if transactional_reader.data is None:
+            raise Exception("Transactional data failed to load")
+
+        hierarchy = build_project_hierarchy(
+            projects=list({
+                p for wbs_list in p3_wbs_map.values() for wbs in wbs_list
+                for p in [wbs]
+            }),
+            hierarchy_map=hierarchy_map,
+            transactional_data=transactional_data,
+            forecast_data=forecast_data,
+            exception_log=self.exception_log,
+            transactional_df=transactional_reader.data,
+            p3_wbs_map=p3_wbs_map,
+            reclass_data=reclass_data,
+            reclass_notes=reclass_notes,
+            template_pos=template_reader.pos,
+            intl_po_set=intl_po_set,
+        )
+
+        total_exceptions = len(self.exception_log.entries)
+        self.logger.info(f"Built project hierarchy: {total_exceptions} exceptions found")
+        self._update_progress(60)
+
+        # Step 3: Write to template
+        self.logger.info("Step 3/4: Writing template output...")
+        self._update_progress(65)
+
+        output_filename = Path(self.config['template_writer'].get('output_path', 'template_output.xlsx')).name
+        output_path = Path(file_paths['template']).parent / output_filename
+
+        template_writer = TemplateWriter(
+            file_path=file_paths['template'],
+            header_row=self.config['template']['header_row'],
+            po_column=self.config['template']['po_col'],
+            output_path=str(output_path),
+            overwrite=self.config['template_writer']['overwrite'],
+            dec_acc_reversal_col=self.config['template_writer']['dec_acc_reversal_col'],
+            forecast_source_cols=self.config['template_writer']['forecast_source_cols'],
+            transactional_source_cols=self.config['template_writer']['transactional_source_cols'],
+        )
+        self._update_progress(70)
+
+        pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+        template_writer.write_hierarchy(hierarchy, pos=pos)
+        self._update_progress(75)
+        template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
+        self._update_progress(80)
+        template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
+        self.logger.info("Template data written")
+        self._update_progress(85)
+
+        # Step 4: Exception reports
+        self.logger.info("Step 4/4: Generating exception reports...")
+        self._update_progress(90)
+        template_writer.write_exception_data_sheet(self.exception_log)
+        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
+        template_writer.write_exception_summary_sheet(self.exception_log)
+        self._update_progress(95)
+        template_writer.save()
+
+        self.logger.info("Exception reports generated")
+        self._update_progress(100)
+
+        self.output_path = str(output_path)
+        execution_time = self.logger.get_execution_time()
+        self.logger.success(f"Pipeline completed successfully in {execution_time:.2f} seconds!")
+        return self.output_path
     
     def get_exception_summary(self) -> Optional[Dict]:
         """

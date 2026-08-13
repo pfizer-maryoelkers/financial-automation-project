@@ -31,19 +31,24 @@ class ForecastConfig:
 class TransactionalConfig:
     """Transactional detail reader configuration"""
     required_cols: List[str] = field(default_factory=lambda: [
-        "PO Number", "Accounting Period", "GL Transaction Amount"
+        "PO Number", "Accounting Period", "GL BER Corp Amount"
     ])
     valid_types: List[str] = field(default_factory=lambda: [
         "Actual", "Accrual", "Reversal", "Reclass", "ER"
     ])
     colmap: Dict[str, str] = field(default_factory=lambda: {
         'po': 'PO Number',
-        'month': 'Accounting Period',  # YYYYMM format e.g. 202601 → Jan
+        'month': 'Accounting Period',
         'amount': 'GL BER Corp Amount',
         'classifier': 'AP Voucher Number',
-        'cost_center': 'CC ID',
+        'cost_center': 'Cost Center*',
         'wbs': 'WBS Element',
-        'type': 'Type'
+        'legal_entity': 'Legal Entity',
+        'country': 'Country',
+        'vendor_name': 'Vendor Name',
+        'gl_account': 'Cost Element',
+        'req_title': 'PO Line Item Desc',
+        'type': 'Type',
     })
 
 

@@ -7,6 +7,46 @@ from collections import defaultdict
 from src.models import CostCenter, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType
 
 
+def detect_template_type(file_path: str) -> str:
+    """Inspect the template workbook and return which pipeline it belongs to.
+
+    Returns
+    -------
+    "project"
+        The top corner has "WBS Code" and "P3 ID" as a **paired header row**
+        (both values appear on the same row, one in col A and one in col B).
+        The project pipeline (ProjectTemplateReader / build_project_hierarchy)
+        should be used.
+    "opex"
+        The template has a "Cost Center" section in column A.  The OpEx
+        pipeline (TemplateReader / build_hierarchy) should be used.
+
+    Detection strategy
+    ------------------
+    Scan up to the first 20 rows.  A row where col-A says "WBS Code" (or
+    "WBS code") AND col-B says "P3 ID" on the same row is an unambiguous
+    project-template marker.  The OpEx template has those labels too, but
+    never together on the same row.
+    """
+    from openpyxl import load_workbook
+
+    wb = load_workbook(file_path, read_only=True, data_only=True)
+    ws = wb.active
+
+    for r in range(1, 21):
+        a_val = ws.cell(row=r, column=1).value
+        b_val = ws.cell(row=r, column=2).value
+        a_text = str(a_val).strip().lower() if a_val is not None else ""
+        b_text = str(b_val).strip().lower() if b_val is not None else ""
+        # Project template: "WBS Code" in col A AND "P3 ID" in col B on the same row
+        if a_text == "wbs code" and b_text == "p3 id":
+            wb.close()
+            return "project"
+
+    wb.close()
+    return "opex"
+
+
 def load_config(config_path='configs/config_base.yaml'):
     """Load and merge YAML configs.
     
@@ -144,7 +184,26 @@ def build_hierarchy(
 
             # Handling Exceptions (in priority order)
 
-            # Check 0: Reclass rows — log as exceptions then skip. Their amount is
+            # Check 0a: Unmatched transaction type — not Actual, Accrual, Reversal,
+            # Reclass, or ER. Only log when the PO appears on the front template tab
+            # so exceptions stay relevant to what's already being tracked.
+            _KNOWN_TYPES = {"Actual", "Accrual", "Reversal", "Reclass", "ER"}
+            if trans_type not in _KNOWN_TYPES:
+                if template_pos and po and po in template_pos:
+                    exception_log.log(
+                        ExceptionType.UNMATCHED_TRANSACTION,
+                        row_index=row_idx,
+                        po=po,
+                        wbs=wbs,
+                        cost_center=cc_id,
+                        month=month,
+                        amount=amount,
+                        transaction_type=trans_type,
+                        source_row_data=source_row_data
+                    )
+                continue
+
+            # Check 0b: Reclass rows — log as exceptions then skip. Their amount is
             # already folded into the PO's Actual total inside get_transactional_data().
             if trans_type == "Reclass":
                 exception_log.log(
@@ -274,6 +333,25 @@ def build_hierarchy(
 
             seen_pos[po] = (cc_id, wbs)
 
+            # Check 5: PO is in the transactional file for a tracked cost center but
+            # is NOT on the front template tab. Only fires when the template already
+            # has PO rows (populated template) and only logged once per PO.
+            # Log every transaction row for a PO that is not on the template so
+            # the exceptions tab can show per-month amounts and a full total.
+            if template_pos and po not in template_pos and wbs != "ER":
+                exception_log.log(
+                    ExceptionType.PO_NOT_ON_TEMPLATE,
+                    row_index=row_idx,
+                    po=po,
+                    wbs=wbs,
+                    cost_center=cc_id,
+                    month=month,
+                    amount=amount,
+                    transaction_type=trans_type,
+                    vendor_name=vendor_name,
+                    source_row_data=source_row_data
+                )
+
             # Build WBS and PO objects if not already seen
             if wbs not in cost_center.wbs_codes:
                 cost_center.wbs_codes[wbs] = WBSCode(wbs_code=wbs, cost_center=cc_id)
@@ -288,6 +366,17 @@ def build_hierarchy(
                     real_wbs=er_real_wbs.get(po) if wbs == "ER" else None,
                 )
             po_obj = cost_center.wbs_codes[wbs].pos[po]
+            # Backfill any fields that were None on the first row but have a real value now
+            if po_obj.vendor_name is None and vendor_name is not None:
+                po_obj.vendor_name = vendor_name
+            if po_obj.legal_entity is None and legal_entity is not None:
+                po_obj.legal_entity = legal_entity
+            if po_obj.country is None and country is not None:
+                po_obj.country = country
+            if po_obj.gl_account is None and gl_account is not None:
+                po_obj.gl_account = gl_account
+            if po_obj.req_title is None and req_title is not None:
+                po_obj.req_title = req_title
             
             # Fill MonthlyMetrics from transactional data
             po_lookup = str(po).strip().upper() if wbs == "ER" and po else po
