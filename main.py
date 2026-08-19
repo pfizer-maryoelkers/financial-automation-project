@@ -84,7 +84,6 @@ def main():
     exception_log.summary()
     template_writer.write_exception_data_sheet(exception_log)
     template_writer.write_exception_sheet(exception_log, transactional_reader.data, pos=pos)
-    template_writer.write_exception_summary_sheet(exception_log)
     template_writer.save()
 
 

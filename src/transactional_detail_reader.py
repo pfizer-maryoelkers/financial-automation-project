@@ -43,6 +43,36 @@ class TransactionalDetailReader:
 
 
     @staticmethod
+    def _find_po_column(columns) -> str | None:
+        """Find the PO number column by scanning column names with loose formatting."""
+        cols = [str(c).strip() for c in columns]
+        
+        # Priority 1: Exact or highly specific matches
+        for c in cols:
+            c_upper = c.upper()
+            if c_upper in ('PO', 'PO#', 'PO NUMBER', 'GL PO NUMBER', 'PURCHASE ORDER', 'PO_NO', 'PO NO', 'PO_NUMBER'):
+                return c
+                
+        # Priority 2: Contains 'PO#' or 'PO_NO' or '/ PO#' or '/PO#' or 'num/PO#'
+        for c in cols:
+            c_upper = c.upper()
+            if any(x in c_upper for x in ('DESC', 'DATE', 'AMT', 'AMOUNT', 'VALUE', 'TITLE', 'STATUS', 'ITEM', 'PRICE', 'COST')):
+                continue
+            if 'PO#' in c_upper or 'PO_NO' in c_upper or 'PO NO' in c_upper or 'NUM/PO#' in c_upper or '/ PO#' in c_upper or '/PO#' in c_upper:
+                return c
+                
+        # Priority 3: Contains 'PO' as a word boundary, e.g. "GL PO" or "Document Number / PO"
+        for c in cols:
+            c_upper = c.upper()
+            if any(x in c_upper for x in ('DESC', 'DATE', 'AMT', 'AMOUNT', 'VALUE', 'TITLE', 'STATUS', 'ITEM', 'PRICE', 'COST')):
+                continue
+            if re.search(r'\bPO\b', c_upper) or 'PO/' in c_upper or '/PO' in c_upper or '/ PO' in c_upper:
+                return c
+                
+        return None
+
+
+    @staticmethod
     def _strip_col_headers(df: 'pd.DataFrame') -> 'pd.DataFrame':
         """Strip leading/trailing whitespace from all column names and
         collapse any runs of internal whitespace to a single space.
@@ -126,35 +156,32 @@ class TransactionalDetailReader:
         rename: dict[str, str] = {}
 
         # ── Period / Month ───────────────────────────────────────────────────
-        if 'Accounting Period' not in df.columns:
-            for alias in ('Month', 'Fiscal Year/Period', 'Period'):
+        month_target = self.colmap.get('month', 'Accounting Period')
+        if month_target not in df.columns:
+            for alias in ('Accounting Period', 'Fiscal Year/Period', 'Period', 'Month'):
                 if alias in df.columns:
-                    rename[alias] = 'Accounting Period'
+                    rename[alias] = month_target
                     break
 
         # ── PO Number ────────────────────────────────────────────────────────
         po_target  = self.colmap.get('po', 'PO Number')
         cls_target = self.colmap.get('classifier', 'AP Voucher Number')
         if po_target not in df.columns:
-            for alias in (
-                'Document Number / PO#',   # AP07 2026
-                'Document num/PO#',        # Shalisha AP12
-            ):
-                if alias in df.columns:
-                    # When the Consolidated file also has a Vendor Invoice column,
-                    # that column is the real classifier (2=Accrual/Reversal,
-                    # 5=Invoice, 9=Reclass).  Do NOT copy the PO column into
-                    # cls_target — leave cls_target to be filled by Vendor Invoice
-                    # in the classifier block below so _categorize_row works correctly.
-                    if (
-                        cls_target != po_target
-                        and cls_target not in df.columns
-                        and 'Vendor Invoice' not in df.columns
-                    ):
-                        df = df.copy()
-                        df[cls_target] = df[alias]
-                    rename[alias] = po_target
-                    break
+            found_po = self._find_po_column(df.columns)
+            if found_po:
+                # When the Consolidated file also has a Vendor Invoice column,
+                # that column is the real classifier (2=Accrual/Reversal,
+                # 5=Invoice, 9=Reclass).  Do NOT copy the PO column into
+                # cls_target — leave cls_target to be filled by Vendor Invoice
+                # in the classifier block below so _categorize_row works correctly.
+                if (
+                    cls_target != po_target
+                    and cls_target not in df.columns
+                    and 'Vendor Invoice' not in df.columns
+                ):
+                    df = df.copy()
+                    df[cls_target] = df[found_po]
+                rename[found_po] = po_target
 
         # ── WBS ──────────────────────────────────────────────────────────────
         wbs_target = self.colmap.get('wbs', 'WBS Element')
@@ -164,6 +191,7 @@ class TransactionalDetailReader:
                 'WBS Hierarchy',        # Shalisha AP03
                 'WBS Element',
                 'WBS/Internal Order',   # Shalisha AP12 (trailing space normalised by _strip_col_headers)
+                'WBS',
             ):
                 if alias in df.columns:
                     rename[alias] = wbs_target
@@ -171,11 +199,33 @@ class TransactionalDetailReader:
 
         # ── Amount (BER) ─────────────────────────────────────────────────────
         amt_target = self.colmap.get('amount', 'GL BER Corp Amount')
-        if amt_target not in df.columns:
-            for alias in ('Amount - BER', 'Amount - MAR', 'Amount'):
-                if alias in df.columns:
-                    rename[alias] = amt_target
-                    break
+        
+        # Priority mapping for Amount columns:
+        # We prefer columns containing 'BER' (such as 'Amount - BER' or 'GL BER Corp Amount') over generic 'Amount'
+        best_amt_col = None
+        cols_set = set(df.columns)
+        
+        if 'Amount - BER' in cols_set:
+            best_amt_col = 'Amount - BER'
+        else:
+            ber_cols = [c for c in df.columns if 'BER' in c]
+            if ber_cols:
+                if amt_target in ber_cols:
+                    best_amt_col = amt_target
+                else:
+                    best_amt_col = ber_cols[0]
+            elif amt_target in cols_set:
+                best_amt_col = amt_target
+            elif 'Amount - MAR' in cols_set:
+                best_amt_col = 'Amount - MAR'
+            elif 'Amount' in cols_set:
+                best_amt_col = 'Amount'
+                
+        if best_amt_col and best_amt_col != amt_target:
+            if amt_target in df.columns:
+                df = df.copy()
+                df = df.drop(columns=[amt_target])
+            rename[best_amt_col] = amt_target
 
         # ── Cost Center / P3 ID ──────────────────────────────────────────────
         # Both Consolidated formats have a 'P3 ID' column that holds the real
@@ -183,7 +233,7 @@ class TransactionalDetailReader:
         # Map 'P3 ID' → cc_target so downstream P3-ID matching works correctly.
         cc_target = self.colmap.get('cost_center', 'Cost Center*')
         if cc_target not in df.columns:
-            for alias in ('P3 ID', 'Cost Center'):
+            for alias in ('P3 ID', 'Cost Center', 'CC ID', 'Cost Center*'):
                 if alias in df.columns:
                     rename[alias] = cc_target
                     break
@@ -260,14 +310,25 @@ class TransactionalDetailReader:
                         break
 
         # Period
-        _swap(['Month', 'Fiscal Year/Period', 'Period'], 'Accounting Period')
-        # PO Number — both Consolidated variants
-        _swap(['GL PO Number', 'Document Number / PO#', 'Document num/PO#'],
-              self.colmap.get('po', 'PO Number'))
+        _swap(['Month', 'Fiscal Year/Period', 'Period', 'Accounting Period'], self.colmap.get('month', 'Accounting Period'))
+        # PO Number — both Consolidated variants and loose formatting
+        found_po_col = self._find_po_column(preview.columns)
+        if found_po_col:
+            _swap([found_po_col], self.colmap.get('po', 'PO Number'))
+        else:
+            _swap(['GL PO Number', 'Document Number / PO#', 'Document num/PO#', 'PO Number', 'PO#', 'PO'],
+                  self.colmap.get('po', 'PO Number'))
         # WBS — all variants (_strip_col_headers normalises trailing/extra spaces)
-        _swap(['WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order'],
+        _swap(['WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order', 'WBS'],
               self.colmap.get('wbs', 'WBS Element'))
-        _swap(['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount'))
+        
+        # Amount - BER vs Amount
+        ber_cols = [c for c in cols if isinstance(c, str) and 'BER' in c]
+        if ber_cols:
+            _swap(ber_cols + ['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount'))
+        else:
+            _swap(['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount'))
+
         _swap(['GL Transaction Amount', 'Amount - BER', 'Amount'], 'GL Transaction Amount')
         _swap(['Vendor Invoice', 'AP Voucher Number', 'Document Number / PO#', 'Document num/PO#'],
               self.colmap.get('classifier', 'AP Voucher Number'))
@@ -280,10 +341,10 @@ class TransactionalDetailReader:
         for req in list(self.required_cols):
             if req not in cols:
                 for alias_list, target in [
-                    (['Month', 'Fiscal Year/Period', 'Period'], 'Accounting Period'),
-                    (['GL PO Number', 'Document Number / PO#', 'Document num/PO#'],
+                    (['Month', 'Fiscal Year/Period', 'Period', 'Accounting Period'], self.colmap.get('month', 'Accounting Period')),
+                    ([found_po_col] if found_po_col else ['GL PO Number', 'Document Number / PO#', 'Document num/PO#', 'PO Number', 'PO#', 'PO'],
                      self.colmap.get('po', 'PO Number')),
-                    (['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount')),
+                    (['Amount - BER', 'Amount - MAR', 'Amount'] + [c for c in preview.columns if isinstance(c, str) and 'BER' in c], self.colmap.get('amount', 'GL BER Corp Amount')),
                     (['GL Transaction Amount', 'Amount'], 'GL Transaction Amount'),
                 ]:
                     if req in alias_list and target in cols:
@@ -312,7 +373,39 @@ class TransactionalDetailReader:
                     header_map[sheet] = header
 
             if not valid_sheets:
-                raise ValueError("No valid sheets found containing required transactional columns.")
+                # Compile a helpful diagnostic of why the sheets failed the required columns check
+                sheet_diagnostics = []
+                for sheet in xls.sheet_names:
+                    try:
+                        hdr = self._detect_header_row(sheet)
+                        preview = pd.read_excel(self.file_path, sheet_name=sheet, header=hdr, nrows=5)
+                        preview = self._strip_col_headers(preview)
+                        # Find which required columns were missing
+                        cols = set(preview.columns)
+                        found_period = any(x in cols for x in ('Month', 'Fiscal Year/Period', 'Period', 'Accounting Period'))
+                        found_po = self._find_po_column(preview.columns) is not None
+                        found_wbs = any(x in cols for x in ('WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order', 'WBS'))
+                        found_amount = any(isinstance(c, str) and 'BER' in c for c in cols) or any(x in cols for x in ('Amount - BER', 'Amount - MAR', 'Amount'))
+                        
+                        missing_status = []
+                        if not found_period: missing_status.append("Period/Month")
+                        if not found_po: missing_status.append("PO Number")
+                        if not found_wbs: missing_status.append("WBS Code")
+                        if not found_amount: missing_status.append("Amount")
+                        
+                        if missing_status:
+                            sheet_diagnostics.append(f"Sheet '{sheet}': Missing {', '.join(missing_status)}")
+                        else:
+                            sheet_diagnostics.append(f"Sheet '{sheet}': Layout looks valid but other required check failed")
+                    except Exception as sheet_err:
+                        sheet_diagnostics.append(f"Sheet '{sheet}': Error scanning layout ({sheet_err})")
+                
+                raise ValueError(
+                    f"No valid sheets found containing the required transactional columns in the file '{self.file_path}'. "
+                    f"Required columns include PO Number, WBS Element, Period/Month, and Amount. "
+                    f"All scanned worksheets in this workbook: {xls.sheet_names}. "
+                    f"Detailed diagnostics per worksheet:\n  " + "\n  ".join(sheet_diagnostics)
+                )
 
             print(f"Loading valid sheets: {valid_sheets}")
 
@@ -362,6 +455,8 @@ class TransactionalDetailReader:
             # fix up anything that failed individually.
             po_col_name = self.colmap['po']
             _po_s = self.data[po_col_name].astype(str).str.strip()
+            # Save the original raw PO column values before any cleaning/normalization
+            self.data['Original_PO_Doc_No'] = _po_s
             # Rows that look like plain integers (digits only, optionally .0)
             _int_mask = _po_s.str.fullmatch(r'-?\d+(?:\.\d+)?')
             if _int_mask.any():
@@ -377,13 +472,61 @@ class TransactionalDetailReader:
                     pass
             self.data[po_col_name] = _po_s
 
+            # ── Convert Reclass rows without 95 POs into POs ──────────────────────
+            # "If the P3 ID has a reclass and there is not a 9500863325 (Example) in
+            #  the Document num column or in the CO Doc Line Item Txt line than you
+            #  can treat it as a PO and put it on the front of the template.
+            #  next to the 900 whatever please put RC so people know it was a reclass"
+            type_col_name = self.colmap.get('type', 'Type')
+            _co_doc_col   = 'CO Doc Line Item Txt'
+            if type_col_name in self.data.columns and po_col_name in self.data.columns:
+                is_reclass = self.data[type_col_name] == 'Reclass'
+                if is_reclass.any():
+                    po_series = self.data[po_col_name].astype(str).str.strip()
+                    has_95_in_po = po_series.str.contains(r'\b95\d{8,}\b', regex=True, na=False)
+
+                    has_95_in_co_doc = pd.Series(False, index=self.data.index)
+                    if _co_doc_col in self.data.columns:
+                        co_doc_series = self.data[_co_doc_col].astype(str).str.strip()
+                        has_95_in_co_doc = co_doc_series.str.contains(r'\b95\d{8,}\b', regex=True, na=False)
+
+                    reclass_to_po_mask = is_reclass & ~has_95_in_po & ~has_95_in_co_doc
+
+                    # Ensure we have a valid non-empty document number
+                    _PLACEHOLDERS = {'', 'none', 'nan', '#', 'not assigned'}
+                    valid_doc_num = (
+                        po_series.notna()
+                        & (po_series != '')
+                        & (~po_series.str.lower().isin(_PLACEHOLDERS))
+                    )
+                    final_mask = reclass_to_po_mask & valid_doc_num
+
+                    if final_mask.any():
+                        self.data.loc[final_mask, po_col_name] = po_series[final_mask] + " RC"
+                        self.data.loc[final_mask, type_col_name] = 'Actual'
+                        n_converted = int(final_mask.sum())
+                        print(f"  - Converted {n_converted} Reclass row(s) without 95 PO to Actual PO rows (appended ' RC').")
+
+            # ── OpEx '9'-prefix Reclass → separate RECLASS line ──────────────────
+            is_opex = "Amount - BER" not in self.required_cols
+            if is_opex and type_col_name in self.data.columns and po_col_name in self.data.columns:
+                cls_col_name = self.colmap.get("classifier", "AP Voucher Number")
+                if cls_col_name in self.data.columns:
+                    is_reclass_nine = (self.data[type_col_name] == 'Reclass') & (self.data[cls_col_name].astype(str).str.strip().str.startswith('9'))
+                    if is_reclass_nine.any():
+                        wbs_col_name = self.colmap.get('wbs', 'WBS Element')
+                        if wbs_col_name in self.data.columns:
+                            self.data.loc[is_reclass_nine, po_col_name] = "RECLASS"
+                            self.data.loc[is_reclass_nine, wbs_col_name] = "RECLASS"
+                            self.data.loc[is_reclass_nine, type_col_name] = "Actual"
+                            n_reclass_nine = int(is_reclass_nine.sum())
+                            print(f"  - Converted {n_reclass_nine} '9'-prefix Reclass row(s) to separate 'RECLASS' line(s) under Actual.")
+
             # ── Resolve non-95 PO rows via CO Doc Line Item Txt (vectorised) ────
             # Rows where Document num/PO# does NOT start with '95' are not real
             # vendor POs.  The actual PO may be embedded in CO Doc Line Item Txt:
             #   "AC01-- 9500852590 -AMPS ACCELERATION AP01 ACCRUALS"
             # Vectorised: use Series.str.extract (regex engine stays in C).
-            type_col_name = self.colmap.get('type', 'Type')
-            _co_doc_col   = 'CO Doc Line Item Txt'
             if po_col_name in self.data.columns:
                 po_series  = self.data[po_col_name].astype(str).str.strip()
                 is_real_po = po_series.str.startswith('95')
@@ -392,7 +535,7 @@ class TransactionalDetailReader:
                     if type_col_name in self.data.columns
                     else pd.Series(False, index=self.data.index)
                 )
-                non_po_mask = ~is_real_po & ~is_er_row
+                non_po_mask = ~is_real_po & ~is_er_row & ~po_series.str.endswith(' RC', na=False)
 
                 if non_po_mask.any() and _co_doc_col in self.data.columns:
                     # str.extract returns the first capture group (vectorised C loop)
@@ -822,7 +965,12 @@ class TransactionalDetailReader:
             cols.append(country_col)
         missing = [c for c in cols if c not in self.data.columns]
         if missing:
-            raise ValueError(f"Missing required columns: {missing}")
+            raise ValueError(
+                f"Missing required columns in the loaded transactional dataset: {missing}. "
+                f"These columns are required for the transactional aggregation process. "
+                f"Please verify that your config colmap and raw sheet columns align. "
+                f"Available columns in the dataset after normalization: {list(self.data.columns)}"
+            )
         data_copy = self.data[cols].copy()
         # Ensure amount column is numeric
         data_copy[self.colmap["amount"]] = pd.to_numeric(
@@ -1108,7 +1256,12 @@ class TransactionalDetailReader:
         required = [self.colmap["po"], self.colmap["wbs"], self.colmap["cost_center"]]
         missing_cols = [c for c in required if c not in self.data.columns]
         if missing_cols:
-            raise ValueError(f"Missing required columns for hierarchy map: {missing_cols}")
+            raise ValueError(
+                f"Missing required columns for building the hierarchy map: {missing_cols}. "
+                f"These fields (PO Number, WBS Element, and Cost Center) must be mapped to valid columns in your dataset. "
+                f"Please inspect config mapping or sheet header row. "
+                f"Available columns in normalized dataset: {list(self.data.columns)}"
+            )
 
         # Legal entity column is optional — gracefully absent when not in colmap or file
         le_col = self.colmap.get("legal_entity")
@@ -1167,6 +1320,11 @@ class TransactionalDetailReader:
             else:
                 req_title_col = None
 
+        # Project Name column is optional — gracefully absent when not in colmap or file
+        project_name_col = self.colmap.get("project_name")
+        if project_name_col and project_name_col not in self.data.columns:
+            project_name_col = None
+
         # Pre-compute the most frequent real req_title per PO (mode).
         # Uses case-insensitive filtering so "Not assigned" etc. are excluded.
         # PO key is cast to string+strip to match the normalized po used in the lookup.
@@ -1216,6 +1374,12 @@ class TransactionalDetailReader:
             country_s = _clean_series(self.data[country_col])
         else:
             country_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
+
+        # Project Name
+        if project_name_col:
+            project_name_s = _clean_series(self.data[project_name_col])
+        else:
+            project_name_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
 
         # Vendor — map pre-computed best value via PO key
         if vendor_by_po:
@@ -1267,6 +1431,7 @@ class TransactionalDetailReader:
             desc_series['gl_line_desc'],
             desc_series['gl_trans_desc'],
             desc_series['description'],
+            project_name_s,
         ))
         result = {
             idx: {
@@ -1281,8 +1446,9 @@ class TransactionalDetailReader:
                 'gl_line_desc': gld  if gld  != 'None' and gld  is not None else None,
                 'gl_trans_desc':gtd  if gtd  != 'None' and gtd  is not None else None,
                 'description':  dsc  if dsc  != 'None' and dsc  is not None else None,
+                'project_name': prj  if prj  != 'None' and prj  is not None else None,
             }
-            for idx, po, wbs, cc, le, ctr, vnd, gl, req, gld, gtd, dsc in records
+            for idx, po, wbs, cc, le, ctr, vnd, gl, req, gld, gtd, dsc, prj in records
         }
 
         print(f"Hierarchy map built: {len(result)} rows processed.")

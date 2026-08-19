@@ -329,7 +329,6 @@ class PipelineOrchestrator:
         self._update_progress(90)
         template_writer.write_exception_data_sheet(self.exception_log)
         template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
-        template_writer.write_exception_summary_sheet(self.exception_log)
         self._update_progress(95)
         template_writer.save()
 
@@ -371,6 +370,9 @@ class PipelineOrchestrator:
             'req_title':    'CO Doc Line Item Txt',
             'type':         'Type',
         }
+        if 'transactional_detail_reader' in self.config and 'colmap' in self.config['transactional_detail_reader']:
+            proj_colmap.update(self.config['transactional_detail_reader']['colmap'])
+
         transactional_reader = TransactionalDetailReader(
             file_path=file_paths['transactional'],
             required_cols=['Amount - BER'],
@@ -466,7 +468,6 @@ class PipelineOrchestrator:
         self._update_progress(90)
         template_writer.write_exception_data_sheet(self.exception_log)
         template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
-        template_writer.write_exception_summary_sheet(self.exception_log)
         self._update_progress(95)
         template_writer.save()
 

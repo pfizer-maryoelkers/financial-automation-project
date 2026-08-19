@@ -23,6 +23,7 @@ class PO:
     gross_po_value: Optional[float] = None
     req_title: Optional[str] = None
     real_wbs: Optional[str] = None  # Actual WBS from transactional file when PO is an ER
+    project_name: Optional[str] = None
 @dataclass
 class WBSCode:
     wbs_code: str
@@ -63,6 +64,7 @@ class ExceptionType(Enum):
     UNMATCHED_TRANSACTION = "Unmatched Transaction"
     PO_NOT_ON_TEMPLATE = "PO Not on Template"
     UNMATCHED_P3 = "Unmatched P3 ID"
+    DOUBLE_CHECK = "Double Check"
 @dataclass
 class ExceptionEntry:
     exception_type: ExceptionType

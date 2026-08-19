@@ -143,21 +143,32 @@ def build_project_hierarchy(
             vendor_name  = row.get('vendor_name')
             gl_account   = row.get('gl_account')
             req_title    = row.get('req_title')
+            project_name = row.get('project_name')
 
             source_row_data = transactional_df.loc[row_idx].to_dict() if row_idx in transactional_df.index else {}
             month      = source_row_data.get('Accounting Period')
             amount     = source_row_data.get('GL BER Corp Amount')
             trans_type = source_row_data.get('Type')
 
+            # ── Exception: Document/PO starting with '2' (double check) ─────
+            orig_po = source_row_data.get('Original_PO_Doc_No') or po
+            if orig_po and str(orig_po).strip().startswith('2'):
+                exception_log.log(
+                    ExceptionType.DOUBLE_CHECK,
+                    row_index=row_idx, po=orig_po, wbs=wbs,
+                    cost_center=p3_id, month=month, amount=amount,
+                    transaction_type=trans_type, source_row_data=source_row_data,
+                )
+                continue
+
             # ── Exception: unrecognised transaction type ────────────────────
             if trans_type not in _KNOWN_TYPES:
-                if template_pos and po and po in template_pos:
-                    exception_log.log(
-                        ExceptionType.UNMATCHED_TRANSACTION,
-                        row_index=row_idx, po=po, wbs=wbs,
-                        cost_center=p3_id, month=month, amount=amount,
-                        transaction_type=trans_type, source_row_data=source_row_data,
-                    )
+                exception_log.log(
+                    ExceptionType.UNMATCHED_TRANSACTION,
+                    row_index=row_idx, po=po, wbs=wbs,
+                    cost_center=p3_id, month=month, amount=amount,
+                    transaction_type=trans_type, source_row_data=source_row_data,
+                )
                 continue
 
             # ── Exception: Reclass ──────────────────────────────────────────
@@ -177,13 +188,12 @@ def build_project_hierarchy(
                     po, wbs = er_found, "ER"
                     er_extracted_count += 1
                 else:
-                    if template_pos:
-                        exception_log.log(
-                            ExceptionType.MISSING_WBS_AND_PO,
-                            row_index=row_idx, cost_center=p3_id,
-                            month=month, amount=amount,
-                            transaction_type=trans_type, source_row_data=source_row_data,
-                        )
+                    exception_log.log(
+                        ExceptionType.MISSING_WBS_AND_PO,
+                        row_index=row_idx, cost_center=p3_id,
+                        month=month, amount=amount,
+                        transaction_type=trans_type, source_row_data=source_row_data,
+                    )
                     continue
 
             if po and not wbs:
@@ -197,23 +207,21 @@ def build_project_hierarchy(
                     er_extracted_count += 1
 
             if not wbs:
-                if template_pos:
-                    exception_log.log(
-                        ExceptionType.MISSING_WBS,
-                        row_index=row_idx, po=po, cost_center=p3_id,
-                        month=month, amount=amount,
-                        transaction_type=trans_type, source_row_data=source_row_data,
-                    )
+                exception_log.log(
+                    ExceptionType.MISSING_WBS,
+                    row_index=row_idx, po=po, cost_center=p3_id,
+                    month=month, amount=amount,
+                    transaction_type=trans_type, source_row_data=source_row_data,
+                )
                 wbs = "NO_WBS"
 
             if not po:
-                if template_pos:
-                    exception_log.log(
-                        ExceptionType.MISSING_PO,
-                        row_index=row_idx, wbs=wbs, cost_center=p3_id,
-                        month=month, amount=amount,
-                        transaction_type=trans_type, source_row_data=source_row_data,
-                    )
+                exception_log.log(
+                    ExceptionType.MISSING_PO,
+                    row_index=row_idx, wbs=wbs, cost_center=p3_id,
+                    month=month, amount=amount,
+                    transaction_type=trans_type, source_row_data=source_row_data,
+                )
                 continue
 
             # ── Duplicate WBS ───────────────────────────────────────────────
@@ -283,6 +291,8 @@ def build_project_hierarchy(
                 po_obj.gl_account = gl_account
             if po_obj.req_title is None and req_title is not None:
                 po_obj.req_title = req_title
+            if po_obj.project_name is None and project_name is not None:
+                po_obj.project_name = project_name
 
             # ── Monthly metrics from transactional data ─────────────────────
             po_lookup = str(po).strip().upper() if wbs == "ER" and po else po
@@ -388,6 +398,17 @@ def build_project_hierarchy(
         trans_type = source_row_data.get('Type')
         po         = row.get('po')
         wbs        = row.get('wbs')
+
+        # ── Exception: Document/PO starting with '2' (double check) ─────
+        orig_po = source_row_data.get('Original_PO_Doc_No') or po
+        if orig_po and str(orig_po).strip().startswith('2'):
+            exception_log.log(
+                ExceptionType.DOUBLE_CHECK,
+                row_index=row_idx, po=orig_po, wbs=wbs, cost_center=cost_center,
+                month=month, amount=amount,
+                transaction_type=trans_type, source_row_data=source_row_data,
+            )
+            continue
 
         if not po:
             exception_log.log(

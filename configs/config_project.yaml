@@ -49,6 +49,7 @@ transactional_detail_reader:
     gl_account: "Cost Element"
     req_title: "CO Doc Line Item Txt"
     type: "Type"
+    project_name: "Project Name"
 
 # ============================
 ## Template Writer

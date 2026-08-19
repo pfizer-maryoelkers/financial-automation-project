@@ -96,7 +96,6 @@ def _run_opex(config: dict) -> None:
     exception_log.summary()
     template_writer.write_exception_data_sheet(exception_log)
     template_writer.write_exception_sheet(exception_log, transactional_reader.data, pos=pos)
-    template_writer.write_exception_summary_sheet(exception_log)
     template_writer.save()
 
 
@@ -139,6 +138,7 @@ def _run_project(config: dict) -> None:
         dec_acc_reversal_col=tw["dec_acc_reversal_col"],
         forecast_source_cols=tw["forecast_source_cols"],
         transactional_source_cols=tw["transactional_source_cols"],
+        p3_id_column=t.get("p3_id_col"),
     )
 
     print("============  PROJECT PIPELINE  ============")
@@ -179,7 +179,6 @@ def _run_project(config: dict) -> None:
     exception_log.summary()
     template_writer.write_exception_data_sheet(exception_log)
     template_writer.write_exception_sheet(exception_log, transactional_reader.data, pos=pos)
-    template_writer.write_exception_summary_sheet(exception_log)
     template_writer.save()
 
 

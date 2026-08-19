@@ -263,8 +263,12 @@ class ForecastReader:
         if self.data is None:
             try:
                 self.load_forecast()
-            except:
-                raise ValueError("Forecast data not loaded. Call load_forecast() first.")
+            except Exception as e:
+                raise ValueError(
+                    f"Forecast data was not loaded successfully, and automatic loading failed. "
+                    f"Please verify that the forecast file path exists and is a valid Excel document. "
+                    f"Internal load error: {e}"
+                )
 
         # Identify forecast columns (those ending with '- FTotal')
         forecast_cols = [col for col in self.data.columns if col.endswith('- FTotal')]
