@@ -187,6 +187,7 @@ class TransactionalDetailReader:
         wbs_target = self.colmap.get('wbs', 'WBS Element')
         if wbs_target not in df.columns:
             for alias in (
+                'Planful WBS Element',
                 'WBS HIERARCHY',        # AP07 2026
                 'WBS Hierarchy',        # Shalisha AP03
                 'WBS Element',
@@ -319,7 +320,7 @@ class TransactionalDetailReader:
             _swap(['GL PO Number', 'Document Number / PO#', 'Document num/PO#', 'PO Number', 'PO#', 'PO'],
                   self.colmap.get('po', 'PO Number'))
         # WBS — all variants (_strip_col_headers normalises trailing/extra spaces)
-        _swap(['WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order', 'WBS'],
+        _swap(['Planful WBS Element', 'WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order', 'WBS'],
               self.colmap.get('wbs', 'WBS Element'))
         
         # Amount - BER vs Amount
@@ -384,7 +385,7 @@ class TransactionalDetailReader:
                         cols = set(preview.columns)
                         found_period = any(x in cols for x in ('Month', 'Fiscal Year/Period', 'Period', 'Accounting Period'))
                         found_po = self._find_po_column(preview.columns) is not None
-                        found_wbs = any(x in cols for x in ('WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order', 'WBS'))
+                        found_wbs = any(x in cols for x in ('Planful WBS Element', 'WBS HIERARCHY', 'WBS Hierarchy', 'WBS Element', 'WBS/Internal Order', 'WBS'))
                         found_amount = any(isinstance(c, str) and 'BER' in c for c in cols) or any(x in cols for x in ('Amount - BER', 'Amount - MAR', 'Amount'))
                         
                         missing_status = []
@@ -1027,12 +1028,8 @@ class TransactionalDetailReader:
 
             is_intl = str(po).strip() in intl_po_set
 
-            # Accruals/Reversals:
-            #   US POs  → current month (no shift).
-            #   Intl POs → same as Actuals, i.e. month − 1 (they operate identically
-            #              to US POs but their fiscal year closes in November, so every
-            #              transaction type is shifted back one month).
-            accrual_month = actual_month if is_intl else self.month_map.get(month_num)
+            # Accruals/Reversals follow the same month placement as Actuals.
+            accrual_month = actual_month
 
             # Initialize PO
             if po not in result:
@@ -1207,6 +1204,15 @@ class TransactionalDetailReader:
                 month_label = "Dec (PY)"
             else:
                 month_label = self.month_map.get(month_num - 1)
+
+            alt_month_label = self.month_map.get(month_num)
+
+            po_key = po
+            if po_key not in result and po_key.replace('.', '', 1).replace('-', '', 1).isdigit():
+                try:
+                    po_key = str(int(float(po_key)))
+                except (ValueError, OverflowError):
+                    po_key = po
             if not month_label:
                 continue
 
@@ -1220,11 +1226,15 @@ class TransactionalDetailReader:
                     description = val
                     break
 
-            if po not in result:
-                result[po] = {}
-            if month_label not in result[po]:
-                result[po][month_label] = []
-            result[po][month_label].append((amount, description))
+            if po_key not in result:
+                result[po_key] = {}
+            if month_label not in result[po_key]:
+                result[po_key][month_label] = []
+            result[po_key][month_label].append((amount, description))
+            if alt_month_label and alt_month_label != month_label:
+                if alt_month_label not in result[po_key]:
+                    result[po_key][alt_month_label] = []
+                result[po_key][alt_month_label].append((amount, description))
 
         print(f"Reclass notes collected for {len(result)} PO(s).")
         return result

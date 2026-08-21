@@ -215,6 +215,7 @@ class PipelineOrchestrator:
             reclass_data=reclass_data,
             reclass_notes=reclass_notes,
             template_pos=template_reader.pos,
+            template_rows=template_reader.template_rows,
             intl_po_set=intl_po_set,
         )
         self.logger.info(f"Hierarchy built: {len(self.exception_log.entries)} exceptions")
@@ -244,10 +245,7 @@ class PipelineOrchestrator:
         pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
         pos = template_writer.insert_er_rows(hierarchy, pos=pos)
         template_writer.write_hierarchy(hierarchy, pos=pos)
-        self._progress(75)
-        template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
         self._progress(80)
-        template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
         self.logger.info("Template written")
         self._progress(85)
 

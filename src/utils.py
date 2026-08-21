@@ -118,6 +118,7 @@ def build_hierarchy(
     reclass_data: dict | None = None,
     reclass_notes: dict | None = None,
     template_pos: dict | None = None,
+    template_rows: dict | None = None,
     intl_po_set: set | None = None,
 ) -> dict[str, CostCenter]:
     
@@ -184,23 +185,39 @@ def build_hierarchy(
 
             # Handling Exceptions (in priority order)
 
-            # Check 0a: Unmatched transaction type — not Actual, Accrual, Reversal,
-            # Reclass, or ER. Only log when the PO appears on the front template tab
-            # so exceptions stay relevant to what's already being tracked.
+            # Track whether the PO already exists on the front template for the
+            # same cost center, but do not stop hierarchy/main-tab processing.
             _KNOWN_TYPES = {"Actual", "Accrual", "Reversal", "Reclass", "ER"}
+            template_row = template_rows.get(po) if (template_rows and po) else None
+            template_cc = template_row.get('cost_center') if isinstance(template_row, dict) else None
+            is_on_front_for_cost_center = template_cc == cc_id
+
+            if not is_on_front_for_cost_center:
+                exception_log.log(
+                    ExceptionType.NOT_WORKED_ON_TEMPLATE,
+                    row_index=row_idx,
+                    po=po,
+                    wbs=wbs,
+                    cost_center=cc_id,
+                    month=month,
+                    amount=amount,
+                    transaction_type=trans_type,
+                    vendor_name=vendor_name,
+                    source_row_data=source_row_data
+                )
+
             if trans_type not in _KNOWN_TYPES:
-                if template_pos and po and po in template_pos:
-                    exception_log.log(
-                        ExceptionType.UNMATCHED_TRANSACTION,
-                        row_index=row_idx,
-                        po=po,
-                        wbs=wbs,
-                        cost_center=cc_id,
-                        month=month,
-                        amount=amount,
-                        transaction_type=trans_type,
-                        source_row_data=source_row_data
-                    )
+                exception_log.log(
+                    ExceptionType.UNMATCHED_TRANSACTION,
+                    row_index=row_idx,
+                    po=po,
+                    wbs=wbs,
+                    cost_center=cc_id,
+                    month=month,
+                    amount=amount,
+                    transaction_type=trans_type,
+                    source_row_data=source_row_data
+                )
                 continue
 
             # Check 0b: Reclass rows — log as exceptions then skip. Their amount is
@@ -232,17 +249,18 @@ def build_hierarchy(
                     er_extracted_count += 1
                     # Continue processing with extracted ER as PO
                 else:
-                    # No ER found — only flag when the template already has PO rows
-                    if template_pos:
-                        exception_log.log(
-                            ExceptionType.MISSING_WBS_AND_PO,
-                            row_index=row_idx,
-                            cost_center=cc_id,
-                            month=month,
-                            amount=amount,
-                            transaction_type=trans_type,
-                            source_row_data=source_row_data
-                        )
+                    exception_log.log(
+                        ExceptionType.NOT_WORKED_ON_TEMPLATE,
+                        row_index=row_idx,
+                        po=po,
+                        wbs=wbs,
+                        cost_center=cc_id,
+                        month=month,
+                        amount=amount,
+                        transaction_type=trans_type,
+                        vendor_name=vendor_name,
+                        source_row_data=source_row_data
+                    )
                     continue
 
             # Check 1b: PO exists but looks like a full ER description — extract clean ER number
@@ -261,37 +279,23 @@ def build_hierarchy(
 
             # Check 2: Individual missing checks
             if not wbs:
-                # Only flag when the template already has PO rows
-                if template_pos:
-                    exception_log.log(
-                        ExceptionType.MISSING_WBS,
-                        row_index=row_idx,
-                        po=po,
-                        cost_center=cc_id,
-                        month=month,
-                        amount=amount,
-                        transaction_type=trans_type,
-                        source_row_data=source_row_data
-                    )
                 # Still place the PO on the first tab under a fallback WBS bucket
                 # so the data is visible even though no WBS code was found.
                 wbs = "NO_WBS"
             
             if not po:
-                # Only flag MISSING_PO when the template front tab already has PO rows.
-                # If the template is blank there is nothing to relate the transaction to,
-                # so suppressing the exception avoids noise for new/empty templates.
-                if template_pos:
-                    exception_log.log(
-                        ExceptionType.MISSING_PO,
-                        row_index=row_idx,
-                        wbs=wbs,
-                        cost_center=cc_id,
-                        month=month,
-                        amount=amount,
-                        transaction_type=trans_type,
-                        source_row_data=source_row_data
-                    )
+                exception_log.log(
+                    ExceptionType.NOT_WORKED_ON_TEMPLATE,
+                    row_index=row_idx,
+                    po=po,
+                    wbs=wbs,
+                    cost_center=cc_id,
+                    month=month,
+                    amount=amount,
+                    transaction_type=trans_type,
+                    vendor_name=vendor_name,
+                    source_row_data=source_row_data
+                )
                 continue
 
             # Check 3: Duplicate WBS (WBS owned by multiple cost centers)
@@ -315,7 +319,8 @@ def build_hierarchy(
             seen_wbs[wbs] = cc_id
 
             # Check 4: Duplicate PO
-            if po in seen_pos:
+            already_seen = po in seen_pos
+            if already_seen:
                 prev_cc, prev_wbs = seen_pos[po]
                 if prev_cc != cc_id or prev_wbs != wbs:
                     exception_log.log(
@@ -329,28 +334,11 @@ def build_hierarchy(
                         transaction_type=trans_type,
                         source_row_data=source_row_data
                     )
+
+            if already_seen:
                 continue  # Skip regardless - first occurrence is canonical
 
             seen_pos[po] = (cc_id, wbs)
-
-            # Check 5: PO is in the transactional file for a tracked cost center but
-            # is NOT on the front template tab. Only fires when the template already
-            # has PO rows (populated template) and only logged once per PO.
-            # Log every transaction row for a PO that is not on the template so
-            # the exceptions tab can show per-month amounts and a full total.
-            if template_pos and po not in template_pos and wbs != "ER":
-                exception_log.log(
-                    ExceptionType.PO_NOT_ON_TEMPLATE,
-                    row_index=row_idx,
-                    po=po,
-                    wbs=wbs,
-                    cost_center=cc_id,
-                    month=month,
-                    amount=amount,
-                    transaction_type=trans_type,
-                    vendor_name=vendor_name,
-                    source_row_data=source_row_data
-                )
 
             # Build WBS and PO objects if not already seen
             if wbs not in cost_center.wbs_codes:
@@ -416,28 +404,38 @@ def build_hierarchy(
         # the hierarchy (their Actual total is already in transactional_data).
         if reclass_notes:
             for po_number, month_entries in reclass_notes.items():
-                # Only process POs that belong to this cost center
-                po_in_td = transactional_data.get(po_number, {})
-                if po_in_td.get('cost_center') != cc_id:
+                # First priority: attach to an existing PO already built for this
+                # cost center so the note shows on the main tab.
+                norm_po_number = str(po_number).strip()
+                if norm_po_number.replace('.', '', 1).replace('-', '', 1).isdigit():
+                    try:
+                        norm_po_number = str(int(float(norm_po_number)))
+                    except (ValueError, OverflowError):
+                        pass
+
+                po_obj = None
+                for _wbs_obj in cost_center.wbs_codes.values():
+                    for _existing_po, _existing_obj in _wbs_obj.pos.items():
+                        existing_po = str(_existing_po).strip()
+                        if existing_po.replace('.', '', 1).replace('-', '', 1).isdigit():
+                            try:
+                                existing_po = str(int(float(existing_po)))
+                            except (ValueError, OverflowError):
+                                pass
+                        if existing_po == norm_po_number:
+                            po_obj = _existing_obj
+                            break
+                    if po_obj is not None:
+                        break
+
+                # Fallback: use transactional_data cost center match only when the
+                # PO was not already built in this cost center.
+                if po_obj is None:
+                    po_in_td = transactional_data.get(norm_po_number, {}) or transactional_data.get(po_number, {})
+                    if po_in_td.get('cost_center') != cc_id:
+                        continue
                     continue
-                # Find or create the WBS + PO object
-                wbs_key = po_in_td.get('wbs', 'NO_WBS') or 'NO_WBS'
-                if wbs_key not in cost_center.wbs_codes:
-                    cost_center.wbs_codes[wbs_key] = WBSCode(wbs_code=wbs_key, cost_center=cc_id)
-                if po_number not in cost_center.wbs_codes[wbs_key].pos:
-                    # PO existed only as Reclass rows — build it now from transactional_data
-                    cost_center.wbs_codes[wbs_key].pos[po_number] = PO(po_number=po_number)
-                    po_obj = cost_center.wbs_codes[wbs_key].pos[po_number]
-                    for month, values in po_in_td.items():
-                        if month in ('cost_center', 'wbs', 'gross_ber_total'):
-                            continue
-                        if month not in po_obj.monthly_data:
-                            po_obj.monthly_data[month] = MonthlyMetrics()
-                        po_obj.monthly_data[month].actual = values.get('Actual', 0.0)
-                        po_obj.monthly_data[month].accrual = values.get('Accrual', 0.0)
-                        po_obj.monthly_data[month].accrual_reversal = values.get('Reversal', 0.0)
-                else:
-                    po_obj = cost_center.wbs_codes[wbs_key].pos[po_number]
+
                 # Attach notes — use a set to avoid duplicates
                 for month_label, entries in month_entries.items():
                     if month_label not in po_obj.reclass_adjustments:

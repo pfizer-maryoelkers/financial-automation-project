@@ -95,8 +95,6 @@ def main():
     print("Step 3: Writing template output\n")
     pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
     template_writer.write_hierarchy(hierarchy, pos=pos)
-    template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
-    template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
 
     # ── Step 4: Exception reporting ───────────────────────────────────────
     print("Step 4: Writing exception reports\n")

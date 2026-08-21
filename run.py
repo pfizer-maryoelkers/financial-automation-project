@@ -83,14 +83,13 @@ def _run_opex(config: dict) -> None:
         reclass_data=reclass_data,
         reclass_notes=reclass_notes,
         template_pos=template_reader.pos,
+        template_rows=template_reader.template_rows,
         intl_po_set=intl_po_set,
     )
 
     print("Step 3: Writing template output\n")
     pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
     template_writer.write_hierarchy(hierarchy, pos=pos)
-    template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
-    template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
 
     print("Step 4: Writing exception reports\n")
     exception_log.summary()
@@ -172,8 +171,6 @@ def _run_project(config: dict) -> None:
     print("Step 3: Writing template output\n")
     pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
     template_writer.write_hierarchy(hierarchy, pos=pos)
-    template_writer.write_forecast_source_sheet(forecast_reader.data, pos=pos)
-    template_writer.write_transactional_source_sheet(transactional_reader.data, pos=pos)
 
     print("Step 4: Writing exception reports\n")
     exception_log.summary()

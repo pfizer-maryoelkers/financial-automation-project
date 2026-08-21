@@ -188,12 +188,6 @@ def build_project_hierarchy(
                     po, wbs = er_found, "ER"
                     er_extracted_count += 1
                 else:
-                    exception_log.log(
-                        ExceptionType.MISSING_WBS_AND_PO,
-                        row_index=row_idx, cost_center=p3_id,
-                        month=month, amount=amount,
-                        transaction_type=trans_type, source_row_data=source_row_data,
-                    )
                     continue
 
             if po and not wbs:
@@ -207,21 +201,9 @@ def build_project_hierarchy(
                     er_extracted_count += 1
 
             if not wbs:
-                exception_log.log(
-                    ExceptionType.MISSING_WBS,
-                    row_index=row_idx, po=po, cost_center=p3_id,
-                    month=month, amount=amount,
-                    transaction_type=trans_type, source_row_data=source_row_data,
-                )
                 wbs = "NO_WBS"
 
             if not po:
-                exception_log.log(
-                    ExceptionType.MISSING_PO,
-                    row_index=row_idx, wbs=wbs, cost_center=p3_id,
-                    month=month, amount=amount,
-                    transaction_type=trans_type, source_row_data=source_row_data,
-                )
                 continue
 
             # ── Duplicate WBS ───────────────────────────────────────────────
@@ -249,17 +231,6 @@ def build_project_hierarchy(
                 continue
             seen_pos[po] = (p3_id, wbs)
 
-            # ── PO not on template ──────────────────────────────────────────
-            # Log every transaction row so the exceptions tab shows per-month
-            # amounts and vendor details for every missing PO.
-            if template_pos and po not in template_pos and wbs != "ER":
-                exception_log.log(
-                    ExceptionType.PO_NOT_ON_TEMPLATE,
-                    row_index=row_idx, po=po, wbs=wbs, cost_center=p3_id,
-                    month=month, amount=amount,
-                    transaction_type=trans_type, vendor_name=vendor_name,
-                    source_row_data=source_row_data,
-                )
 
             # ── Build Project → WBS → PO objects ───────────────────────────
             if wbs not in p3_obj.wbs_codes:

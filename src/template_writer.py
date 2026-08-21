@@ -39,6 +39,21 @@ def _copy_fill(f: PatternFill) -> PatternFill:
     )
 
 
+
+def _append_comment(existing_comment: Comment | None, new_text: str) -> Comment:
+    """Preserve any existing note/comment text and append the new text."""
+    if existing_comment and existing_comment.text:
+        combined_text = f"{existing_comment.text}\n\n{new_text}"
+    else:
+        combined_text = new_text
+
+    comment = Comment(combined_text, "Financial Automation")
+    line_count = len(combined_text.split('\n'))
+    comment.width = 400
+    comment.height = max(120, 60 + 20 * line_count)
+    return comment
+
+
 def month_sort_key(month_str):
     """Convert month string to sortable key for proper chronological ordering"""
     month_order = {
@@ -130,9 +145,8 @@ class TemplateWriter:
         return existing is None or str(existing).strip() == ""
 
     def _get_po_value_col(self) -> int | None:
-        """Scan the header row for the column that receives the PO total value.
-        Prefers 'invoice amount'; falls back to 'gross po'. Returns None if neither found."""
-        fallback_col = None
+        """Scan the header row for the column that receives invoice amount values.
+        Returns the 'invoice amount' column only; PO Total / Gross PO stays blank."""
         for col in range(1, (self.sheet.max_column or 200) + 1):
             val = self.sheet.cell(row=self.header_row, column=col).value
             if not val:
@@ -140,9 +154,7 @@ class TemplateWriter:
             text = str(val).strip().lower()
             if "invoice amount" in text:
                 return col
-            if "gross po" in text and fallback_col is None:
-                fallback_col = col
-        return fallback_col
+        return None
 
     def _get_req_title_cols(self) -> list[int]:
         """Scan the header row for all requisition/description columns.
@@ -588,7 +600,10 @@ class TemplateWriter:
                 _data_col_indices.add(column_index_from_string(_cl))
         _has_cc_label_col: bool = (
             False if self.p3_id_column is not None
-            else (cc_col_idx not in _data_col_indices)  # col J is free (OpEx template)
+            else (
+                cc_col_idx not in _data_col_indices          # col J is free (OpEx template)
+                and cc_col_idx != self.po_status_col         # never write P3 ID into PO Status
+            )
         )
 
         # Build a reverse map: po_number → cc_id from the hierarchy so that
@@ -612,6 +627,7 @@ class TemplateWriter:
                     'alignment': copy(src.alignment),
                     'number_format': src.number_format,
                     'fill': _copy_fill(src.fill),
+                    'comment': copy(src.comment),
                 }
             return styles, self.sheet.row_dimensions[ref_row].height
 
@@ -658,7 +674,6 @@ class TemplateWriter:
             po_gl_map = {}       # po_number -> gl_account
             po_gross_map = {}    # po_number -> gross_po_value
             po_req_map = {}      # po_number -> req_title
-            po_proj_name_map = {} # po_number -> project_name
             for wbs_code, wbs in cost_center.wbs_codes.items():
                 if wbs_code.upper() == "ER":
                     continue
@@ -674,7 +689,6 @@ class TemplateWriter:
                         po_gl_map[po_number] = po_obj.gl_account
                         po_gross_map[po_number] = po_obj.gross_po_value
                         po_req_map[po_number] = po_obj.req_title
-                        po_proj_name_map[po_number] = getattr(po_obj, 'project_name', None)
 
             if not po_numbers:
                 continue
@@ -738,6 +752,7 @@ class TemplateWriter:
                     new_cell.alignment = copy(s['alignment'])
                     new_cell.number_format = s['number_format']
                     new_cell.fill = _copy_fill(s['fill'])
+                    new_cell.comment = copy(s['comment'])
                 if ref_height:
                     self.sheet.row_dimensions[insert_at].height = ref_height
 
@@ -756,17 +771,14 @@ class TemplateWriter:
                         self.sheet.cell(row=insert_at, column=7, value=gl_val)
                     le_val = po_le_map.get(po_number)
                     if le_val is not None:
-                        self.sheet.cell(row=insert_at, column=8, value=le_val)
+                        self.sheet.cell(row=insert_at, column=9, value=le_val)
                     country_val = po_country_map.get(po_number)
                     if country_val is not None:
-                        self.sheet.cell(row=insert_at, column=9, value=country_val)
+                        self.sheet.cell(row=insert_at, column=10, value=country_val)
                 gross_val = po_gross_map.get(po_number)
-                if gross_val is not None and self.po_value_col is not None:
+                if gross_val is not None and self.po_value_col is not None and self.p3_id_column is None:
                     self.sheet.cell(row=insert_at, column=self.po_value_col, value=round(gross_val, 2))
                 req_val = po_req_map.get(po_number)
-                proj_name_val = po_proj_name_map.get(po_number)
-                if proj_name_val is not None and self.project_name_col is not None:
-                    self.sheet.cell(row=insert_at, column=self.project_name_col, value=proj_name_val)
                 if req_val is not None:
                     for _col in self.req_title_cols:
                         self.sheet.cell(row=insert_at, column=_col, value=req_val)
@@ -814,7 +826,6 @@ class TemplateWriter:
         er_gross_map = {}    # er_number -> gross_po_value
         er_req_map = {}      # er_number -> req_title
         er_wbs_map = {}      # er_number -> real WBS (po.real_wbs if set, else "ER")
-        er_proj_name_map = {} # er_number -> project_name
         seen = set()
         for cc_id, cost_center in hierarchy.items():
             for wbs_code, wbs in cost_center.wbs_codes.items():
@@ -830,7 +841,6 @@ class TemplateWriter:
                             er_gross_map[po_number] = po_obj.gross_po_value
                             er_req_map[po_number] = po_obj.req_title
                             er_wbs_map[po_number] = po_obj.real_wbs or "ER"
-                            er_proj_name_map[po_number] = getattr(po_obj, 'project_name', None)
                             seen.add(po_number)
 
         if not er_numbers:
@@ -867,7 +877,10 @@ class TemplateWriter:
                 _er_data_cols.add(column_index_from_string(_cl))
         _er_has_cc_col: bool = (
             False if self.p3_id_column is not None
-            else (_er_cc_col_idx not in _er_data_cols)
+            else (
+                _er_cc_col_idx not in _er_data_cols          # col J is free (OpEx template)
+                and _er_cc_col_idx != self.po_status_col     # never write P3 ID into PO Status
+            )
         )
 
         def _get_er_ref_styles(ref_row: int) -> tuple[dict, float | None]:
@@ -881,6 +894,7 @@ class TemplateWriter:
                     'alignment': copy(src.alignment),
                     'number_format': src.number_format,
                     'fill': _copy_fill(src.fill),
+                    'comment': copy(src.comment),
                 }
             return styles, self.sheet.row_dimensions[ref_row].height
 
@@ -913,6 +927,7 @@ class TemplateWriter:
                 new_cell.value = None
                 s = ref_styles[col_idx]
                 new_cell.font = copy(s['font'])
+                new_cell.comment = copy(s['comment'])
                 # Normalise top border: always use 'thin' so each new row looks
                 # identical to the reference data rows regardless of insertion order
                 orig_border = s['border']
@@ -949,23 +964,20 @@ class TemplateWriter:
                 gl_val = er_gl_map.get(er)
                 if gl_val is not None:
                     self.sheet.cell(row=insert_at, column=7, value=gl_val)
-                # Write LE into column H
+                # Write LE into column I
                 le_val = er_le_map.get(er)
                 if le_val is not None:
-                    self.sheet.cell(row=insert_at, column=8, value=le_val)
-                # Write Country into column I
+                    self.sheet.cell(row=insert_at, column=9, value=le_val)
+                # Write Country into column J
                 country_val = er_country_map.get(er)
                 if country_val is not None:
-                    self.sheet.cell(row=insert_at, column=9, value=country_val)
+                    self.sheet.cell(row=insert_at, column=10, value=country_val)
             # Write PO total into the correct column (Gross PO Value or Invoice Amount)
             gross_val = er_gross_map.get(er)
-            if gross_val is not None and self.po_value_col is not None:
+            if gross_val is not None and self.po_value_col is not None and self.p3_id_column is None:
                 self.sheet.cell(row=insert_at, column=self.po_value_col, value=round(gross_val, 2))
             # Write Requisition Title into all matching columns
             req_val = er_req_map.get(er)
-            proj_name_val = er_proj_name_map.get(er)
-            if proj_name_val is not None and self.project_name_col is not None:
-                self.sheet.cell(row=insert_at, column=self.project_name_col, value=proj_name_val)
             if req_val is not None:
                 for _col in self.req_title_cols:
                     self.sheet.cell(row=insert_at, column=_col, value=req_val)
@@ -993,6 +1005,16 @@ class TemplateWriter:
         reclass_fill = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
         comments_col = self._get_comments_col()
 
+        # Project template: wipe the entire PO Total column across all data rows so
+        # no pre-existing formula or value survives regardless of whether the PO is
+        # in the hierarchy.
+        if self.p3_id_column is not None and self.po_value_col is not None:
+            for _r in range(self.header_row + 1, (self.sheet.max_row or 1000) + 1):
+                _sentinel = self.sheet.cell(row=_r, column=1).value
+                if _sentinel is not None and str(_sentinel).strip() == "Previous Period Invoices":
+                    break
+                self.sheet.cell(row=_r, column=self.po_value_col).value = None
+
         # Determine the CC/P3-ID label column, and whether one exists at all.
         _cc_write_col = self.p3_id_column if self.p3_id_column else 10
         _wh_data_cols: set[int] = set()
@@ -1001,7 +1023,10 @@ class TemplateWriter:
                 _wh_data_cols.add(column_index_from_string(_cl))
         _has_cc_label_col: bool = (
             False if self.p3_id_column is not None
-            else (_cc_write_col not in _wh_data_cols)
+            else (
+                _cc_write_col not in _wh_data_cols           # col J is free (OpEx template)
+                and _cc_write_col != self.po_status_col      # never write P3 ID into PO Status
+            )
         )
 
         for cc_id, cost_center in hierarchy.items():
@@ -1043,22 +1068,25 @@ class TemplateWriter:
                             if self._should_write(gl_cell.value):
                                 gl_cell.value = po.gl_account
 
-                        # Legal Entity (col H)
+                        # Legal Entity (col I)
                         if po.legal_entity is not None:
-                            le_cell = self.sheet.cell(row=row, column=8)
+                            le_cell = self.sheet.cell(row=row, column=9)
                             if self._should_write(le_cell.value):
                                 le_cell.value = po.legal_entity
 
-                        # Country (col I)
+                        # Country (col J)
                         if po.country is not None:
-                            country_cell = self.sheet.cell(row=row, column=9)
+                            country_cell = self.sheet.cell(row=row, column=10)
                             if self._should_write(country_cell.value):
                                 country_cell.value = po.country
 
                     # PO total (Gross PO Value or Invoice Amount column)
-                    if po.gross_po_value is not None and self.po_value_col is not None:
+                    if self.po_value_col is not None:
                         gross_cell = self.sheet.cell(row=row, column=self.po_value_col)
-                        if self._should_write(gross_cell.value):
+                        if self.p3_id_column is not None:
+                            # Project template — always wipe whatever is there (formula or value).
+                            gross_cell.value = None
+                        elif po.gross_po_value is not None and self._should_write(gross_cell.value):
                             gross_cell.value = round(po.gross_po_value, 2)
 
                     # Requisition title
@@ -1068,12 +1096,9 @@ class TemplateWriter:
                             if self._should_write(req_cell.value):
                                 req_cell.value = po.req_title
 
-                    # Project Name
-                    proj_name_val = getattr(po, 'project_name', None)
-                    if self.project_name_col is not None and proj_name_val is not None:
-                        proj_cell = self.sheet.cell(row=row, column=self.project_name_col)
-                        if self._should_write(proj_cell.value):
-                            proj_cell.value = proj_name_val
+                    # Project Name (projects only) — keep blank
+                    if self.p3_id_column is not None and self.project_name_col is not None:
+                        self.sheet.cell(row=row, column=self.project_name_col).value = None
 
                     # Monthly metric values
                     for month, metrics in po.monthly_data.items():
@@ -1113,26 +1138,20 @@ class TemplateWriter:
                             total_reclass = sum(amt for amt, _ in reclass_entries)
                             original = (metrics.actual or 0) - total_reclass
                             lines = [
-                                f"Original: ${original:,.2f}",
+                                f"Original Amount: ${original:,.2f}",
                                 "Reclass adjustment(s) included in Actual:",
                             ]
                             for amt, desc in reclass_entries:
                                 sign = "+" if amt >= 0 else ""
-                                lines.append(f"  {sign}${amt:,.2f}  —  {desc}")
+                                lines.append(f"  {sign}${amt:,.2f}")
+                                if desc:
+                                    lines.append(f"  Description: {desc}")
                             lines.append(f"Adjusted Total: ${metrics.actual:,.2f}")
                             
-                            existing_comment = actual_cell.comment
-                            if existing_comment and existing_comment.text:
-                                combined_text = f"{existing_comment.text}\n\n" + "\n".join(lines)
-                                comment = Comment(combined_text, "Financial Automation")
-                                line_count = len(combined_text.split('\n'))
-                                comment.width = 400
-                                comment.height = max(120, 60 + 20 * line_count)
-                            else:
-                                comment = Comment("\n".join(lines), "Financial Automation")
-                                comment.width  = 400
-                                comment.height = 120 + 20 * (len(reclass_entries) + 2)
-                            actual_cell.comment = comment
+                            actual_cell.comment = _append_comment(
+                                actual_cell.comment,
+                                "\n".join(lines),
+                            )
 
                     # Total formula — only when the PO has monthly data
                     if po.monthly_data:
@@ -1261,6 +1280,18 @@ class TemplateWriter:
             for col_idx, value in enumerate(row, start=1):
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
+        if not is_project and len(source_df) > 0:
+            data_start = 2
+            data_end = ws.max_row
+            total_row = data_end + 1
+            ws.cell(row=total_row, column=1, value="PO Total")
+
+            for col_idx, col_name in enumerate(source_df.columns, start=1):
+                if col_name in visible_cols and col_name != self.transactional_po_col:
+                    letter = get_column_letter(col_idx)
+                    formula = f"=SUBTOTAL(9,{letter}{data_start}:{letter}{data_end})"
+                    ws.cell(row=total_row, column=col_idx, value=formula)
+
         ws.auto_filter.ref = ws.dimensions
         ws.freeze_panes = "A2"
 
@@ -1298,9 +1329,9 @@ class TemplateWriter:
     def write_exception_sheet(self, exception_log, transactional_df, pos: dict | None = None):
         """Write the Exceptions sheet.
 
-        Shows all exceptions (including PO Not on Template) in a single unified flat table
-        starting at Row 1, with auto-filter across all columns, freeze panes at Row 2,
-        and auto-fitted column widths, exactly matching the formatting of the other source tabs.
+        Shows all exceptions in a single unified flat table starting at Row 1,
+        with auto-filter across all columns, freeze panes at Row 2, and auto-fitted
+        column widths, exactly matching the formatting of the other source tabs.
         """
         ws = self.wb.create_sheet("Exceptions")
 
@@ -1309,10 +1340,6 @@ class TemplateWriter:
         for e in exception_log.entries:
             if e.exception_type == ExceptionType.RECLASS:
                 continue
-            if e.exception_type == ExceptionType.PO_NOT_ON_TEMPLATE:
-                # Exclude POs that were inserted into the template after hierarchy build
-                if pos is not None and self._norm_po(e.po) in pos:
-                    continue
             active_entries.append(e)
 
         # Determine visible headers based on pipeline (P3 ID vs Cost Center)
@@ -1320,13 +1347,13 @@ class TemplateWriter:
         
         if is_project:
             visible_headers = [
-                'Exception Type', 'P3 ID', 'Accounting Period', 'WBS',
+                'P3 ID', 'Accounting Period', 'WBS',
                 'Document Number', 'Source Row', 'Amount', 'Type',
                 'CO Doc Line Item Txt'
             ]
         else:
             visible_headers = [
-                'Exception Type', 'Cost Center', 'Accounting Period', 'WBS',
+                'Cost Center', 'Accounting Period', 'WBS',
                 'PO/ER Number', 'Source Row', 'Amount', 'GL Line Description'
             ]
 
@@ -1343,37 +1370,45 @@ class TemplateWriter:
         # Write data rows
         row = 2
         for entry in active_entries:
-            # Col 1: Exception Type
-            ws.cell(row=row, column=1, value=entry.exception_type.value)
-            # Col 2: Cost Center / P3 ID
-            ws.cell(row=row, column=2, value=entry.cost_center)
-            # Col 3: Accounting Period
-            ws.cell(row=row, column=3, value=entry.month)
-            # Col 4: WBS
-            ws.cell(row=row, column=4, value=entry.wbs)
-            # Col 5: Document Number / PO/ER Number
-            ws.cell(row=row, column=5, value=self._extract_er_number(entry.po))
-            # Col 6: Source Row
-            ws.cell(row=row, column=6, value=entry.row_index)
+            # Col 1: Cost Center / P3 ID
+            ws.cell(row=row, column=1, value=entry.cost_center)
+            # Col 2: Accounting Period
+            ws.cell(row=row, column=2, value=entry.month)
+            # Col 3: WBS
+            ws.cell(row=row, column=3, value=entry.wbs)
+            # Col 4: Document Number / PO/ER Number
+            ws.cell(row=row, column=4, value=self._extract_er_number(entry.po))
+            # Col 5: Source Row
+            ws.cell(row=row, column=5, value=entry.row_index)
             
-            # Col 7: Amount
-            amt_cell = ws.cell(row=row, column=7, value=entry.amount)
+            # Col 6: Amount
+            amt_cell = ws.cell(row=row, column=6, value=entry.amount)
             if entry.amount is not None:
                 amt_cell.number_format = '#,##0.00'
                 
-            # Col 8 and 9 mapping based on pipeline
+            # Col 7 and 8 mapping based on pipeline
             if is_project:
-                # Col 8: Type
-                ws.cell(row=row, column=8, value=entry.transaction_type)
-                # Col 9: CO Doc Line Item Txt
-                ws.cell(row=row, column=9,
+                # Col 7: Type
+                ws.cell(row=row, column=7, value=entry.transaction_type)
+                # Col 8: CO Doc Line Item Txt
+                ws.cell(row=row, column=8,
                         value=entry.source_row_data.get('CO Doc Line Item Txt')
                         if entry.source_row_data else None)
             else:
-                # Col 8: GL Line Description
-                ws.cell(row=row, column=8,
-                        value=entry.source_row_data.get('GL Line Description')
-                        if entry.source_row_data else None)
+                # Col 7: use AP Voucher Number when no PO is attached, otherwise GL Line Description
+                gl_desc = (
+                    entry.source_row_data.get('GL Line Description')
+                    if entry.source_row_data else None
+                )
+                ap_voucher = (
+                    entry.source_row_data.get('AP Voucher Number')
+                    if entry.source_row_data else None
+                )
+                ws.cell(
+                    row=row,
+                    column=7,
+                    value=ap_voucher if not entry.po else gl_desc,
+                )
             row += 1
 
         # Freeze Panes (Row 1 header stays frozen)

@@ -32,6 +32,7 @@ class TemplateReader:
 
         # Read on init
         self.cost_centers = self.get_existing_cost_centers()
+        self.template_rows = self.get_template_rows()
         self.pos = self.get_existing_pos()
 
     def _find_cost_center_start_row(self) -> int:
@@ -92,19 +93,15 @@ class TemplateReader:
         return cost_centers
 
     def get_existing_pos(self) -> dict[str, int]:
-        """
-        Extract PO numbers and their row positions from the template.
-        
-        Returns:
-            dict[str, int]: Mapping of PO number to row number
-            
-        Raises:
-            ValueError: If stop marker is not found in template
-        """
-        stop_row = self._find_stop_row()
-        pos = self._extract_pos_from_rows(stop_row)
+        """Extract PO numbers and their row positions from the template."""
+        pos = {po: data['row'] for po, data in self.template_rows.items()}
         self._log_pos_summary(pos)
         return pos
+
+    def get_template_rows(self) -> dict[str, dict[str, str | int | None]]:
+        """Extract front-tab PO metadata for matching transactions to template rows."""
+        stop_row = self._find_stop_row()
+        return self._extract_pos_from_rows(stop_row)
     
     def _find_stop_row(self) -> int:
         """Find the row containing the stop marker.
@@ -122,14 +119,21 @@ class TemplateReader:
         )
         return max_row + 1  # safe sentinel: loop in _extract_pos_from_rows finds nothing
     
-    def _extract_pos_from_rows(self, stop_row: int) -> dict[str, int]:
-        """Extract PO numbers from rows between header and stop marker."""
+    def _extract_pos_from_rows(self, stop_row: int) -> dict[str, dict[str, str | int | None]]:
+        """Extract PO metadata from rows between header and stop marker."""
         pos = {}
         row = self.header_row + 1
-        
+        current_cost_center = None
+
         while row < stop_row:
+            cc_value = self.sheet[f"{self.cost_center_col}{row}"].value
+            if cc_value is not None:
+                cc_text = str(cc_value).strip()
+                if cc_text and not cc_text.lower().startswith("expense"):
+                    current_cost_center = cc_text.split("/")[0].strip()
+
             cell_value = self.sheet[f"{self.po_col}{row}"].value
-            
+
             if self._is_valid_po(cell_value):
                 s = str(cell_value).strip()
                 # Normalize float-formatted integers (e.g. 9500905777.0 → "9500905777")
@@ -138,10 +142,13 @@ class TemplateReader:
                         s = str(int(float(s)))
                     except (ValueError, OverflowError):
                         pass
-                pos[s] = row
-            
+                pos[s] = {
+                    'row': row,
+                    'cost_center': current_cost_center,
+                }
+
             row += 1
-        
+
         return pos
     
     def _is_valid_po(self, cell_value) -> bool:

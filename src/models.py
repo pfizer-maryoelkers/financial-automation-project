@@ -62,7 +62,7 @@ class ExceptionType(Enum):
     DUPLICATE_WBS = "DUPLICATE_WBS"
     RECLASS = "Reclass"
     UNMATCHED_TRANSACTION = "Unmatched Transaction"
-    PO_NOT_ON_TEMPLATE = "PO Not on Template"
+    NOT_WORKED_ON_TEMPLATE = "Not Worked on Template"
     UNMATCHED_P3 = "Unmatched P3 ID"
     DOUBLE_CHECK = "Double Check"
 @dataclass
