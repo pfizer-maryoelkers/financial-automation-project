@@ -560,19 +560,7 @@ with up_col1:
         except Exception as e:
             st.error(f"Error reading template: {str(e)}")
 
-    # Inline status + type banner
-    if template_file is not None:
-        if st.session_state.get('template_type'):
-            is_proj = st.session_state.template_type == 'project'
-            banner_color = "#b5651d" if is_proj else "#6b4fa0"
-            banner_label = "📂 Project / P3 Template" if is_proj else "📋 OpEx Template"
-            st.markdown(
-                f'<div style="background:{banner_color};color:#fff;padding:6px 14px;'
-                f'border-radius:6px;font-size:13px;font-weight:600;margin-top:8px;">'
-                f'{banner_label}</div>',
-                unsafe_allow_html=True,
-            )
-    else:
+    if template_file is None:
         st.info("Template File Required")
 
 with up_col2:
@@ -603,6 +591,18 @@ with up_col3:
         st.success(f"{len(forecast_files)} Forecast File(s) Uploaded")
     else:
         st.info("At Least One Forecast File Required")
+
+# ── Template type banner (full width, below all three upload columns) ─────────
+if template_file is not None and st.session_state.get('template_type'):
+    is_proj = st.session_state.template_type == 'project'
+    banner_color = "#b5651d" if is_proj else "#6b4fa0"
+    banner_label = "📂 Project / P3 Template" if is_proj else "📋 OpEx Template"
+    st.markdown(
+        f'<div style="background:{banner_color};color:#fff;padding:10px 20px;'
+        f'border-radius:6px;font-size:14px;font-weight:600;margin-top:4px;">'
+        f'{banner_label}</div>',
+        unsafe_allow_html=True,
+    )
 
 # ── Optional LE File ──────────────────────────────────────────────────────────
 le_col, = st.columns([1])
