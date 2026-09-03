@@ -504,7 +504,6 @@ up_col1, up_col2, up_col3 = st.columns(3, gap="medium")
 
 with up_col1:
     st.subheader("Template File")
-    st.caption("The foundation for preparing and submitting financial forecasts and reporting data.")
     template_file = st.file_uploader(
         "template_label",
         type=['xlsx'],
@@ -578,7 +577,6 @@ with up_col1:
 
 with up_col2:
     st.subheader("Transactional Detail File")
-    st.caption("Individual transaction records that support financial reporting and forecasting.")
     transactional_file = st.file_uploader(
         "transactional_label",
         type=['xlsx'],
@@ -593,7 +591,6 @@ with up_col2:
 
 with up_col3:
     st.subheader("Forecast Files")
-    st.caption("Vendor-provided projected financial data for forecasting and budget management.")
     forecast_files = st.file_uploader(
         "forecast_label",
         type=['xlsx'],
@@ -611,7 +608,6 @@ with up_col3:
 le_col, = st.columns([1])
 with le_col:
     st.subheader("LE File (Optional)")
-    st.caption("The most up-to-date budget outlook for the current reporting period.")
     le_file = st.file_uploader(
         "le_label",
         type=['xlsx'],
