@@ -26,6 +26,7 @@ class TransactionalDetailReader:
         """
         self.file_path = file_path
         self.data = None
+        self._excel_row: 'pd.Series | None' = None  # maps pandas index → 1-based Excel row
 
         # Strip whitespace from required_cols and colmap values so they always
         # match file headers regardless of accidental leading/trailing spaces in config.
@@ -262,11 +263,24 @@ class TransactionalDetailReader:
         vendor_target = self.colmap.get('vendor_name', 'Vendor Name')
         if vendor_target not in df.columns:
             for alias in (
-                'Vendor Desc',          # AP07 2026
+                'Vendor Name',          # direct match when target differs
+                'Vendor Desc',          # AP07 2026 Consolidated
                 'Vendor Description',   # Shalisha AP12
             ):
                 if alias in df.columns:
                     rename[alias] = vendor_target
+                    break
+
+        # ── Project Name ─────────────────────────────────────────────────────
+        project_name_target = self.colmap.get('project_name', 'Project Name')
+        if project_name_target not in df.columns:
+            for alias in (
+                'Project Name',         # direct match when target differs
+                'Project Description',
+                'Project',
+            ):
+                if alias in df.columns:
+                    rename[alias] = project_name_target
                     break
 
         # ── Classifier (AP Voucher Number) ───────────────────────────────────
@@ -410,7 +424,7 @@ class TransactionalDetailReader:
 
             print(f"Loading valid sheets: {valid_sheets}")
 
-            dfs = [
+            raw_dfs = [
                 self._normalise_cols(
                     self._strip_col_headers(
                         pd.read_excel(self.file_path, sheet_name=sheet, header=header_map[sheet])
@@ -419,7 +433,24 @@ class TransactionalDetailReader:
                 for sheet in valid_sheets
             ]
 
-            self.data = pd.concat(dfs, ignore_index=True)
+            # Build a per-row Excel row number Series (1-based) before resetting the
+            # index.  For each sheet, the first data row sits at Excel row
+            # (header_map[sheet] + 2) — one for the header row itself, one for the
+            # 1-based offset — and increments by 1 for each subsequent row.
+            excel_row_arrays = []
+            for sheet, df in zip(valid_sheets, raw_dfs):
+                header_offset = header_map[sheet]  # 0-based header row in the Excel file
+                start_excel_row = header_offset + 2  # first data row in 1-based Excel numbering
+                excel_row_arrays.extend(range(start_excel_row, start_excel_row + len(df)))
+            # Will be re-indexed after ignore_index concat (index 0..N-1 matches position)
+            self._excel_row = pd.Series(
+                excel_row_arrays,
+                index=range(len(excel_row_arrays)),
+                name='_excel_row',
+                dtype='Int64',
+            )
+
+            self.data = pd.concat(raw_dfs, ignore_index=True)
 
             type_col = self.colmap.get('type', 'Type')
             # Detect whether the source already supplied a real Type column.
@@ -508,20 +539,6 @@ class TransactionalDetailReader:
                         n_converted = int(final_mask.sum())
                         print(f"  - Converted {n_converted} Reclass row(s) without 95 PO to Actual PO rows (appended ' RC').")
 
-            # ── OpEx '9'-prefix Reclass → separate RECLASS line ──────────────────
-            is_opex = "Amount - BER" not in self.required_cols
-            if is_opex and type_col_name in self.data.columns and po_col_name in self.data.columns:
-                cls_col_name = self.colmap.get("classifier", "AP Voucher Number")
-                if cls_col_name in self.data.columns:
-                    is_reclass_nine = (self.data[type_col_name] == 'Reclass') & (self.data[cls_col_name].astype(str).str.strip().str.startswith('9'))
-                    if is_reclass_nine.any():
-                        wbs_col_name = self.colmap.get('wbs', 'WBS Element')
-                        if wbs_col_name in self.data.columns:
-                            self.data.loc[is_reclass_nine, po_col_name] = "RECLASS"
-                            self.data.loc[is_reclass_nine, wbs_col_name] = "RECLASS"
-                            self.data.loc[is_reclass_nine, type_col_name] = "Actual"
-                            n_reclass_nine = int(is_reclass_nine.sum())
-                            print(f"  - Converted {n_reclass_nine} '9'-prefix Reclass row(s) to separate 'RECLASS' line(s) under Actual.")
 
             # ── Resolve non-95 PO rows via CO Doc Line Item Txt (vectorised) ────
             # Rows where Document num/PO# does NOT start with '95' are not real
@@ -939,14 +956,19 @@ class TransactionalDetailReader:
         if self.data is None:
             self.load_transactional_detail_file()
 
-        # Compute total BER amount per PO across all rows (used for Gross PO Value)
-        ber_col = self.colmap["amount"]
-        po_col  = self.colmap["po"]
+        # Compute total Actuals amount per PO (used for Invoice Amount / Gross PO Value).
+        # Only Actual and ER rows are summed — Accruals and Reversals are excluded so
+        # the column reflects real invoiced spend, not accrual estimates.
+        ber_col  = self.colmap["amount"]
+        po_col   = self.colmap["po"]
+        type_col = self.colmap["type"]
         gross_by_po: dict = {}
-        if ber_col in self.data.columns:
-            ber_series = pd.to_numeric(self.data[ber_col], errors='coerce').fillna(0)
+        if ber_col in self.data.columns and type_col in self.data.columns:
+            actuals_mask = self.data[type_col].isin(["Actual", "ER"])
+            actuals_data = self.data.loc[actuals_mask].copy()
+            actuals_data[ber_col] = pd.to_numeric(actuals_data[ber_col], errors='coerce').fillna(0)
             gross_by_po = (
-                ber_series.groupby(self.data[po_col]).sum().to_dict()
+                actuals_data.groupby(po_col)[ber_col].sum().to_dict()
             )
 
         # Filter to only the columns needed
@@ -1020,16 +1042,24 @@ class TransactionalDetailReader:
             if month_num is None:
                 continue
 
-            # Actuals/ER/Reclass always shift back 1 month (Jan posted → Dec, etc.).
-            if month_num == 1:
-                actual_month = "Dec (PY)"
-            else:
-                actual_month = self.month_map.get(month_num - 1)
-
             is_intl = str(po).strip() in intl_po_set
 
-            # Accruals/Reversals follow the same month placement as Actuals.
-            accrual_month = actual_month
+            # Domestic POs: accounting period − 1 (Jan → Dec (PY), Mar → Feb, etc.)
+            # International POs: accounting period − 2 for Actuals/ER/Reclass only.
+            # Accruals/Reversals always use the domestic − 1 shift for all POs.
+            actual_shift = 2 if is_intl else 1
+            actual_shifted = month_num - actual_shift
+            if actual_shifted <= 0:
+                actual_month = "Nov (PY)" if actual_shifted == -1 else "Dec (PY)"
+            else:
+                actual_month = self.month_map.get(actual_shifted)
+
+            # Accruals/Reversals: always domestic − 1 shift
+            accrual_shifted = month_num - 1
+            if accrual_shifted <= 0:
+                accrual_month = "Dec (PY)"
+            else:
+                accrual_month = self.month_map.get(accrual_shifted)
 
             # Initialize PO
             if po not in result:
@@ -1062,9 +1092,10 @@ class TransactionalDetailReader:
                 result[po][write_month]["Actual"] = result[po][write_month].get("Actual", 0) + value
             elif type_name in ["Accrual", "Reversal"]:
                 result[po][write_month][type_name] = value
-        # Sort months for readability, preserve cost_center and wbs
+        # Sort months for readability, preserve cost_center and wbs.
+        # "Nov (PY)" can appear for international POs with a Jan accounting period (−2 shift).
         month_order = [
-            "Dec (PY)",
+            "Nov (PY)", "Dec (PY)",
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
         ]
@@ -1335,6 +1366,25 @@ class TransactionalDetailReader:
         if project_name_col and project_name_col not in self.data.columns:
             project_name_col = None
 
+        # Pre-compute the best (most frequent real) project name per PO.
+        # Using mode aggregation ensures that even when a PO's first occurrence in the
+        # hierarchy map has no project name (e.g. a Reclass row), the correct name from
+        # other rows for that PO is still picked up — exactly like vendor_by_po.
+        project_name_by_po: dict = {}
+        if project_name_col:
+            _po_col = self.colmap["po"]
+            _pnc = self.data[[_po_col, project_name_col]].copy()
+            _pnc[project_name_col] = _pnc[project_name_col].astype(str).str.strip()
+            _pnc = _pnc[~_pnc[project_name_col].str.lower().isin(_PLACEHOLDER_LOWER)]
+            if not _pnc.empty:
+                _pnc = _pnc.copy()
+                _pnc[_po_col] = _pnc[_po_col].astype(str).str.strip()
+                project_name_by_po = (
+                    _pnc.groupby(_po_col)[project_name_col]
+                    .agg(lambda s: s.mode().iloc[0] if not s.mode().empty else None)
+                    .to_dict()
+                )
+
         # Pre-compute the most frequent real req_title per PO (mode).
         # Uses case-insensitive filtering so "Not assigned" etc. are excluded.
         # PO key is cast to string+strip to match the normalized po used in the lookup.
@@ -1385,9 +1435,10 @@ class TransactionalDetailReader:
         else:
             country_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
 
-        # Project Name
-        if project_name_col:
-            project_name_s = _clean_series(self.data[project_name_col])
+        # Project Name — map pre-computed best value via PO key (same as vendor_name)
+        # so the correct name is returned even when a PO's first row lacks the field.
+        if project_name_by_po:
+            project_name_s = po_s.map(project_name_by_po)
         else:
             project_name_s = pd.Series([None] * len(self.data), index=self.data.index, dtype=object)
 
@@ -1434,8 +1485,16 @@ class TransactionalDetailReader:
 
         # Assemble into list-of-dicts then convert to indexed dict
         # zip over numpy arrays is ~10× faster than iterrows
+        # Include the 1-based Excel row number so the Exceptions tab shows the
+        # correct row that can be found directly in the source file.
+        excel_row_s = (
+            self._excel_row
+            if self._excel_row is not None
+            else (self.data.index + 2)  # fallback: assume header on row 1
+        )
         records = list(zip(
             self.data.index,
+            excel_row_s,
             po_s,  wbs_s, cc_s, le_s, country_s,
             vendor_s, gl_s, req_s,
             desc_series['gl_line_desc'],
@@ -1457,8 +1516,9 @@ class TransactionalDetailReader:
                 'gl_trans_desc':gtd  if gtd  != 'None' and gtd  is not None else None,
                 'description':  dsc  if dsc  != 'None' and dsc  is not None else None,
                 'project_name': prj  if prj  != 'None' and prj  is not None else None,
+                'excel_row':    int(xrow) if xrow is not None else None,
             }
-            for idx, po, wbs, cc, le, ctr, vnd, gl, req, gld, gtd, dsc, prj in records
+            for idx, xrow, po, wbs, cc, le, ctr, vnd, gl, req, gld, gtd, dsc, prj in records
         }
 
         print(f"Hierarchy map built: {len(result)} rows processed.")

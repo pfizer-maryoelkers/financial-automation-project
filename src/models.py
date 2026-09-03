@@ -35,14 +35,6 @@ class CostCenter:
     cost_center_id: str
     wbs_codes: dict[str, WBSCode] = field(default_factory=dict)
 @dataclass
-class Project:
-    """Top-level grouping for the CapEx / project pipeline.
-    Groups by WBS root (e.g. 'CE-BTS21076') which is the prefix shared by
-    all child WBS codes (CE-BTS21076-02-10, CE-BTS21076-02-EX, etc.)."""
-    project_id: str          # e.g. 'CE-BTS21076'
-    wbs_codes: dict[str, WBSCode] = field(default_factory=dict)
-
-@dataclass
 class P3ID:
     """Top-level grouping for the Projects pipeline (acts like Cost Center).
     Groups by P3 ID which contains WBS codes and POs."""
@@ -55,8 +47,6 @@ class P3ID:
 ## Building Exceptions Log
 
 class ExceptionType(Enum):
-    MISSING_WBS_AND_PO = "MISSING_WBS_AND_PO"
-    MISSING_WBS = "MISSING_WBS"
     MISSING_PO = "MISSING_PO"
     DUPLICATE_PO = "DUPLICATE_PO"
     DUPLICATE_WBS = "DUPLICATE_WBS"
@@ -101,44 +91,3 @@ class ExceptionLog:
             'percentages': {k: (v / total * 100) if total > 0 else 0
                           for k, v in counts.items()}
         }
-    
-    def summary_by_cost_center(self) -> dict:
-        """Returns count of exceptions by cost center and type"""
-        result = {}
-        for entry in self.entries:
-            cc = entry.cost_center or 'Unknown'
-            exc_type = entry.exception_type.value
-            
-            if cc not in result:
-                result[cc] = {'total': 0, 'by_type': {}}
-            
-            result[cc]['total'] += 1
-            if exc_type not in result[cc]['by_type']:
-                result[cc]['by_type'][exc_type] = 0
-            result[cc]['by_type'][exc_type] += 1
-        
-        return result
-    
-    def summary_by_month(self) -> dict:
-        """Returns count of exceptions by month, with breakdowns by type and cost center"""
-        result = {}
-        for entry in self.entries:
-            month = entry.month or 'Unknown'
-            if month not in result:
-                result[month] = {'total': 0, 'by_type': {}, 'by_cost_center': {}}
-            
-            result[month]['total'] += 1
-            
-            # By exception type
-            exc_type = entry.exception_type.value
-            if exc_type not in result[month]['by_type']:
-                result[month]['by_type'][exc_type] = 0
-            result[month]['by_type'][exc_type] += 1
-            
-            # By cost center
-            cc = entry.cost_center or 'Unknown'
-            if cc not in result[month]['by_cost_center']:
-                result[month]['by_cost_center'][cc] = 0
-            result[month]['by_cost_center'][cc] += 1
-        
-        return result

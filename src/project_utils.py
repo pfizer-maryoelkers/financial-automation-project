@@ -17,7 +17,7 @@ import re
 import pandas as pd
 from collections import defaultdict
 
-from src.models import Project, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType, P3ID
+from src.models import WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType, P3ID
 from src.project_template_reader import extract_project_root, wbs_charge_type
 
 # Forecast month shift: maps a 3-letter month key one step back (same as OpEx).
@@ -42,6 +42,7 @@ def build_project_hierarchy(
     reclass_notes: dict | None = None,
     template_pos: dict | None = None,
     intl_po_set: set | None = None,
+    p3_ids: list[str] | None = None,
 ) -> dict[str, P3ID]:
     """Build the project hierarchy.
 
@@ -66,6 +67,10 @@ def build_project_hierarchy(
         PO → row mapping from the project template (None = blank template).
     intl_po_set : set | None
         Set of international PO numbers (forecast shifted back one month).
+    p3_ids : list[str] | None
+        Explicit list of P3 IDs to include (from config).  When provided and
+        ``p3_wbs_map`` is empty (blank template), limits discovery to exactly
+        these P3 IDs rather than all IDs found in the transactional data.
 
     Returns
     -------
@@ -81,6 +86,28 @@ def build_project_hierarchy(
                 if m:
                     return m.group(0).upper()
         return None
+
+    # When the template has no WBS/P3-ID mapping (blank template), build the
+    # map from the explicitly configured p3_ids list (if provided) or by
+    # discovering all unique cost_center values from the transactional data.
+    # This ensures the pipeline fills blank PO rows from Document Number / PO#.
+    if not p3_wbs_map:
+        if p3_ids:
+            discovered: dict[str, list[str]] = {p: [] for p in p3_ids}
+            print(
+                f"  INFO: Blank template — using configured P3 ID(s): {sorted(discovered)}"
+            )
+        else:
+            discovered = {}
+            for row in hierarchy_map.values():
+                cc = row.get('cost_center')
+                if cc and str(cc).strip() not in ('', '#', 'nan', 'none', 'not assigned'):
+                    discovered.setdefault(str(cc).strip(), [])
+            print(
+                f"  INFO: Blank template — discovered {len(discovered)} P3 ID(s) "
+                f"from transactional data: {sorted(discovered)}"
+            )
+        p3_wbs_map = discovered
 
     # Build a set of known P3 IDs for direct cost_center matching
     _known_p3_ids: set[str] = set(p3_wbs_map.keys())
@@ -109,6 +136,17 @@ def build_project_hierarchy(
             p3_id = cost_center
         if p3_id:
             rows_by_p3[p3_id].append((row_idx, row))
+
+    # ── Step 1b: Pre-compute best project name per PO from the hierarchy map ─
+    # Used to fill project_name on PO objects created via the reclass path
+    # (which doesn't go through the main row loop).
+    _PLACEHOLDER_LOWER = {'', 'nan', 'none', '#', 'not assigned'}
+    po_project_name: dict[str, str] = {}
+    for row in hierarchy_map.values():
+        po  = row.get('po')
+        pn  = row.get('project_name')
+        if po and pn and str(pn).strip().lower() not in _PLACEHOLDER_LOWER:
+            po_project_name.setdefault(str(po).strip(), str(pn).strip())
 
     # ── Step 2: Pre-scan for duplicate WBS codes ────────────────────────────
     wbs_to_p3s: dict[str, set] = defaultdict(set)
@@ -144,6 +182,7 @@ def build_project_hierarchy(
             gl_account   = row.get('gl_account')
             req_title    = row.get('req_title')
             project_name = row.get('project_name')
+            _excel_row   = row.get('excel_row') or (row_idx + 2)
 
             source_row_data = transactional_df.loc[row_idx].to_dict() if row_idx in transactional_df.index else {}
             month      = source_row_data.get('Accounting Period')
@@ -155,7 +194,7 @@ def build_project_hierarchy(
             if orig_po and str(orig_po).strip().startswith('2'):
                 exception_log.log(
                     ExceptionType.DOUBLE_CHECK,
-                    row_index=row_idx, po=orig_po, wbs=wbs,
+                    row_index=_excel_row, po=orig_po, wbs=wbs,
                     cost_center=p3_id, month=month, amount=amount,
                     transaction_type=trans_type, source_row_data=source_row_data,
                 )
@@ -165,7 +204,7 @@ def build_project_hierarchy(
             if trans_type not in _KNOWN_TYPES:
                 exception_log.log(
                     ExceptionType.UNMATCHED_TRANSACTION,
-                    row_index=row_idx, po=po, wbs=wbs,
+                    row_index=_excel_row, po=po, wbs=wbs,
                     cost_center=p3_id, month=month, amount=amount,
                     transaction_type=trans_type, source_row_data=source_row_data,
                 )
@@ -175,7 +214,7 @@ def build_project_hierarchy(
             if trans_type == "Reclass":
                 exception_log.log(
                     ExceptionType.RECLASS,
-                    row_index=row_idx, po=po, wbs=wbs,
+                    row_index=_excel_row, po=po, wbs=wbs,
                     cost_center=p3_id, month=month, amount=amount,
                     transaction_type=trans_type, source_row_data=source_row_data,
                 )
@@ -210,7 +249,7 @@ def build_project_hierarchy(
             if wbs in duplicate_wbs_codes:
                 exception_log.log(
                     ExceptionType.DUPLICATE_WBS,
-                    row_index=row_idx, wbs=wbs, po=po, cost_center=p3_id,
+                    row_index=_excel_row, wbs=wbs, po=po, cost_center=p3_id,
                     month=month, amount=amount,
                     transaction_type=trans_type, source_row_data=source_row_data,
                 )
@@ -224,7 +263,7 @@ def build_project_hierarchy(
                 if prev_p3 != p3_id or prev_wbs != wbs:
                     exception_log.log(
                         ExceptionType.DUPLICATE_PO,
-                        row_index=row_idx, po=po, wbs=wbs, cost_center=p3_id,
+                        row_index=_excel_row, po=po, wbs=wbs, cost_center=p3_id,
                         month=month, amount=amount,
                         transaction_type=trans_type, source_row_data=source_row_data,
                     )
@@ -247,6 +286,7 @@ def build_project_hierarchy(
                     vendor_name=vendor_name,
                     gl_account=gl_account,
                     req_title=req_title,
+                    project_name=project_name,
                     real_wbs=er_real_wbs.get(po) if wbs == "ER" else None,
                 )
             po_obj = p3_obj.wbs_codes[wbs].pos[po]
@@ -314,7 +354,10 @@ def build_project_hierarchy(
                         charge_type=wbs_charge_type(wbs_key),
                     )
                 if po_number not in p3_obj.wbs_codes[wbs_key].pos:
-                    p3_obj.wbs_codes[wbs_key].pos[po_number] = PO(po_number=po_number)
+                    p3_obj.wbs_codes[wbs_key].pos[po_number] = PO(
+                        po_number=po_number,
+                        project_name=po_project_name.get(str(po_number).strip()),
+                    )
                     po_obj = p3_obj.wbs_codes[wbs_key].pos[po_number]
                     for mk, vals in po_in_td.items():
                         if mk in ('cost_center', 'wbs', 'gross_ber_total'):
@@ -363,6 +406,7 @@ def build_project_hierarchy(
         if cost_center not in _known_p3_ids:
             continue
 
+        _excel_row  = row.get('excel_row') or (row_idx + 2)
         source_row_data = transactional_df.loc[row_idx].to_dict() if row_idx in transactional_df.index else {}
         month      = source_row_data.get('Accounting Period')
         amount     = source_row_data.get('GL BER Corp Amount')
@@ -375,7 +419,7 @@ def build_project_hierarchy(
         if orig_po and str(orig_po).strip().startswith('2'):
             exception_log.log(
                 ExceptionType.DOUBLE_CHECK,
-                row_index=row_idx, po=orig_po, wbs=wbs, cost_center=cost_center,
+                row_index=_excel_row, po=orig_po, wbs=wbs, cost_center=cost_center,
                 month=month, amount=amount,
                 transaction_type=trans_type, source_row_data=source_row_data,
             )
@@ -384,7 +428,7 @@ def build_project_hierarchy(
         if not po:
             exception_log.log(
                 ExceptionType.MISSING_PO,
-                row_index=row_idx, wbs=wbs, cost_center=cost_center,
+                row_index=_excel_row, wbs=wbs, cost_center=cost_center,
                 month=month, amount=amount,
                 transaction_type=trans_type, source_row_data=source_row_data,
             )
@@ -392,7 +436,7 @@ def build_project_hierarchy(
         else:
             exception_log.log(
                 ExceptionType.UNMATCHED_P3,
-                row_index=row_idx, po=po, wbs=wbs, cost_center=cost_center,
+                row_index=_excel_row, po=po, wbs=wbs, cost_center=cost_center,
                 month=month, amount=amount,
                 transaction_type=trans_type, source_row_data=source_row_data,
             )

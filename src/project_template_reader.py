@@ -106,6 +106,10 @@ class ProjectTemplateReader:
             for wbs in wbs_list
         })
         self.pos = self._get_existing_pos()
+        # Rows between header and stop marker where col B is blank — these are
+        # pre-formatted placeholder rows whose PO number can be filled from the
+        # transactional file rather than inserting a brand-new row.
+        self.blank_po_rows: list[int] = self._get_blank_po_rows()
 
     # ------------------------------------------------------------------
     # Dynamic header detection
@@ -206,59 +210,6 @@ class ProjectTemplateReader:
         return mapping
 
     # ------------------------------------------------------------------
-    # Project root detection
-    # ------------------------------------------------------------------
-
-    def _find_wbs_start_row(self) -> int:
-        """Scan the WBS column for a header cell containing 'wbs' or 'project'
-        and return the row immediately after it.  Falls back to wbs_start_row."""
-        max_row = self.sheet.max_row or 1000
-        for r in range(1, max_row + 1):
-            val = self.sheet[f"{self.wbs_col}{r}"].value
-            if val is None:
-                continue
-            low = str(val).strip().lower()
-            if "wbs" in low or "project" in low:
-                return r + 1
-        print(
-            f"WARNING: WBS/Project header not found in column {self.wbs_col}. "
-            f"Falling back to configured wbs_start_row={self.wbs_start_row}."
-        )
-        return self.wbs_start_row
-
-    def _get_project_roots(self) -> list[str]:
-        """Read WBS codes from the template and return the deduplicated list of
-        project root codes (e.g. ['CE-BTS21076', 'CE-BTS22001']).
-
-        Stops on a blank cell or a cell whose text starts with 'expense'."""
-        start_row = self._find_wbs_start_row()
-        seen: dict[str, None] = {}   # ordered dedup
-        row = start_row
-
-        while True:
-            if self.wbs_end_row is not None and row > self.wbs_end_row:
-                break
-            cell = self.sheet[f"{self.wbs_col}{row}"].value
-            if cell is None or str(cell).strip() == "":
-                break
-            text = str(cell).strip()
-            if text.lower().startswith("expense"):
-                break
-            # Strip trailing /suffix (same convention as OpEx cost-center column)
-            text = text.split("/")[0].strip()
-            root = extract_project_root(text)
-            if root not in seen:
-                seen[root] = None
-            row += 1
-
-        projects = list(seen.keys())
-        if not projects:
-            print("WARNING: No project WBS codes found in template.")
-        else:
-            print(f"Found {len(projects)} project(s): {projects}")
-        return projects
-
-    # ------------------------------------------------------------------
     # PO / row position reading  (identical logic to TemplateReader)
     # ------------------------------------------------------------------
 
@@ -295,3 +246,19 @@ class ProjectTemplateReader:
         else:
             print(f"Found {len(pos)} POs in project template.")
         return pos
+
+    def _get_blank_po_rows(self) -> list[int]:
+        """Return row numbers between the header and stop marker where col B is blank.
+
+        These are pre-formatted placeholder rows in the template whose PO/ER number
+        has not been filled in yet.  The pipeline can populate them from the
+        transactional file's 'Document Number / PO#' column instead of inserting
+        a brand-new row above the stop marker.
+        """
+        stop_row = self._find_stop_row()
+        blank_rows: list[int] = []
+        for row in range(self.header_row + 1, stop_row):
+            val = self.sheet[f"{self.po_col}{row}"].value
+            if val is None or str(val).strip() == "" or str(val).strip().lower() == "none":
+                blank_rows.append(row)
+        return blank_rows

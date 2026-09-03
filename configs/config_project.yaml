@@ -7,13 +7,18 @@
 
 ## Project Template (reader + writer share this)
 template:
-  file_path: "data/templates/Projects Financial Template.xlsx"
+  file_path: "data/templates/Project Test.xlsx"
   header_row: 12
   po_col: "B"
   po_stop_marker: "Previous Period Invoices"
   wbs_col: "A"
   p3_id_col: "B"
   wbs_start_row: 2
+  # P3 IDs to process when the template WBS/P3 mapping section is blank.
+  # Each value must match the Cost Center* column in the transactional detail file.
+  p3_ids:
+    - "P325-0015419"
+    - "P324-0013567"
 
 # ============================
 ## Forecast Reader
@@ -54,9 +59,9 @@ transactional_detail_reader:
 # ============================
 ## Template Writer
 template_writer:
-  output_path: "data/templates/template_project.xlsx"
+  output_path: "data/templates/Project Test.xlsx"
   overwrite: False
-  dec_acc_reversal_col: "N"
+  dec_acc_reversal_col: "K"
   forecast_source_cols:
     - "PO #"
     - "Jan 2026 - FTotal"

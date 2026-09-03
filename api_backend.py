@@ -253,7 +253,7 @@ class PipelineOrchestrator:
         self.logger.info("Step 4/4: Writing exception reports...")
         self._progress(90)
         template_writer.write_exception_data_sheet(self.exception_log)
-        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
+        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data)
         self._progress(95)
         template_writer.save()
         self._progress(100)

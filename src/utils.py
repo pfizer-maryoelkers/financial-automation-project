@@ -57,34 +57,6 @@ def load_config(config_path='configs/config_base.yaml'):
     
     return config
 
-# Helper function to combine forecasts, actuals, and accrual data into one JSON formatted dictionary
-def combine_data(forecast, transactional):
-    combined = {}
-
-    # All PO numbers that exist in either dataset
-    all_pos = set(forecast.keys()) | set(transactional.keys())
-
-    months_list = [
-        "Jan","Feb","Mar","Apr","May","Jun",
-        "Jul","Aug","Sep","Oct","Nov","Dec"
-    ]
-
-    for po in all_pos:
-        combined[po] = {}
-
-        for month in months_list:
-            f = forecast.get(po, {}).get(month, {})
-            t = transactional.get(po, {}).get(month, {})
-
-            combined[po][month] = {
-                "Forecast": f.get("Forecast", 0),
-                "Actual": t.get("Actual", 0),
-                "Accrual": t.get("Accrual", 0),
-                "Accrual Reversal": t.get("Reversal", 0)
-            }
-
-    return combined
-
 def convert_base64(bytes_string: str):
     # Converts string of bytes to Excel like object for pd/openpyxl to read
     decoded_bytes = base64.b64decode(bytes_string)
@@ -173,6 +145,7 @@ def build_hierarchy(
             wbs = row['wbs']
             legal_entity = row.get('legal_entity')
             country = row.get('country')
+            _excel_row = row.get('excel_row') or (row_idx + 2)
             vendor_name = row.get('vendor_name')
             gl_account = row.get('gl_account')
             req_title = row.get('req_title')
@@ -180,7 +153,16 @@ def build_hierarchy(
             # Extract source row data from transactional DataFrame
             source_row_data = transactional_df.loc[row_idx].to_dict() if row_idx in transactional_df.index else {}
             month = source_row_data.get('Accounting Period')
-            amount = source_row_data.get('GL BER Corp Amount')
+            # Prefer the configured amount column; fall back to GL BER Corp Amount
+            # so international POs (which may have a blank BER field) still get a
+            # non-None amount and are not silently dropped from the exception sheet.
+            _amount_raw = source_row_data.get('GL Transaction Amount')
+            if _amount_raw is None or (isinstance(_amount_raw, float) and pd.isna(_amount_raw)):
+                _amount_raw = source_row_data.get('GL BER Corp Amount')
+            try:
+                amount = float(_amount_raw) if _amount_raw is not None else None
+            except (ValueError, TypeError):
+                amount = None
             trans_type = source_row_data.get('Type')
 
             # Handling Exceptions (in priority order)
@@ -195,7 +177,7 @@ def build_hierarchy(
             if not is_on_front_for_cost_center:
                 exception_log.log(
                     ExceptionType.NOT_WORKED_ON_TEMPLATE,
-                    row_index=row_idx,
+                    row_index=_excel_row,
                     po=po,
                     wbs=wbs,
                     cost_center=cc_id,
@@ -209,7 +191,7 @@ def build_hierarchy(
             if trans_type not in _KNOWN_TYPES:
                 exception_log.log(
                     ExceptionType.UNMATCHED_TRANSACTION,
-                    row_index=row_idx,
+                    row_index=_excel_row,
                     po=po,
                     wbs=wbs,
                     cost_center=cc_id,
@@ -225,7 +207,7 @@ def build_hierarchy(
             if trans_type == "Reclass":
                 exception_log.log(
                     ExceptionType.RECLASS,
-                    row_index=row_idx,
+                    row_index=_excel_row,
                     po=po,
                     wbs=wbs,
                     cost_center=cc_id,
@@ -251,7 +233,7 @@ def build_hierarchy(
                 else:
                     exception_log.log(
                         ExceptionType.NOT_WORKED_ON_TEMPLATE,
-                        row_index=row_idx,
+                        row_index=_excel_row,
                         po=po,
                         wbs=wbs,
                         cost_center=cc_id,
@@ -286,7 +268,7 @@ def build_hierarchy(
             if not po:
                 exception_log.log(
                     ExceptionType.NOT_WORKED_ON_TEMPLATE,
-                    row_index=row_idx,
+                    row_index=_excel_row,
                     po=po,
                     wbs=wbs,
                     cost_center=cc_id,
@@ -303,7 +285,7 @@ def build_hierarchy(
             if wbs in duplicate_wbs_codes:
                 exception_log.log(
                     ExceptionType.DUPLICATE_WBS,
-                    row_index=row_idx,
+                    row_index=_excel_row,
                     wbs=wbs,
                     po=po,
                     cost_center=cc_id,
@@ -325,7 +307,7 @@ def build_hierarchy(
                 if prev_cc != cc_id or prev_wbs != wbs:
                     exception_log.log(
                         ExceptionType.DUPLICATE_PO,
-                        row_index=row_idx,
+                        row_index=_excel_row,
                         po=po,
                         wbs=wbs,
                         cost_center=cc_id,

@@ -493,16 +493,6 @@ st.markdown(
         margin-bottom: 0.2rem;
         color: #1f2328;
     '>Financial Automation Report Generator</h1>
-    <p style='
-        text-align: center;
-        font-family: Inter, sans-serif;
-        font-size: 0.95rem;
-        font-weight: 400;
-        color: #666;
-        margin-top: 0;
-        margin-bottom: 0.5rem;
-    '>Upload your budget template, TIES transactional detail, and<br>
-    vendor forecast files to generate a consolidated financial report.</p>
     """,
     unsafe_allow_html=True,
 )
@@ -510,10 +500,11 @@ st.markdown(
 st.divider()
 
 # ── Three-column uploader row ─────────────────────────────────────────────────
-up_col1, up_col2, up_col3 = st.columns(3)
+up_col1, up_col2, up_col3 = st.columns(3, gap="medium")
 
 with up_col1:
     st.subheader("Template File")
+    st.caption("The foundation for preparing and submitting financial forecasts and reporting data.")
     template_file = st.file_uploader(
         "template_label",
         type=['xlsx'],
@@ -536,14 +527,16 @@ with up_col1:
 
             if ttype == 'project':
                 from src.project_template_reader import ProjectTemplateReader
+                from src.utils import load_config as _load_proj_cfg
+                _pcfg = _load_proj_cfg('configs/config_project.yaml')['template']
                 temp_reader = ProjectTemplateReader(
                     file_path=tmp_path,
-                    header_row=app_config.template.header_row,
-                    po_col=app_config.template.po_col,
-                    po_stop_marker=app_config.template.po_stop_marker,
-                    wbs_col='A',
-                    p3_id_col='B',
-                    wbs_start_row=2,
+                    header_row=_pcfg['header_row'],
+                    po_col=_pcfg['po_col'],
+                    po_stop_marker=_pcfg.get('po_stop_marker', 'Previous Period Invoices'),
+                    wbs_col=_pcfg.get('wbs_col', 'A'),
+                    p3_id_col=_pcfg.get('p3_id_col', 'B'),
+                    wbs_start_row=_pcfg.get('wbs_start_row', 2),
                 )
                 identifiers = list(temp_reader.p3_wbs_map.keys())
             else:
@@ -585,6 +578,7 @@ with up_col1:
 
 with up_col2:
     st.subheader("Transactional Detail File")
+    st.caption("Individual transaction records that support financial reporting and forecasting.")
     transactional_file = st.file_uploader(
         "transactional_label",
         type=['xlsx'],
@@ -599,6 +593,7 @@ with up_col2:
 
 with up_col3:
     st.subheader("Forecast Files")
+    st.caption("Vendor-provided projected financial data for forecasting and budget management.")
     forecast_files = st.file_uploader(
         "forecast_label",
         type=['xlsx'],
@@ -612,86 +607,22 @@ with up_col3:
     else:
         st.info("At Least One Forecast File Required")
 
-st.divider()
-
-# ── Cost Center / P3 ID selection — centered single panel ────────────────────
-_, center_col, _ = st.columns([1, 3, 1])
-
-with center_col:
-    st.markdown(
-        "<h3 style='text-align:center;margin-bottom:0.5rem;'>Select Cost Centers / P3 IDs</h3>",
-        unsafe_allow_html=True,
+# ── Optional LE File ──────────────────────────────────────────────────────────
+le_col, = st.columns([1])
+with le_col:
+    st.subheader("LE File (Optional)")
+    st.caption("The most up-to-date budget outlook for the current reporting period.")
+    le_file = st.file_uploader(
+        "le_label",
+        type=['xlsx'],
+        help="Upload the ERP LE file (e.g. ERP LE3 2026 8-13-26.xlsx)",
+        key="le_upload",
+        label_visibility="collapsed"
     )
-
-    if st.session_state.extracted_cost_centers:
-        is_project = st.session_state.template_type == 'project'
-        id_label   = "P3 IDs" if is_project else "Cost Centers"
-
-        st.session_state.selected_cost_centers = st.multiselect(
-            f"Select {id_label.lower()} to process",
-            options=st.session_state.extracted_cost_centers,
-            default=st.session_state.selected_cost_centers,
-            help=f"Select which {id_label.lower()} to include in the report"
-        )
-
-        if st.session_state.selected_cost_centers:
-            sel_pill_html = "".join(
-                f'<span style="display:inline-block;background:#d4edda;color:#155724;'
-                f'border:1px solid #82c99b;border-radius:14px;padding:3px 12px;'
-                f'margin:3px 4px 3px 0;font-size:13px;font-weight:600;">✓ {_id}</span>'
-                for _id in st.session_state.selected_cost_centers
-            )
-            st.markdown(sel_pill_html, unsafe_allow_html=True)
-            st.caption(f"{len(st.session_state.selected_cost_centers)} of {len(st.session_state.extracted_cost_centers)} selected")
-        else:
-            st.warning("No identifiers selected — report will include all")
-
-        # Add manually row
-        st.markdown("<p style='margin-top:0.8rem;margin-bottom:0.3rem;font-weight:600;'>Add Manually</p>", unsafe_allow_html=True)
-        if 'add_type' not in st.session_state:
-            st.session_state.add_type = "Cost Center"
-
-        st.markdown('<div class="add-type-toggle">', unsafe_allow_html=True)
-        tog_col1, tog_col2, _ = st.columns([1, 1, 2])
-        with tog_col1:
-            if st.button("Cost Center", use_container_width=True, type="primary", key="toggle_cc"):
-                st.session_state.add_type = "Cost Center"
-                st.rerun()
-        with tog_col2:
-            if st.button(
-                "P3 ID",
-                use_container_width=True,
-                type="primary" if st.session_state.add_type == "P3 ID" else "secondary",
-                key="toggle_p3",
-            ):
-                st.session_state.add_type = "P3 ID"
-                st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        add_type = st.session_state.add_type
-        inp_col, btn_col = st.columns([4, 1])
-        with inp_col:
-            new_cc = st.text_input(
-                f"Enter {add_type}",
-                key="new_cost_center",
-                label_visibility="collapsed",
-                placeholder="e.g. P322-0008813" if add_type == "P3 ID" else "e.g. 12345"
-            )
-        with btn_col:
-            st.markdown('<div class="add-btn">', unsafe_allow_html=True)
-            if st.button("Add", use_container_width=True, key="add_identifier_btn"):
-                if new_cc and new_cc not in st.session_state.extracted_cost_centers:
-                    st.session_state.extracted_cost_centers.append(new_cc)
-                    st.session_state.selected_cost_centers.append(new_cc)
-                    st.success(f"Added: {new_cc}")
-                    st.rerun()
-                elif new_cc in st.session_state.extracted_cost_centers:
-                    st.warning("Already exists")
-                else:
-                    st.warning(f"Enter a {add_type}")
-            st.markdown('</div>', unsafe_allow_html=True)
+    if le_file:
+        st.success(f"LE File Uploaded: {le_file.name}")
     else:
-        st.info("Upload a template file to load cost centers / P3 IDs")
+        st.info("No LE file uploaded — LE data will be skipped")
 
 st.divider()
 
@@ -732,7 +663,8 @@ if generate_button:
         temp_dir, file_paths = FileHandler.save_uploaded_files(
             template_file=template_file,
             forecast_files=forecast_files,
-            transactional_file=transactional_file
+            transactional_file=transactional_file,
+            le_file=le_file if le_file else None
         )
         st.session_state.temp_dir = temp_dir
         

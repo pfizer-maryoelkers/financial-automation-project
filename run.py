@@ -94,7 +94,7 @@ def _run_opex(config: dict) -> None:
     print("Step 4: Writing exception reports\n")
     exception_log.summary()
     template_writer.write_exception_data_sheet(exception_log)
-    template_writer.write_exception_sheet(exception_log, transactional_reader.data, pos=pos)
+    template_writer.write_exception_sheet(exception_log, transactional_reader.data)
     template_writer.save()
 
 
@@ -166,16 +166,21 @@ def _run_project(config: dict) -> None:
         reclass_notes=reclass_notes,
         template_pos=template_reader.pos,
         intl_po_set=intl_po_set,
+        p3_ids=config.get("template", {}).get("p3_ids"),
     )
 
     print("Step 3: Writing template output\n")
-    pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+    pos = template_writer.insert_missing_po_rows(
+        hierarchy,
+        pos=template_reader.pos,
+        blank_po_rows=template_reader.blank_po_rows,
+    )
     template_writer.write_hierarchy(hierarchy, pos=pos)
 
     print("Step 4: Writing exception reports\n")
     exception_log.summary()
     template_writer.write_exception_data_sheet(exception_log)
-    template_writer.write_exception_sheet(exception_log, transactional_reader.data, pos=pos)
+    template_writer.write_exception_sheet(exception_log, transactional_reader.data)
     template_writer.save()
 
 

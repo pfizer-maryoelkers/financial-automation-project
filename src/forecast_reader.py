@@ -294,19 +294,10 @@ class ForecastReader:
         # Build the model
         for po, row in grouped.iterrows():
             po_dict = {}
-            po_df = self.data[self.data[self.po_col] == po]  # Original rows for this PO
             for col in forecast_cols:
-                # Getting month
                 month = month_map[col]
-                
-                # Getting forecats value
                 value = row[col] if not pd.isna(row[col]) else 0
-                
-                # Find source rows contributing to this forecast
-                source_rows = po_df.loc[po_df[col].notna() & (po_df[col] != 0)].index.tolist()
-                
-                # Adding to po_dict
-                po_dict[month] = {'Forecast': float(value), 'Source': source_rows}
+                po_dict[month] = {'Forecast': float(value)}
             result[str(po)] = po_dict
 
         return result

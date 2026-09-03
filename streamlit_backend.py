@@ -27,7 +27,8 @@ class FileHandler:
     def save_uploaded_files(
         template_file,
         forecast_files: List,
-        transactional_file
+        transactional_file,
+        le_file=None
     ) -> Tuple[str, Dict[str, str]]:
         """
         Save uploaded files to a temporary directory.
@@ -36,6 +37,7 @@ class FileHandler:
             template_file: Uploaded template file
             forecast_files: List of uploaded forecast files
             transactional_file: Uploaded transactional detail file
+            le_file: Optional ERP LE file
             
         Returns:
             Tuple of (temp_dir_path, file_paths_dict)
@@ -67,6 +69,13 @@ class FileHandler:
                 with open(trans_path, 'wb') as f:
                     f.write(transactional_file.getbuffer())
                 file_paths['transactional'] = str(trans_path)
+
+            # Save optional LE file
+            if le_file is not None:
+                le_path = Path(temp_dir) / le_file.name
+                with open(le_path, 'wb') as f:
+                    f.write(le_file.getbuffer())
+                file_paths['le'] = str(le_path)
             
             return temp_dir, file_paths
             
@@ -322,12 +331,24 @@ class PipelineOrchestrator:
         self.logger.info("Template data written")
         self._update_progress(85)
 
-        # Step 4: Exception reports
+        # Step 4: Optional Budget tab + exception reports
         self.logger.info("Step 4/4: Generating exception reports...")
         self._update_progress(90)
+
+        # Budget tab is written first so it lands at index 1 (right after the
+        # main template tab) before the exception sheets are appended after it.
+        le_path = file_paths.get('le')
+        if le_path:
+            self.logger.info("Writing Budget tab from LE file...")
+            template_writer.write_budget_sheet(
+                le_path=le_path,
+                cost_centers=cost_centers_to_process,
+            )
+
         template_writer.write_exception_data_sheet(self.exception_log)
-        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
+        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data)
         self._update_progress(95)
+
         template_writer.save()
 
         self.logger.info("Exception reports generated")
@@ -342,40 +363,30 @@ class PipelineOrchestrator:
         """Project / CapEx pipeline (Consolidated Actuals / P3-ID driven)."""
         from src.utils import load_config as _load_yaml_config
 
+        # Always use config_project.yaml for project settings — the app's
+        # streamlit_config only holds OpEx defaults and does not have project
+        # keys like dec_acc_reversal_col="K", p3_id_col, or p3_ids.
+        pcfg = _load_yaml_config('configs/config_project.yaml')
+        pt   = pcfg['template']
+        ptw  = pcfg['template_writer']
+
         # Step 1: Load data
         self.logger.info("Step 1/4: Loading data...")
         self._update_progress(10)
 
         forecast_reader = ForecastReader(
             file_paths=file_paths['forecast'] if isinstance(file_paths['forecast'], list) else [file_paths['forecast']],
-            po_col=self.config['forecast_reader']['po_col']
+            po_col=pcfg['forecast_reader']['po_col'],
         )
         forecast_data = forecast_reader.get_forecast_data()
         self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
         self._update_progress(20)
 
-        # Use project-specific colmap — Amount - BER is the required col
-        proj_colmap = {
-            'po':           'PO Number',
-            'month':        'Accounting Period',
-            'amount':       'GL BER Corp Amount',
-            'classifier':   'AP Voucher Number',
-            'cost_center':  'Cost Center*',
-            'wbs':          'WBS Element',
-            'legal_entity': 'Legal Entity',
-            'vendor_name':  'Vendor Name',
-            'gl_account':   'Cost Element',
-            'req_title':    'CO Doc Line Item Txt',
-            'type':         'Type',
-        }
-        if 'transactional_detail_reader' in self.config and 'colmap' in self.config['transactional_detail_reader']:
-            proj_colmap.update(self.config['transactional_detail_reader']['colmap'])
-
         transactional_reader = TransactionalDetailReader(
             file_path=file_paths['transactional'],
-            required_cols=['Amount - BER'],
-            valid_types=['Actual', 'Accrual', 'Reversal', 'Reclass', 'ER'],
-            colmap=proj_colmap,
+            required_cols=pcfg['transactional_detail_reader']['required_cols'],
+            valid_types=pcfg['transactional_detail_reader']['valid_types'],
+            colmap=pcfg['transactional_detail_reader']['colmap'],
         )
         transactional_data = transactional_reader.get_transactional_data()
         reclass_data       = transactional_reader.get_reclass_data()
@@ -388,12 +399,12 @@ class PipelineOrchestrator:
 
         template_reader = ProjectTemplateReader(
             file_path=file_paths['template'],
-            header_row=self.config['template']['header_row'],
-            po_col=self.config['template']['po_col'],
-            po_stop_marker=self.config['template'].get('po_stop_marker', 'Previous Period Invoices'),
-            wbs_col='A',
-            p3_id_col='B',
-            wbs_start_row=2,
+            header_row=pt['header_row'],
+            po_col=pt['po_col'],
+            po_stop_marker=pt.get('po_stop_marker', 'Previous Period Invoices'),
+            wbs_col=pt.get('wbs_col', 'A'),
+            p3_id_col=pt.get('p3_id_col', 'B'),
+            wbs_start_row=pt.get('wbs_start_row', 2),
         )
         self.logger.info(f"Loaded project template: {len(template_reader.p3_wbs_map)} P3 IDs, {len(template_reader.pos)} POs")
         self._update_progress(40)
@@ -427,6 +438,7 @@ class PipelineOrchestrator:
             reclass_notes=reclass_notes,
             template_pos=template_reader.pos,
             intl_po_set=intl_po_set,
+            p3_ids=pt.get('p3_ids'),
         )
 
         total_exceptions = len(self.exception_log.entries)
@@ -437,22 +449,27 @@ class PipelineOrchestrator:
         self.logger.info("Step 3/4: Writing template output...")
         self._update_progress(65)
 
-        output_filename = Path(self.config['template_writer'].get('output_path', 'template_output.xlsx')).name
-        output_path = Path(file_paths['template']).parent / output_filename
+        # Write back to the uploaded template file directly (same as OpEx pipeline).
+        output_path = Path(file_paths['template'])
 
         template_writer = TemplateWriter(
             file_path=file_paths['template'],
-            header_row=self.config['template']['header_row'],
-            po_column=self.config['template']['po_col'],
+            header_row=pt['header_row'],
+            po_column=pt['po_col'],
             output_path=str(output_path),
-            overwrite=self.config['template_writer']['overwrite'],
-            dec_acc_reversal_col=self.config['template_writer']['dec_acc_reversal_col'],
-            forecast_source_cols=self.config['template_writer']['forecast_source_cols'],
-            transactional_source_cols=self.config['template_writer']['transactional_source_cols'],
+            overwrite=ptw['overwrite'],
+            dec_acc_reversal_col=ptw['dec_acc_reversal_col'],
+            forecast_source_cols=ptw['forecast_source_cols'],
+            transactional_source_cols=ptw['transactional_source_cols'],
+            p3_id_column=pt.get('p3_id_col'),
         )
         self._update_progress(70)
 
-        pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+        pos = template_writer.insert_missing_po_rows(
+            hierarchy,
+            pos=template_reader.pos,
+            blank_po_rows=template_reader.blank_po_rows,
+        )
         template_writer.write_hierarchy(hierarchy, pos=pos)
         self._update_progress(80)
         self.logger.info("Template data written")
@@ -462,7 +479,7 @@ class PipelineOrchestrator:
         self.logger.info("Step 4/4: Generating exception reports...")
         self._update_progress(90)
         template_writer.write_exception_data_sheet(self.exception_log)
-        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data, pos=pos)
+        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data)
         self._update_progress(95)
         template_writer.save()
 
