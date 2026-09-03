@@ -608,6 +608,7 @@ with up_col3:
 le_col, = st.columns([1])
 with le_col:
     st.subheader("LE File (Optional)")
+    st.caption("OpEx Only")
     le_file = st.file_uploader(
         "le_label",
         type=['xlsx'],
