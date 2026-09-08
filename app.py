@@ -503,7 +503,7 @@ st.divider()
 up_col1, up_col2, up_col3 = st.columns(3, gap="medium")
 
 with up_col1:
-    st.subheader("Template File")
+    st.subheader("Template Forecast File")
     template_file = st.file_uploader(
         "template_label",
         type=['xlsx'],
@@ -561,7 +561,7 @@ with up_col1:
             st.error(f"Error reading template: {str(e)}")
 
     if template_file is None:
-        st.info("Template File Required")
+        st.info("Template Forecast File Required")
 
 with up_col2:
     st.subheader("Transactional Detail File")
@@ -578,7 +578,7 @@ with up_col2:
         st.info("Transactional File Required")
 
 with up_col3:
-    st.subheader("Forecast Files")
+    st.subheader("Vendor Forecast File")
     forecast_files = st.file_uploader(
         "forecast_label",
         type=['xlsx'],
@@ -588,9 +588,9 @@ with up_col3:
         label_visibility="collapsed"
     )
     if forecast_files:
-        st.success(f"{len(forecast_files)} Forecast File(s) Uploaded")
+        st.success(f"{len(forecast_files)} Vendor Forecast File(s) Uploaded")
     else:
-        st.info("At Least One Forecast File Required")
+        st.info("At Least One Vendor Forecast File Required")
 
 # ── Template type banner (full width, below all three upload columns) ─────────
 if template_file is not None and st.session_state.get('template_type'):
