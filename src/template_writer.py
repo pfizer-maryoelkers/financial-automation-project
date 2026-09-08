@@ -1755,7 +1755,9 @@ class TemplateWriter:
         whose Cost Center matches any of the selected cost centers.
 
         Columns written:
-            Cost Center | Description | Project Code | Budget (LE0)
+            Cost Center | Description | Project Code | LE0
+            + LE2, LE3, LE4 Final Submission columns when present in the file
+            + a Totals row with SUM formulas below the data
 
         Args:
             le_path:       Absolute path to the ERP LE .xlsx file.
@@ -1781,14 +1783,20 @@ class TemplateWriter:
             if val is not None:
                 col_idx[str(val).strip()] = i  # 0-based
 
-        # Map the four columns we need (header names as they appear in the file)
-        FIELD_MAP = {
+        # Required columns (must exist) and optional LE submission columns
+        REQUIRED_COLS = {
             "Cost Center*":  "Cost Center",
             "Description*":  "Description",
             "Project Code*": "Project Code",
-            "2026 LE0":      "Budget",
+            "2026 LE0":      "LE0",
         }
-        missing = [k for k in FIELD_MAP if k not in col_idx]
+        # LE2–LE4 columns are included when present; absence is not an error
+        OPTIONAL_LE_COLS = [
+            ("LE2 Final Submission", "LE2"),
+            ("LE3 Final Submission", "LE3"),
+            ("LE4 Final Submission", "LE4"),
+        ]
+        missing = [k for k in REQUIRED_COLS if k not in col_idx]
         if missing:
             le_wb.close()
             raise ValueError(
@@ -1800,6 +1808,8 @@ class TemplateWriter:
         desc_col = col_idx["Description*"]
         proj_col = col_idx["Project Code*"]
         le0_col  = col_idx["2026 LE0"]
+        # Collect indices for any optional LE columns that are present
+        optional_le = [(label, col_idx[src]) for src, label in OPTIONAL_LE_COLS if src in col_idx]
 
         # Normalise the filter set for fast lookup
         cc_filter = {str(c).strip() for c in cost_centers}
@@ -1814,11 +1824,13 @@ class TemplateWriter:
             cell_ccs = [c.strip() for c in str(raw_cc).split(";")]
             if cc_filter and not any(c in cc_filter for c in cell_ccs):
                 continue
+            optional_vals = tuple(row[idx] for _, idx in optional_le)
             budget_rows.append((
                 str(raw_cc).strip(),
                 row[desc_col] or "",
                 row[proj_col] or "",
                 row[le0_col],
+                *optional_vals,
             ))
 
         le_wb.close()
@@ -1830,8 +1842,10 @@ class TemplateWriter:
             del self.wb["Budget"]
         ws = self.wb.create_sheet("Budget", index=1)
 
-        # Header row
-        headers = ["Cost Center", "Description", "Project Code", "Budget"]
+        # Header row — fixed columns + any optional LE columns found in the file
+        fixed_headers = ["Cost Center", "Description", "Project Code", "LE0"]
+        optional_headers = [label for label, _ in optional_le]
+        headers = fixed_headers + optional_headers
         header_fill = PatternFill(fill_type="solid", fgColor="4F81BD")
         header_font = Font(bold=True, color="FFFFFF", size=11)
         for col_num, header in enumerate(headers, start=1):
@@ -1842,28 +1856,53 @@ class TemplateWriter:
 
         # Data rows
         num_fmt_currency = '#,##0.00'
-        for row_num, (cc, desc, proj, budget) in enumerate(budget_rows, start=2):
+        for row_num, row_data in enumerate(budget_rows, start=2):
+            cc, desc, proj = row_data[0], row_data[1], row_data[2]
             ws.cell(row=row_num, column=1, value=cc)
             ws.cell(row=row_num, column=2, value=desc)
             ws.cell(row=row_num, column=3, value=proj)
-            budget_cell = ws.cell(row=row_num, column=4, value=budget)
-            if isinstance(budget, (int, float)) and budget is not None:
-                budget_cell.number_format = num_fmt_currency
+            for col_offset, val in enumerate(row_data[3:], start=4):
+                budget_cell = ws.cell(row=row_num, column=col_offset, value=val)
+                if isinstance(val, (int, float)) and val is not None:
+                    budget_cell.number_format = num_fmt_currency
+
+        # Totals row — label in column A, SUM formulas for each numeric column
+        total_row = len(budget_rows) + 2  # row after last data row
+        if budget_rows:
+            total_label_cell = ws.cell(row=total_row, column=1, value="Total")
+            total_label_cell.font = Font(bold=True, size=11)
+            total_fill = PatternFill(fill_type="solid", fgColor="D9E1F2")
+            total_label_cell.fill = total_fill
+            # Columns 2 and 3 (Description, Project Code) — fill background only
+            for col_num in (2, 3):
+                ws.cell(row=total_row, column=col_num).fill = total_fill
+            # Numeric columns start at column 4 (LE0, LE2, LE3, LE4 …)
+            data_start = 2
+            data_end = len(budget_rows) + 1
+            for col_num in range(4, len(headers) + 1):
+                col_letter = get_column_letter(col_num)
+                total_cell = ws.cell(
+                    row=total_row,
+                    column=col_num,
+                    value=f"=SUM({col_letter}{data_start}:{col_letter}{data_end})",
+                )
+                total_cell.font = Font(bold=True, size=11)
+                total_cell.fill = total_fill
+                total_cell.number_format = num_fmt_currency
 
         # Auto-filter on header row
+        last_col_letter = get_column_letter(len(headers))
         if budget_rows:
-            ws.auto_filter.ref = f"A1:D{len(budget_rows) + 1}"
+            ws.auto_filter.ref = f"A1:{last_col_letter}{len(budget_rows) + 1}"
 
         # Freeze pane below header
         ws.freeze_panes = "A2"
 
         # Auto-fit column widths
         col_widths = [len(h) for h in headers]
-        for cc, desc, proj, budget in budget_rows:
-            col_widths[0] = max(col_widths[0], len(str(cc)))
-            col_widths[1] = max(col_widths[1], len(str(desc)))
-            col_widths[2] = max(col_widths[2], len(str(proj)))
-            col_widths[3] = max(col_widths[3], len(str(budget) if budget is not None else ""))
+        for row_data in budget_rows:
+            for i, val in enumerate(row_data):
+                col_widths[i] = max(col_widths[i], len(str(val) if val is not None else ""))
         for i, width in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = min(width + 4, 60)
 
