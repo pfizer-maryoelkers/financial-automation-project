@@ -231,26 +231,36 @@ class TemplateWriter:
             ws.cell(row=r + count, column=c).comment = cmt
 
     def _get_total_col(self) -> str | None:
-        """Scan a window around the header row for a 'Total YYYY' cell.
+        """Scan a window around the header row for a 'Total' or 'Total YYYY' cell.
         Returns the column letter, or None if not found."""
         for row in range(1, self.header_row + 10):
             for col in range(1, (self.sheet.max_column or 200) + 1):
                 val = self.sheet.cell(row=row, column=col).value
-                if val and re.search(r'total\s+\d{4}', str(val), re.IGNORECASE):
-                    return get_column_letter(col)
+                if val and re.search(r'total(?:\s+\d{4})?', str(val).strip(), re.IGNORECASE):
+                    # Must be the only (or main) content of the cell — not a label
+                    # like "Forecast Spreadsheet Actuals:" that happens to contain no "total"
+                    text = str(val).strip()
+                    if re.fullmatch(r'total(?:\s*:)?(?:\s+\d{4})?', text, re.IGNORECASE):
+                        return get_column_letter(col)
         return None
 
     def _write_total_formula(self, row: int):
-        """Write the Total 2026 SUM formula into the total column for the given row.
-        The formula picks the best available value per month:
-        Actual → Accrual → Forecast (matching the pattern in the template).
-        Only writes if the total column was found and the cell is blank (or overwrite=True).
-        Preserves any formula already in the cell."""
+        """Write the Total formula into the total column for the given row.
+
+        Sums each month using: IF(Actual<>"", Actual, IF(Accrual<>"", Accrual, Forecast))
+        so that real invoiced amounts take precedence over accrual estimates.
+
+        Falls back to summing Actual-only columns when a month has no Accrual or Forecast
+        mapping (e.g. the fallback column map has all three, but just in case).
+
+        Only writes if the total column was found and the cell is blank/zero/unset
+        (or overwrite=True).  Never overwrites a formula already present.
+        """
         if not self.total_col:
             return
         cell = self.sheet[f"{self.total_col}{row}"]
         existing = cell.value
-        # Preserve existing formula in this cell
+        # Preserve existing non-zero formula in this cell
         if not self.overwrite and isinstance(existing, str) and existing.startswith('='):
             return
         if not self.overwrite and existing not in (None, 0, ''):
@@ -266,6 +276,9 @@ class TemplateWriter:
                     f'IF({actual}{row}<>"",{actual}{row},'
                     f'IF({accrual}{row}<>"",{accrual}{row},{forecast}{row}))'
                 )
+            elif actual:
+                # Month only has an Actual column — include it directly
+                parts.append(f'IF({actual}{row}<>"",{actual}{row},0)')
         if parts:
             cell.value = '=' + '+'.join(parts)
 
@@ -428,9 +441,11 @@ class TemplateWriter:
                 actual_idx = column_index_from_string(actual_col)
                 variance_col_letter = get_column_letter(actual_idx + 1)
 
-                # Check if this column represents the monthly variance column
+                # Check if this column represents the monthly variance column —
+                # identified by a "Variance" header or a blank/None header
+                # (template uses blank headers for variance cols, same as write_hierarchy).
                 header_val = self.sheet.cell(row=self.header_row, column=actual_idx + 1).value
-                if header_val and 'variance' in str(header_val).lower():
+                if header_val is None or 'variance' in str(header_val).lower():
                     formula = f'=IF(OR({accrual_col}{ppi_row}="",{actual_col}{ppi_row}=""),"",{accrual_col}{ppi_row}-{actual_col}{ppi_row})'
                     self.sheet.cell(row=ppi_row, column=actual_idx + 1, value=formula)
 
