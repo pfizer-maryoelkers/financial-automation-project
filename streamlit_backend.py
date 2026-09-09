@@ -254,19 +254,30 @@ class PipelineOrchestrator:
             self.logger.info("No forecast file provided — skipping forecast data")
         self._update_progress(20)
 
-        transactional_reader = TransactionalDetailReader(
-            file_path=file_paths['transactional'],
-            required_cols=self.config['transactional_detail_reader']['required_cols'],
-            valid_types=self.config['transactional_detail_reader']['valid_types'],
-            colmap=self.config['transactional_detail_reader']['colmap']
-        )
-        transactional_data = transactional_reader.get_transactional_data()
-        reclass_data       = transactional_reader.get_reclass_data()
-        reclass_notes      = transactional_reader.get_reclass_notes()
-        hierarchy_map      = transactional_reader.get_hierarchy_map()
-        intl_po_set        = transactional_reader.get_intl_po_set()
-        row_count = len(transactional_reader.data) if transactional_reader.data is not None else 0
-        self.logger.info(f"Loaded transactional data: {row_count} rows")
+        trans_path = file_paths.get('transactional')
+        if trans_path:
+            transactional_reader = TransactionalDetailReader(
+                file_path=trans_path,
+                required_cols=self.config['transactional_detail_reader']['required_cols'],
+                valid_types=self.config['transactional_detail_reader']['valid_types'],
+                colmap=self.config['transactional_detail_reader']['colmap']
+            )
+            transactional_data = transactional_reader.get_transactional_data()
+            reclass_data       = transactional_reader.get_reclass_data()
+            reclass_notes      = transactional_reader.get_reclass_notes()
+            hierarchy_map      = transactional_reader.get_hierarchy_map()
+            intl_po_set        = transactional_reader.get_intl_po_set()
+            transactional_df   = transactional_reader.data
+            row_count = len(transactional_df) if transactional_df is not None else 0
+            self.logger.info(f"Loaded transactional data: {row_count} rows")
+        else:
+            transactional_data = {}
+            reclass_data       = {}
+            reclass_notes      = {}
+            hierarchy_map      = {}
+            intl_po_set        = set()
+            transactional_df   = None
+            self.logger.info("No transactional file provided — skipping transactional data")
         self._update_progress(30)
 
         template_reader = TemplateReader(
@@ -290,16 +301,13 @@ class PipelineOrchestrator:
         self._update_progress(45)
         self.exception_log = ExceptionLog()
 
-        if transactional_reader.data is None:
-            raise Exception("Transactional data failed to load")
-
         hierarchy = build_hierarchy(
             cost_centers=cost_centers_to_process,
             hierarchy_map=hierarchy_map,
             transactional_data=transactional_data,
             forecast_data=forecast_data,
             exception_log=self.exception_log,
-            transactional_df=transactional_reader.data,
+            transactional_df=transactional_df,
             reclass_data=reclass_data,
             reclass_notes=reclass_notes,
             template_pos=template_reader.pos,
@@ -352,7 +360,7 @@ class PipelineOrchestrator:
             )
 
         template_writer.write_exception_data_sheet(self.exception_log)
-        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data)
+        template_writer.write_exception_sheet(self.exception_log, transactional_df)
         self._update_progress(95)
 
         template_writer.save()
@@ -393,19 +401,30 @@ class PipelineOrchestrator:
             self.logger.info("No forecast file provided — skipping forecast data")
         self._update_progress(20)
 
-        transactional_reader = TransactionalDetailReader(
-            file_path=file_paths['transactional'],
-            required_cols=pcfg['transactional_detail_reader']['required_cols'],
-            valid_types=pcfg['transactional_detail_reader']['valid_types'],
-            colmap=pcfg['transactional_detail_reader']['colmap'],
-        )
-        transactional_data = transactional_reader.get_transactional_data()
-        reclass_data       = transactional_reader.get_reclass_data()
-        reclass_notes      = transactional_reader.get_reclass_notes()
-        hierarchy_map      = transactional_reader.get_hierarchy_map()
-        intl_po_set        = transactional_reader.get_intl_po_set()
-        row_count = len(transactional_reader.data) if transactional_reader.data is not None else 0
-        self.logger.info(f"Loaded transactional data: {row_count} rows")
+        trans_path = file_paths.get('transactional')
+        if trans_path:
+            transactional_reader = TransactionalDetailReader(
+                file_path=trans_path,
+                required_cols=pcfg['transactional_detail_reader']['required_cols'],
+                valid_types=pcfg['transactional_detail_reader']['valid_types'],
+                colmap=pcfg['transactional_detail_reader']['colmap'],
+            )
+            transactional_data = transactional_reader.get_transactional_data()
+            reclass_data       = transactional_reader.get_reclass_data()
+            reclass_notes      = transactional_reader.get_reclass_notes()
+            hierarchy_map      = transactional_reader.get_hierarchy_map()
+            intl_po_set        = transactional_reader.get_intl_po_set()
+            transactional_df   = transactional_reader.data
+            row_count = len(transactional_df) if transactional_df is not None else 0
+            self.logger.info(f"Loaded transactional data: {row_count} rows")
+        else:
+            transactional_data = {}
+            reclass_data       = {}
+            reclass_notes      = {}
+            hierarchy_map      = {}
+            intl_po_set        = set()
+            transactional_df   = None
+            self.logger.info("No transactional file provided — skipping transactional data")
         self._update_progress(30)
 
         template_reader = ProjectTemplateReader(
@@ -431,9 +450,6 @@ class PipelineOrchestrator:
         self._update_progress(45)
         self.exception_log = ExceptionLog()
 
-        if transactional_reader.data is None:
-            raise Exception("Transactional data failed to load")
-
         hierarchy = build_project_hierarchy(
             projects=list({
                 p for wbs_list in p3_wbs_map.values() for wbs in wbs_list
@@ -443,7 +459,7 @@ class PipelineOrchestrator:
             transactional_data=transactional_data,
             forecast_data=forecast_data,
             exception_log=self.exception_log,
-            transactional_df=transactional_reader.data,
+            transactional_df=transactional_df,
             p3_wbs_map=p3_wbs_map,
             reclass_data=reclass_data,
             reclass_notes=reclass_notes,
@@ -490,7 +506,7 @@ class PipelineOrchestrator:
         self.logger.info("Step 4/4: Generating exception reports...")
         self._update_progress(90)
         template_writer.write_exception_data_sheet(self.exception_log)
-        template_writer.write_exception_sheet(self.exception_log, transactional_reader.data)
+        template_writer.write_exception_sheet(self.exception_log, transactional_df)
         self._update_progress(95)
         template_writer.save()
 

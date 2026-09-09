@@ -607,7 +607,7 @@ with up_col2:
     if transactional_file:
         st.success("Transactional File Uploaded")
     else:
-        st.info("Transactional File Required")
+        st.info("No transactional file uploaded — transactional data will be skipped")
 
 with up_col3:
     st.subheader("Vendor Forecast File")
@@ -656,7 +656,7 @@ with le_col:
 st.divider()
 
 # ── Generate button ───────────────────────────────────────────────────────────
-all_files_uploaded = all([template_file, transactional_file])
+all_files_uploaded = template_file is not None
 
 generate_button = st.button(
     "Generate Report",
