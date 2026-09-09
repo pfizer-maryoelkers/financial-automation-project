@@ -264,7 +264,7 @@ class TemplateWriter:
 
         return None
 
-    def _write_total_formula(self, row: int):
+    def _write_total_formula(self, row: int, force: bool = False):
         """Write the Total formula into the total column for the given row.
 
         Sums each month using: IF(Actual<>"", Actual, IF(Accrual<>"", Accrual, Forecast))
@@ -274,17 +274,20 @@ class TemplateWriter:
         mapping (e.g. the fallback column map has all three, but just in case).
 
         Only writes if the total column was found and the cell is blank/zero/unset
-        (or overwrite=True).  Never overwrites a formula already present.
+        (or overwrite=True).  Set force=True to always overwrite — used for the PPI
+        row, whose pre-existing formula may contain #REF! errors after row insertions.
         """
         if not self.total_col:
             return
         cell = self.sheet[f"{self.total_col}{row}"]
         existing = cell.value
-        # Preserve existing non-zero formula in this cell
-        if not self.overwrite and isinstance(existing, str) and existing.startswith('='):
-            return
-        if not self.overwrite and existing not in (None, 0, ''):
-            return
+        if not force and not self.overwrite:
+            # Always replace a broken (#REF!) formula; preserve a valid one
+            if isinstance(existing, str) and existing.startswith('='):
+                if '#REF!' not in existing:
+                    return
+            elif existing not in (None, 0, ''):
+                return
         # Build SUM of per-month best-value: IF(Actual<>"", Actual, IF(Accrual<>"", Accrual, Forecast))
         parts = []
         for month_cols in self.column_map.values():
@@ -487,7 +490,7 @@ class TemplateWriter:
 
         # 3. Dynamic Grand Total formula for Previous Period Invoices row
         if self.total_col:
-            self._write_total_formula(ppi_row)
+            self._write_total_formula(ppi_row, force=True)
 
     # Map full/variant month words found in header cells → canonical 3-letter key
     _HEADER_MONTH_ALIASES = {
