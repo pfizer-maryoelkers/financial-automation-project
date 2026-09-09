@@ -1790,13 +1790,20 @@ class TemplateWriter:
 
         # ── Discover column indices from the header row (row 7) ──────────────
         HEADER_ROW = 7
+        # Build column index map from the header row.
+        # The ERP sheet contains multiple side-by-side sub-tables that each
+        # repeat the same header names (e.g. "Cost Center*") at different column
+        # positions.  We must keep only the FIRST occurrence of each header name
+        # so that the required columns point to the leftmost (primary) sub-table.
         col_idx: dict[str, int] = {}
         header_values = list(le_ws.iter_rows(
             min_row=HEADER_ROW, max_row=HEADER_ROW, values_only=True
         ))[0]
         for i, val in enumerate(header_values):
             if val is not None:
-                col_idx[str(val).strip()] = i  # 0-based
+                key = str(val).strip()
+                if key not in col_idx:   # keep first occurrence only
+                    col_idx[key] = i  # 0-based
 
         # Required columns (must exist) and optional LE submission columns
         REQUIRED_COLS = {
