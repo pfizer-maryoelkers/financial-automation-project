@@ -1047,19 +1047,25 @@ class TransactionalDetailReader:
             # Domestic POs: accounting period − 1 (Jan → Dec (PY), Mar → Feb, etc.)
             # International POs: accounting period − 2 for Actuals/ER/Reclass only.
             # Accruals/Reversals always use the domestic − 1 shift for all POs.
-            actual_shift = 2 if is_intl else 1
-            actual_shifted = month_num - actual_shift
-            if actual_shifted <= 0:
-                actual_month = "Nov (PY)" if actual_shifted == -1 else "Dec (PY)"
+            # Exception: December (month 12) is never shifted — it lands in the
+            # current-year Dec columns of the template directly.
+            if month_num == 12:
+                actual_month  = "Dec"
+                accrual_month = "Dec"
             else:
-                actual_month = self.month_map.get(actual_shifted)
+                actual_shift = 2 if is_intl else 1
+                actual_shifted = month_num - actual_shift
+                if actual_shifted <= 0:
+                    actual_month = "Nov (PY)" if actual_shifted == -1 else "Dec (PY)"
+                else:
+                    actual_month = self.month_map.get(actual_shifted)
 
-            # Accruals/Reversals: always domestic − 1 shift
-            accrual_shifted = month_num - 1
-            if accrual_shifted <= 0:
-                accrual_month = "Dec (PY)"
-            else:
-                accrual_month = self.month_map.get(accrual_shifted)
+                # Accruals/Reversals: always domestic − 1 shift
+                accrual_shifted = month_num - 1
+                if accrual_shifted <= 0:
+                    accrual_month = "Dec (PY)"
+                else:
+                    accrual_month = self.month_map.get(accrual_shifted)
 
             # Initialize PO
             if po not in result:
@@ -1179,7 +1185,10 @@ class TransactionalDetailReader:
 
             # Reclass amounts are posted in the current period — use actual_month
             # (current month - 1) to stay consistent with how Actuals are placed.
-            if month_num == 1:
+            # December is never shifted — maps directly to current-year Dec.
+            if month_num == 12:
+                month_label = "Dec"
+            elif month_num == 1:
                 month_label = "Dec (PY)"
             else:
                 month_label = self.month_map.get(month_num - 1)
@@ -1231,7 +1240,10 @@ class TransactionalDetailReader:
             if month_num is None:
                 continue
 
-            if month_num == 1:
+            # December is never shifted — maps directly to current-year Dec.
+            if month_num == 12:
+                month_label = "Dec"
+            elif month_num == 1:
                 month_label = "Dec (PY)"
             else:
                 month_label = self.month_map.get(month_num - 1)
