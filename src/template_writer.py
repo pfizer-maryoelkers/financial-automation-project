@@ -231,17 +231,37 @@ class TemplateWriter:
             ws.cell(row=r + count, column=c).comment = cmt
 
     def _get_total_col(self) -> str | None:
-        """Scan a window around the header row for a 'Total' or 'Total YYYY' cell.
-        Returns the column letter, or None if not found."""
-        for row in range(1, self.header_row + 10):
-            for col in range(1, (self.sheet.max_column or 200) + 1):
+        """Scan the header row (and one row above/below) for the Total column.
+
+        Only looks on the actual header row so that section-label cells like
+        'Total:' in summary areas above the header are not mistaken for the
+        per-PO total column.  Falls back to a broader scan only when nothing
+        is found on the header row itself.
+
+        Returns the column letter, or None if not found.
+        """
+        actual_header = self.header_row  # already resolved in __init__
+        max_col = (self.sheet.max_column or 200) + 1
+
+        # Primary pass: header row only
+        for col in range(1, max_col):
+            val = self.sheet.cell(row=actual_header, column=col).value
+            if val:
+                text = str(val).strip()
+                if re.fullmatch(r'total(?:\s*:)?(?:\s+\d{4})?', text, re.IGNORECASE):
+                    return get_column_letter(col)
+
+        # Fallback: one row above and one row below the header row
+        for row in (actual_header - 1, actual_header + 1):
+            if row < 1:
+                continue
+            for col in range(1, max_col):
                 val = self.sheet.cell(row=row, column=col).value
-                if val and re.search(r'total(?:\s+\d{4})?', str(val).strip(), re.IGNORECASE):
-                    # Must be the only (or main) content of the cell — not a label
-                    # like "Forecast Spreadsheet Actuals:" that happens to contain no "total"
+                if val:
                     text = str(val).strip()
                     if re.fullmatch(r'total(?:\s*:)?(?:\s+\d{4})?', text, re.IGNORECASE):
                         return get_column_letter(col)
+
         return None
 
     def _write_total_formula(self, row: int):
