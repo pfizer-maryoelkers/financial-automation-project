@@ -13,33 +13,45 @@ def detect_template_type(file_path: str) -> str:
     Returns
     -------
     "project"
-        The top corner has "WBS Code" and "P3 ID" as a **paired header row**
-        (both values appear on the same row, one in col A and one in col B).
+        Detected by any of these signals (checked in order):
+        1. Old format: col-A says "WBS Code" AND col-B says "P3 ID" on the
+           same row within the first 20 rows.
+        2. New format (OpEx layout): col-A contains a P3 ID value — a cell
+           whose text matches the pattern P<digits>-<digits> (e.g. P325-0015419)
+           — within the first 30 rows.  This handles project templates that
+           have been reformatted to use the same physical layout as OpEx.
         The project pipeline (ProjectTemplateReader / build_project_hierarchy)
         should be used.
     "opex"
-        The template has a "Cost Center" section in column A.  The OpEx
-        pipeline (TemplateReader / build_hierarchy) should be used.
+        Neither project signal was found.  The OpEx pipeline
+        (TemplateReader / build_hierarchy) should be used.
 
     Detection strategy
     ------------------
-    Scan up to the first 20 rows.  A row where col-A says "WBS Code" (or
-    "WBS code") AND col-B says "P3 ID" on the same row is an unambiguous
-    project-template marker.  The OpEx template has those labels too, but
-    never together on the same row.
+    Signal 1 (old format): paired "WBS Code" / "P3 ID" header row.
+    Signal 2 (new format): P3 ID value (P<digits>-<digits>) in col A.
     """
+    import re as _re
     from openpyxl import load_workbook
+
+    _p3_pattern = _re.compile(r'^P\d+-\d+$', _re.IGNORECASE)
 
     wb = load_workbook(file_path, read_only=True, data_only=True)
     ws = wb.active
 
-    for r in range(1, 21):
+    for r in range(1, 31):
         a_val = ws.cell(row=r, column=1).value
         b_val = ws.cell(row=r, column=2).value
         a_text = str(a_val).strip().lower() if a_val is not None else ""
         b_text = str(b_val).strip().lower() if b_val is not None else ""
-        # Project template: "WBS Code" in col A AND "P3 ID" in col B on the same row
+
+        # Signal 1 — old format: "WBS Code" col A + "P3 ID" col B on same row
         if a_text == "wbs code" and b_text == "p3 id":
+            wb.close()
+            return "project"
+
+        # Signal 2 — new format: P3 ID value in col A (e.g. P325-0015419)
+        if a_val is not None and _p3_pattern.match(str(a_val).strip()):
             wb.close()
             return "project"
 

@@ -6,14 +6,23 @@
 # ============================
 
 ## Project Template (reader + writer share this)
+#
+# Layout options
+# --------------
+# New format (OpEx layout): P3 IDs sit in col A exactly like cost centers in
+#   the OpEx template.  Set p3_id_col = "A" (same as wbs_col).
+#   The reader detects this automatically and reads P3 IDs from col A.
+#
+# Old format: WBS codes in col A, P3 ID in col B on the same row.
+#   Set p3_id_col = "B" and wbs_col = "A".
 template:
   file_path: "data/templates/Project Test.xlsx"
-  header_row: 12
+  header_row: 16
   po_col: "B"
   po_stop_marker: "Previous Period Invoices"
   wbs_col: "A"
-  p3_id_col: "B"
-  wbs_start_row: 2
+  p3_id_col: "A"          # "A" = new OpEx layout; "B" = old paired WBS/P3 layout
+  wbs_start_row: 9        # row after the "Cost Center" / P3 header label
   # P3 IDs to process when the template WBS/P3 mapping section is blank.
   # Each value must match the Cost Center* column in the transactional detail file.
   p3_ids:
@@ -61,7 +70,7 @@ transactional_detail_reader:
 template_writer:
   output_path: "data/templates/Project Test.xlsx"
   overwrite: False
-  dec_acc_reversal_col: "K"
+  dec_acc_reversal_col: "N"  # same as OpEx layout
   forecast_source_cols:
     - "PO #"
     - "Jan 2026 - FTotal"

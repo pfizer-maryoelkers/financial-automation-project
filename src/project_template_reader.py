@@ -157,15 +157,31 @@ class ProjectTemplateReader:
 
     def _get_p3_wbs_mapping(self) -> dict[str, list[str]]:
         """Read P3 IDs and their associated WBS codes from the template.
-        
+
+        Handles two layouts:
+
+        Old format (p3_id_col != wbs_col, e.g. wbs_col="A", p3_id_col="B"):
+            Col A holds WBS codes; col B holds the P3 ID for each row.
+
+        New format / OpEx layout (p3_id_col == wbs_col or p3_id_col is None,
+        e.g. both "A"):
+            Col A holds P3 IDs directly, one per row — same structure as the
+            OpEx template's cost center section.  Each P3 ID is registered with
+            an empty WBS list; the project hierarchy builder matches rows from
+            the transactional file via the cost_center field directly.
+
         Returns a mapping: {p3_id: [wbs_code1, wbs_code2, ...]}
         """
-        if not self.p3_id_col:
-            return {}
-        
+        # ── New format: P3 IDs in col A, no separate WBS column ─────────────
+        # Detected when p3_id_col is None or equals wbs_col.
+        opex_layout = (not self.p3_id_col) or (self.p3_id_col == self.wbs_col)
+        if opex_layout:
+            return self._get_p3_ids_from_col_a()
+
+        # ── Old format: WBS in col A, P3 ID in a separate column ────────────
         mapping: dict[str, list[str]] = {}
         start_row = self.wbs_start_row
-        
+
         # Find the actual start row by looking for WBS/Project header
         max_row = self.sheet.max_row or 1000
         for r in range(1, max_row + 1):
@@ -176,7 +192,7 @@ class ProjectTemplateReader:
             if "wbs" in low or "project" in low:
                 start_row = r + 1
                 break
-        
+
         row = start_row
         while True:
             if self.wbs_end_row is not None and row > self.wbs_end_row:
@@ -207,6 +223,54 @@ class ProjectTemplateReader:
 
             row += 1
 
+        return mapping
+
+    def _get_p3_ids_from_col_a(self) -> dict[str, list[str]]:
+        """Read P3 IDs from col A using the same logic as TemplateReader.
+
+        Used for new-format project templates that share the OpEx physical
+        layout: P3 IDs sit in column A, starting after a header cell that
+        contains "cost center" or "p3" and stopping at a blank or "Expense" row.
+
+        Returns {p3_id: []} — WBS lists are intentionally empty because the
+        project hierarchy builder matches rows via the cost_center field.
+        """
+        import re as _re
+        _p3_pattern = _re.compile(r'^P\d+-\d+', _re.IGNORECASE)
+        max_row = self.sheet.max_row or 1000
+
+        # Find start row: row after a header cell containing "cost center",
+        # "p3", or "wbs"; fall back to wbs_start_row from config.
+        start_row = self.wbs_start_row
+        for r in range(1, max_row + 1):
+            val = self.sheet[f"{self.wbs_col}{r}"].value
+            if val is None:
+                continue
+            low = str(val).strip().lower()
+            if any(kw in low for kw in ("cost center", "p3", "wbs", "project")):
+                start_row = r + 1
+                break
+
+        mapping: dict[str, list[str]] = {}
+        row = start_row
+        while True:
+            if self.wbs_end_row is not None and row > self.wbs_end_row:
+                break
+            cell_val = self.sheet[f"{self.wbs_col}{row}"].value
+            if cell_val is None or str(cell_val).strip() == "":
+                break
+            text = str(cell_val).strip()
+            if text.lower().startswith("expense"):
+                break
+            p3_id = text.split("/")[0].strip()
+            if p3_id and p3_id not in mapping:
+                mapping[p3_id] = []
+            row += 1
+
+        if mapping:
+            print(f"Found {len(mapping)} P3 ID(s) in project template (OpEx layout): {list(mapping)}")
+        else:
+            print("WARNING: No P3 IDs found in project template column A.")
         return mapping
 
     # ------------------------------------------------------------------
