@@ -53,7 +53,7 @@ class FileHandler:
                     f.write(template_file.getbuffer())
                 file_paths['template'] = str(template_path)
             
-            # Save forecast files
+            # Save forecast files (optional — key is omitted when not uploaded)
             if forecast_files:
                 forecast_paths = []
                 for i, forecast_file in enumerate(forecast_files):
@@ -62,6 +62,7 @@ class FileHandler:
                         f.write(forecast_file.getbuffer())
                     forecast_paths.append(str(forecast_path))
                 file_paths['forecast'] = forecast_paths
+            # else: 'forecast' key is absent → pipelines skip ForecastReader
             
             # Save transactional file
             if transactional_file is not None:
@@ -240,12 +241,17 @@ class PipelineOrchestrator:
         self.logger.info("Step 1/4: Loading data...")
         self._update_progress(10)
 
-        forecast_reader = ForecastReader(
-            file_paths=file_paths['forecast'] if isinstance(file_paths['forecast'], list) else [file_paths['forecast']],
-            po_col=self.config['forecast_reader']['po_col']
-        )
-        forecast_data = forecast_reader.get_forecast_data()
-        self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
+        forecast_paths = file_paths.get('forecast')
+        if forecast_paths:
+            forecast_reader = ForecastReader(
+                file_paths=forecast_paths if isinstance(forecast_paths, list) else [forecast_paths],
+                po_col=self.config['forecast_reader']['po_col']
+            )
+            forecast_data = forecast_reader.get_forecast_data()
+            self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
+        else:
+            forecast_data = {}
+            self.logger.info("No forecast file provided — skipping forecast data")
         self._update_progress(20)
 
         transactional_reader = TransactionalDetailReader(
@@ -374,12 +380,17 @@ class PipelineOrchestrator:
         self.logger.info("Step 1/4: Loading data...")
         self._update_progress(10)
 
-        forecast_reader = ForecastReader(
-            file_paths=file_paths['forecast'] if isinstance(file_paths['forecast'], list) else [file_paths['forecast']],
-            po_col=pcfg['forecast_reader']['po_col'],
-        )
-        forecast_data = forecast_reader.get_forecast_data()
-        self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
+        forecast_paths = file_paths.get('forecast')
+        if forecast_paths:
+            forecast_reader = ForecastReader(
+                file_paths=forecast_paths if isinstance(forecast_paths, list) else [forecast_paths],
+                po_col=pcfg['forecast_reader']['po_col'],
+            )
+            forecast_data = forecast_reader.get_forecast_data()
+            self.logger.info(f"Loaded forecast data: {len(forecast_data)} POs")
+        else:
+            forecast_data = {}
+            self.logger.info("No forecast file provided — skipping forecast data")
         self._update_progress(20)
 
         transactional_reader = TransactionalDetailReader(

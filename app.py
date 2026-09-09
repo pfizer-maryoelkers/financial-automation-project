@@ -590,7 +590,7 @@ with up_col3:
     if forecast_files:
         st.success(f"{len(forecast_files)} Vendor Forecast File(s) Uploaded")
     else:
-        st.info("At Least One Vendor Forecast File Required")
+        st.info("No forecast file uploaded — forecast data will be skipped")
 
 # ── Template type banner (full width, below all three upload columns) ─────────
 if template_file is not None and st.session_state.get('template_type'):
@@ -624,7 +624,7 @@ with le_col:
 st.divider()
 
 # ── Generate button ───────────────────────────────────────────────────────────
-all_files_uploaded = all([template_file, forecast_files, transactional_file])
+all_files_uploaded = all([template_file, transactional_file])
 
 generate_button = st.button(
     "Generate Report",
