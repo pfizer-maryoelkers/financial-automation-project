@@ -19,170 +19,203 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Global typography — Inter for everything
+# Global typography — Inter for everything, light + dark mode aware
 st.markdown(
     """
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    /* Pull the whole app up by reducing Streamlit's default top padding */
-    .block-container {
-        padding-top: 1.2rem !important;
+    /* ── Shared tokens ────────────────────────────────────────────────── */
+    :root {
+        --primary:        #5a8a5e;
+        --primary-dark:   #3d6b41;
+        --primary-light:  #dceedd;
+        --accent-red:     #c0392b;
+        --accent-red-dk:  #a93226;
+
+        /* alert colours — light mode */
+        --success-bg:     #dceedd;
+        --success-fg:     #2d4f30;
+        --success-border: #5a8a5e;
+        --warn-bg:        #faf0d0;
+        --warn-fg:        #5a4a10;
+        --warn-border:    #b89a2a;
+        --info-bg:        #eef1f7;
+        --info-fg:        #2c3a52;
+        --info-border:    #6b7fa0;
+
+        /* file-uploader surface — light mode */
+        --upload-file-bg: #eef1f7;
+        --upload-border:  #8a9bb5;
+        --upload-hover-bg:#eef1f7;
+        --upload-hover-border: #6b7fa0;
+
+        /* toggle-button surface — light mode */
+        --toggle-bg:      #ffffff;
+        --toggle-fg:      #2d4f30;
+
+        /* multiselect hover — light mode */
+        --ms-hover-bg:    #dceedd;
+        --ms-hover-fg:    #2d4f30;
     }
 
+    /* ── Dark-mode token overrides ────────────────────────────────────── */
+    [data-theme="dark"],
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --success-bg:     #1a3320;
+            --success-fg:     #8ecf94;
+            --success-border: #5a8a5e;
+            --warn-bg:        #2e2500;
+            --warn-fg:        #e0c96a;
+            --warn-border:    #b89a2a;
+            --info-bg:        #1a2030;
+            --info-fg:        #9db4d4;
+            --info-border:    #6b7fa0;
+
+            --upload-file-bg: #1e2630;
+            --upload-border:  #4a5a70;
+            --upload-hover-bg:#232d3a;
+            --upload-hover-border: #6b7fa0;
+
+            --toggle-bg:      #1e2630;
+            --toggle-fg:      #8ecf94;
+
+            --ms-hover-bg:    #1a3320;
+            --ms-hover-fg:    #8ecf94;
+        }
+    }
+
+    /* ── Layout ───────────────────────────────────────────────────────── */
+    .block-container { padding-top: 1.2rem !important; }
+
+    /* ── Typography ───────────────────────────────────────────────────── */
     html, body, [class*="css"], h2, h3, h4, button, input, label, p {
         font-family: 'Inter', sans-serif !important;
         font-size: 15px !important;
     }
-
-    h1 {
-        font-family: 'Inter', sans-serif !important;
-    }
-
-
-    /* Section headers */
+    h1 { font-family: 'Inter', sans-serif !important; }
     h2 { font-size: 1.3rem !important; }
-
-    /* Sub-headers */
     h3 { font-size: 1.1rem !important; }
+    .stButton > button { font-size: 15px !important; }
 
-    /* Buttons */
-    .stButton > button {
-        font-size: 15px !important;
-    }
-
-    /* Softer red for primary buttons and the download button */
+    /* ── Primary / download buttons ──────────────────────────────────── */
     .stButton > button[kind="primary"],
     [data-testid="stDownloadButton"] > button {
-        background-color: #c0392b !important;
-        border-color: #c0392b !important;
+        background-color: var(--accent-red) !important;
+        border-color:     var(--accent-red) !important;
         color: #fff !important;
     }
     .stButton > button[kind="primary"]:hover,
     [data-testid="stDownloadButton"] > button:hover {
-        background-color: #a93226 !important;
-        border-color: #a93226 !important;
+        background-color: var(--accent-red-dk) !important;
+        border-color:     var(--accent-red-dk) !important;
     }
 
-    /* Muted success (green) alerts */
+    /* ── Alerts ───────────────────────────────────────────────────────── */
     [data-testid="stAlert"][kind="success"],
     div[data-baseweb="notification"][kind="positive"] {
-        background-color: #dceedd !important;
-        border-left-color: #5a8a5e !important;
-        color: #2d4f30 !important;
+        background-color: var(--success-bg) !important;
+        border-left-color: var(--success-border) !important;
+        color: var(--success-fg) !important;
     }
     [data-testid="stAlert"][kind="success"] svg,
     div[data-baseweb="notification"][kind="positive"] svg {
-        fill: #5a8a5e !important;
+        fill: var(--success-border) !important;
     }
 
-    /* Muted warning (yellow) alerts */
     [data-testid="stAlert"][kind="warning"],
     div[data-baseweb="notification"][kind="warning"] {
-        background-color: #faf0d0 !important;
-        border-left-color: #b89a2a !important;
-        color: #5a4a10 !important;
+        background-color: var(--warn-bg) !important;
+        border-left-color: var(--warn-border) !important;
+        color: var(--warn-fg) !important;
     }
     [data-testid="stAlert"][kind="warning"] svg,
     div[data-baseweb="notification"][kind="warning"] svg {
-        fill: #b89a2a !important;
+        fill: var(--warn-border) !important;
     }
-    /* Muted info (blue) alerts */
+
     [data-testid="stAlert"][kind="info"],
     div[data-baseweb="notification"][kind="info"] {
-        background-color: #eef1f7 !important;
-        border-left-color: #6b7fa0 !important;
-        color: #2c3a52 !important;
+        background-color: var(--info-bg) !important;
+        border-left-color: var(--info-border) !important;
+        color: var(--info-fg) !important;
     }
     [data-testid="stAlert"][kind="info"] svg,
     div[data-baseweb="notification"][kind="info"] svg {
-        fill: #6b7fa0 !important;
+        fill: var(--info-border) !important;
     }
 
-    /* File uploader — replace Streamlit's accent red with muted green */
-
-    /* "Browse files" button — solid green to match the Add button */
+    /* ── File uploader ────────────────────────────────────────────────── */
     [data-testid="stFileUploaderDropzoneInput"] + div button,
     [data-testid="baseButton-secondary"] {
-        background-color: #5a8a5e !important;
-        border-color: #5a8a5e !important;
+        background-color: var(--primary) !important;
+        border-color:     var(--primary) !important;
         color: #fff !important;
     }
     [data-testid="baseButton-secondary"]:hover {
-        background-color: #3d6b41 !important;
-        border-color: #3d6b41 !important;
+        background-color: var(--primary-dark) !important;
+        border-color:     var(--primary-dark) !important;
         color: #fff !important;
     }
-
-    /* Dropzone */
     [data-testid="stFileUploaderDropzone"] {
-        border-color: #8a9bb5 !important;
+        border-color: var(--upload-border) !important;
     }
     [data-testid="stFileUploaderDropzone"]:hover {
-        background-color: #eef1f7 !important;
-        border-color: #6b7fa0 !important;
+        background-color: var(--upload-hover-bg) !important;
+        border-color:     var(--upload-hover-border) !important;
     }
-
-    /* Uploaded file name row */
     [data-testid="stFileUploaderFile"] {
-        border-color: #8a9bb5 !important;
-        background-color: #eef1f7 !important;
+        border-color:     var(--upload-border) !important;
+        background-color: var(--upload-file-bg) !important;
     }
-
-    /* Progress bar */
     [data-testid="stFileUploaderProgressBar"] > div {
-        background-color: #5a8a5e !important;
+        background-color: var(--primary) !important;
     }
 
-    /* Multiselect selected tag/chip */
+    /* ── Multiselect ──────────────────────────────────────────────────── */
     [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
-        background-color: #5a8a5e !important;
-        border-color: #5a8a5e !important;
+        background-color: var(--primary) !important;
+        border-color:     var(--primary) !important;
         color: #fff !important;
     }
-    /* X (remove) icon inside the tag */
     [data-testid="stMultiSelect"] span[data-baseweb="tag"] span[role="presentation"] svg {
         fill: #fff !important;
     }
-    /* Dropdown option highlight on hover */
     [data-testid="stMultiSelect"] li[aria-selected="true"],
     [data-testid="stMultiSelect"] li:hover {
-        background-color: #dceedd !important;
-        color: #2d4f30 !important;
+        background-color: var(--ms-hover-bg) !important;
+        color:            var(--ms-hover-fg) !important;
     }
 
-    /* Add-type toggle buttons */
+    /* ── Toggle / Add buttons ─────────────────────────────────────────── */
     div.add-type-toggle .stButton > button {
-        background-color: #fff !important;
-        border: 1.5px solid #5a8a5e !important;
-        color: #2d4f30 !important;
+        background-color: var(--toggle-bg) !important;
+        border: 1.5px solid var(--primary) !important;
+        color: var(--toggle-fg) !important;
         font-weight: 500 !important;
         border-radius: 6px !important;
     }
     div.add-type-toggle .stButton > button:hover {
-        background-color: #dceedd !important;
+        background-color: var(--primary-light) !important;
     }
     div.add-type-toggle .stButton > button[kind="primary"] {
-        background-color: #5a8a5e !important;
-        border-color: #5a8a5e !important;
+        background-color: var(--primary) !important;
+        border-color:     var(--primary) !important;
         color: #fff !important;
     }
-
-    /* "Add" identifier button — green, scoped to its wrapper div */
     div.add-btn .stButton > button {
-        background-color: #5a8a5e !important;
-        border-color: #5a8a5e !important;
+        background-color: var(--primary) !important;
+        border-color:     var(--primary) !important;
         color: #fff !important;
     }
     div.add-btn .stButton > button:hover {
-        background-color: #3d6b41 !important;
-        border-color: #3d6b41 !important;
+        background-color: var(--primary-dark) !important;
+        border-color:     var(--primary-dark) !important;
     }
 
-    /* Any remaining accent/primary colour Streamlit injects via CSS vars */
-    :root {
-        --primary-color: #5a8a5e !important;
-    }
+    /* ── Streamlit accent CSS var ─────────────────────────────────────── */
+    :root { --primary-color: var(--primary) !important; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -491,7 +524,6 @@ st.markdown(
         font-weight: 700 !important;
         line-height: 1.2 !important;
         margin-bottom: 0.2rem;
-        color: #1f2328;
     '>Financial Automation Report Generator</h1>
     """,
     unsafe_allow_html=True,
@@ -756,7 +788,7 @@ if st.session_state.temp_dir:
 # Footer
 st.divider()
 st.markdown("""
-<div style='text-align: center; color: #666; padding: 20px;'>
+<div style='text-align: center; opacity: 0.55; padding: 20px;'>
     <p>Financial Automation Report Generator v1.0</p>
 </div>
 """, unsafe_allow_html=True)
