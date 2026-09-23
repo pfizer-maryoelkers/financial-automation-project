@@ -956,25 +956,35 @@ class TransactionalDetailReader:
         if self.data is None:
             self.load_transactional_detail_file()
 
-        # Compute total Actuals amount per PO (used for Invoice Amount / Gross PO Value).
-        # Only Actual and ER rows are summed — Accruals and Reversals are excluded so
-        # the column reflects real invoiced spend, not accrual estimates.
+        # Compute total Actuals amount per (PO, cost_center) so that the same PO
+        # number appearing under different cost centers is not double-counted.
         ber_col  = self.colmap["amount"]
         po_col   = self.colmap["po"]
+        cc_col   = self.colmap["cost_center"]
         type_col = self.colmap["type"]
-        gross_by_po: dict = {}
+        gross_by_po_cc: dict = {}  # keyed (po, cost_center)
+        gross_by_po: dict = {}     # keyed po only — fallback for callers that don't have cc
         if ber_col in self.data.columns and type_col in self.data.columns:
             actuals_mask = self.data[type_col].isin(["Actual", "ER"])
             actuals_data = self.data.loc[actuals_mask].copy()
             actuals_data[ber_col] = pd.to_numeric(actuals_data[ber_col], errors='coerce').fillna(0)
-            gross_by_po = (
-                actuals_data.groupby(po_col)[ber_col].sum().to_dict()
-            )
+            gross_by_po = actuals_data.groupby(po_col)[ber_col].sum().to_dict()
+            if cc_col in actuals_data.columns:
+                gross_by_po_cc = (
+                    actuals_data.groupby([po_col, cc_col])[ber_col].sum()
+                    .reset_index()
+                    .set_index([po_col, cc_col])[ber_col]
+                    .to_dict()
+                )
 
         # Filter to only the columns needed
         country_col = self.colmap.get("country")
         if country_col and country_col not in self.data.columns:
             country_col = None
+
+        posting_date_col = self.colmap.get("gl_posting_date")
+        if posting_date_col and posting_date_col not in self.data.columns:
+            posting_date_col = None
 
         cols = [
             self.colmap["po"],
@@ -986,6 +996,8 @@ class TransactionalDetailReader:
         ]
         if country_col:
             cols.append(country_col)
+        if posting_date_col:
+            cols.append(posting_date_col)
         missing = [c for c in cols if c not in self.data.columns]
         if missing:
             raise ValueError(
@@ -1004,6 +1016,42 @@ class TransactionalDetailReader:
         # contribute to the PO's Actual total.
         valid_with_reclass = list(self.valid_types) + ["Reclass"]
         data_copy = data_copy[data_copy[self.colmap["type"]].isin(valid_with_reclass)]
+
+        # Posting-date override: for Accrual and Reversal rows, the GL Posting
+        # Date determines which month column they land in — not the Accounting
+        # Period.  Parse the month number from the posting date (handles both
+        # "M/D/YYYY" and "MM/D/YYYY" formats) and overwrite the Accounting Period
+        # for every Accrual/Reversal row that has a valid posting date.
+        if posting_date_col:
+            month_col    = self.colmap["month"]
+            type_col     = self.colmap["type"]
+            accrual_mask = data_copy[type_col].isin(["Accrual", "Reversal"])
+            raw_dates    = data_copy[posting_date_col]
+
+            # Derive month number from posting date regardless of storage format:
+            #   - datetime / Timestamp (Excel native): use .dt.month
+            #   - string "M/D/YYYY" or "MM/D/YYYY": extract leading digits before "/"
+            if pd.api.types.is_datetime64_any_dtype(raw_dates):
+                parsed_month_num = raw_dates.dt.month.astype(float)
+            else:
+                # Try coercing to datetime first (handles mixed/object columns)
+                coerced = pd.to_datetime(raw_dates, errors='coerce')
+                if coerced.notna().sum() > coerced.isna().sum():
+                    # Majority parsed as datetime — use .dt.month
+                    parsed_month_num = coerced.dt.month.astype(float)
+                else:
+                    # Fall back to string extraction for "M/D/YYYY" format
+                    posting_str = raw_dates.astype(str).str.strip()
+                    parsed_month = posting_str.str.extract(r'^(\d{1,2})[/\-]', expand=False)
+                    parsed_month_num = pd.to_numeric(parsed_month, errors='coerce')
+
+            # AP202512 (month 12) always routes to December regardless of posting
+            # date — exclude those rows from the override.
+            ap_month = data_copy[month_col].apply(self._parse_month_num)
+            not_dec_ap = ap_month != 12
+
+            valid_posting = accrual_mask & not_dec_ap & parsed_month_num.between(1, 12)
+            data_copy.loc[valid_posting, month_col] = parsed_month_num[valid_posting]
         # Build a per-PO country lookup before grouping (country is not aggregatable)
         _INTL_COUNTRIES = {'india', 'in'}
         intl_po_set: set = set()
@@ -1044,14 +1092,11 @@ class TransactionalDetailReader:
 
             is_intl = str(po).strip() in intl_po_set
 
-            # Domestic POs: accounting period − 1 (Jan → Dec (PY), Mar → Feb, etc.)
-            # International POs: accounting period − 2 for Actuals/ER/Reclass only.
-            # Accruals/Reversals always use the domestic − 1 shift for all POs.
-            # Exception: December (month 12) is never shifted — it lands in the
-            # current-year Dec columns of the template directly.
+            # Actuals/ER/Reclass: December (month 12) is never shifted — it lands
+            # in the current-year Dec column directly.  Other months shift by −1
+            # (domestic) or −2 (international).
             if month_num == 12:
-                actual_month  = "Dec"
-                accrual_month = "Dec"
+                actual_month = "Dec"
             else:
                 actual_shift = 2 if is_intl else 1
                 actual_shifted = month_num - actual_shift
@@ -1060,19 +1105,24 @@ class TransactionalDetailReader:
                 else:
                     actual_month = self.month_map.get(actual_shifted)
 
-                # Accruals/Reversals: always domestic − 1 shift
-                accrual_shifted = month_num - 1
-                if accrual_shifted <= 0:
-                    accrual_month = "Dec (PY)"
-                else:
-                    accrual_month = self.month_map.get(accrual_shifted)
+            # Accruals/Reversals: the GL Posting Date override (applied before
+            # grouping above) has already rewritten month_num to the posting month,
+            # so use month_map directly — no shift needed.  December columns are
+            # only populated when the posting date is genuinely in December.
+            # When posting date is unavailable, fall back to domestic −1 shift;
+            # if that lands at 0 (AP01) use "Dec (PY)" as the prior-year bucket.
+            accrual_month = self.month_map.get(month_num)
+            if accrual_month is None:
+                # month_num out of range — shouldn't happen but guard anyway
+                accrual_month = "Dec (PY)"
 
-            # Initialize PO
-            if po not in result:
-                result[po] = {
+            # Initialize (PO, cost_center) bucket
+            key = (po, cost_center)
+            if key not in result:
+                result[key] = {
                     "cost_center": cost_center,
                     "wbs": wbs,
-                    "gross_ber_total": gross_by_po.get(po, 0.0),
+                    "gross_ber_total": gross_by_po_cc.get(key) or gross_by_po.get(po, 0.0),
                 }
 
             # Determine which month slot each type writes into
@@ -1084,8 +1134,8 @@ class TransactionalDetailReader:
                 continue
 
             # Initialize month bucket
-            if write_month and write_month not in result[po]:
-                result[po][write_month] = {
+            if write_month and write_month not in result[key]:
+                result[key][write_month] = {
                     "Actual": 0,
                     "Accrual": 0,
                     "Reversal": 0,
@@ -1095,9 +1145,10 @@ class TransactionalDetailReader:
             if not write_month:
                 continue
             if type_name in ["Actual", "ER", "Reclass"]:
-                result[po][write_month]["Actual"] = result[po][write_month].get("Actual", 0) + value
+                result[key][write_month]["Actual"] = result[key][write_month].get("Actual", 0) + value
             elif type_name in ["Accrual", "Reversal"]:
-                result[po][write_month][type_name] = value
+                result[key][write_month][type_name] = value
+
         # Sort months for readability, preserve cost_center and wbs.
         # "Nov (PY)" can appear for international POs with a Jan accounting period (−2 shift).
         month_order = [
@@ -1105,15 +1156,15 @@ class TransactionalDetailReader:
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
         ]
-        for po in result:
-            result[po] = {
-                "cost_center": result[po]["cost_center"],
-                "wbs": result[po]["wbs"],
-                "gross_ber_total": result[po].get("gross_ber_total", 0.0),
+        for key in result:
+            result[key] = {
+                "cost_center": result[key]["cost_center"],
+                "wbs": result[key]["wbs"],
+                "gross_ber_total": result[key].get("gross_ber_total", 0.0),
                 **{
-                    month: result[po][month]
+                    month: result[key][month]
                     for month in month_order
-                    if month in result[po]
+                    if month in result[key]
                 }
             }
         return result
@@ -1248,8 +1299,6 @@ class TransactionalDetailReader:
             else:
                 month_label = self.month_map.get(month_num - 1)
 
-            alt_month_label = self.month_map.get(month_num)
-
             po_key = po
             if po_key not in result and po_key.replace('.', '', 1).replace('-', '', 1).isdigit():
                 try:
@@ -1274,10 +1323,6 @@ class TransactionalDetailReader:
             if month_label not in result[po_key]:
                 result[po_key][month_label] = []
             result[po_key][month_label].append((amount, description))
-            if alt_month_label and alt_month_label != month_label:
-                if alt_month_label not in result[po_key]:
-                    result[po_key][alt_month_label] = []
-                result[po_key][alt_month_label].append((amount, description))
 
         print(f"Reclass notes collected for {len(result)} PO(s).")
         return result

@@ -335,10 +335,13 @@ def build_hierarchy(
             if po_obj.req_title is None and req_title is not None:
                 po_obj.req_title = req_title
             
-            # Fill MonthlyMetrics from transactional data
+            # Fill MonthlyMetrics from transactional data.
+            # Look up by (po, cost_center) first so a PO shared across multiple
+            # cost centers only pulls in transactions for the current cost center.
             po_lookup = str(po).strip().upper() if wbs == "ER" and po else po
-            if po_lookup in transactional_data:
-                po_data = transactional_data[po_lookup]
+            _td_key = (po_lookup, cc_id)
+            po_data = transactional_data.get(_td_key) or transactional_data.get(po_lookup)
+            if po_data:
                 # Capture gross BER total for Gross PO Value column
                 if po_obj.gross_po_value is None:
                     po_obj.gross_po_value = po_data.get('gross_ber_total')

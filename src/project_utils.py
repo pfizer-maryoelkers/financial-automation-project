@@ -306,9 +306,12 @@ def build_project_hierarchy(
                 po_obj.project_name = project_name
 
             # ── Monthly metrics from transactional data ─────────────────────
+            # Look up by (po, p3_id) first so a PO shared across multiple
+            # P3 IDs only pulls in transactions for the current project.
             po_lookup = str(po).strip().upper() if wbs == "ER" and po else po
-            if po_lookup in transactional_data:
-                po_data = transactional_data[po_lookup]
+            _td_key = (po_lookup, p3_id)
+            po_data = transactional_data.get(_td_key) or transactional_data.get(po_lookup)
+            if po_data:
                 if po_obj.gross_po_value is None:
                     po_obj.gross_po_value = po_data.get('gross_ber_total')
                 for month_key, values in po_data.items():
@@ -336,7 +339,7 @@ def build_project_hierarchy(
         # ── Reclass notes ───────────────────────────────────────────────────
         if reclass_notes:
             for po_number, month_entries in reclass_notes.items():
-                po_in_td = transactional_data.get(po_number, {})
+                po_in_td = transactional_data.get((po_number, p3_id)) or transactional_data.get(po_number, {})
                 po_wbs   = po_in_td.get('wbs', '') or ''
                 po_cc    = po_in_td.get('cost_center', '') or ''
                 # Match this reclass to the current P3 ID via WBS root, or
