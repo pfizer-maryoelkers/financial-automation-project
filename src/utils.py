@@ -78,7 +78,6 @@ def convert_base64(bytes_string: str):
 
 # Forecast month shift: maps a 3-letter month key one step back.
 _FORECAST_MONTH_SHIFT = {
-    "Jan": "Dec",   # Jan forecast → Dec (prior year treated as Dec in same year for intl)
     "Feb": "Jan",
     "Mar": "Feb",
     "Apr": "Mar",
@@ -243,18 +242,6 @@ def build_hierarchy(
                     er_extracted_count += 1
                     # Continue processing with extracted ER as PO
                 else:
-                    exception_log.log(
-                        ExceptionType.NOT_WORKED_ON_TEMPLATE,
-                        row_index=_excel_row,
-                        po=po,
-                        wbs=wbs,
-                        cost_center=cc_id,
-                        month=month,
-                        amount=amount,
-                        transaction_type=trans_type,
-                        vendor_name=vendor_name,
-                        source_row_data=source_row_data
-                    )
                     continue
 
             # Check 1b: PO exists but looks like a full ER description — extract clean ER number
@@ -278,18 +265,6 @@ def build_hierarchy(
                 wbs = "NO_WBS"
             
             if not po:
-                exception_log.log(
-                    ExceptionType.NOT_WORKED_ON_TEMPLATE,
-                    row_index=_excel_row,
-                    po=po,
-                    wbs=wbs,
-                    cost_center=cc_id,
-                    month=month,
-                    amount=amount,
-                    transaction_type=trans_type,
-                    vendor_name=vendor_name,
-                    source_row_data=source_row_data
-                )
                 continue
 
             # Check 3: Duplicate WBS (WBS owned by multiple cost centers)

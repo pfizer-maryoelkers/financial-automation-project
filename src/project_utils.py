@@ -22,7 +22,7 @@ from src.project_template_reader import extract_project_root, wbs_charge_type
 
 # Forecast month shift: maps a 3-letter month key one step back (same as OpEx).
 _FORECAST_MONTH_SHIFT = {
-    "Jan": "Dec", "Feb": "Jan", "Mar": "Feb", "Apr": "Mar",
+    "Feb": "Jan", "Mar": "Feb", "Apr": "Mar",
     "May": "Apr", "Jun": "May", "Jul": "Jun", "Aug": "Jul",
     "Sep": "Aug", "Oct": "Sep", "Nov": "Oct", "Dec": "Nov",
 }
