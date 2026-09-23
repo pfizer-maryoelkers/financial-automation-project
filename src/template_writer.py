@@ -940,27 +940,31 @@ class TemplateWriter:
                     for _cl in _mc.values():
                         _pipeline_cols.add(column_index_from_string(_cl))
 
-                # Build a thin grid border to guarantee the new row always has
-                # visible grid lines, regardless of what the reference row had.
+                # Always apply an explicit thin grid border on every cell of the
+                # new row so both vertical and horizontal lines are guaranteed.
+                # Also re-stamp the bottom border on the row directly above so the
+                # horizontal line between it and the new row is not lost.
+                _thin_side = Side(border_style='thin')
                 _grid_border = Border(
-                    left=Side(border_style='thin'),
-                    right=Side(border_style='thin'),
-                    top=Side(border_style='thin'),
-                    bottom=Side(border_style='thin'),
+                    left=_thin_side, right=_thin_side,
+                    top=_thin_side, bottom=_thin_side,
                 )
+                if insert_at > 1:
+                    for _col in range(1, max_col + 1):
+                        _above = self.sheet.cell(row=insert_at - 1, column=_col)
+                        _ab = _above.border
+                        _above.border = Border(
+                            left=_ab.left   if _ab.left.border_style   else _thin_side,
+                            right=_ab.right if _ab.right.border_style  else _thin_side,
+                            top=_ab.top     if _ab.top.border_style    else _thin_side,
+                            bottom=_thin_side,
+                        )
 
                 for col_idx in range(1, max_col + 1):
                     new_cell = self.sheet.cell(row=insert_at, column=col_idx)
                     s = ref_styles[col_idx]
                     new_cell.font = copy(s['font'])
-                    # Use thin grid border; fall back to ref border only when the ref
-                    # row actually had a border set (i.e. not the default no-border).
-                    ref_border = s['border']
-                    has_ref_border = any(
-                        getattr(ref_border, side).border_style
-                        for side in ('left', 'right', 'top', 'bottom')
-                    )
-                    new_cell.border = copy(ref_border) if has_ref_border else _grid_border
+                    new_cell.border = _grid_border
                     new_cell.alignment = copy(s['alignment'])
                     new_cell.number_format = s['number_format']
                     new_cell.fill = _copy_fill(s['fill'])
