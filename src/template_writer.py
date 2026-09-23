@@ -356,14 +356,21 @@ class TemplateWriter:
                 return m.group(0)
             return re.sub(r'\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)', replacer, formula_text)
 
-        # Build dynamic mapping from summary column index to its correct accrual column letter
+        # Build dynamic mapping from summary column index to its correct accrual column letter.
+        # Find whichever prior-year key exists (e.g. 'Dec (PY)' or 'Nov (PY)') and map its
+        # accrual reversal column to the first non-PY month's accrual column.
         summary_cols = {}
         if self.p3_id_column is not None:
-            if 'Dec (PY)' in self.column_map and 'Accrual Reversal' in self.column_map['Dec (PY)']:
-                col_letter = self.column_map['Dec (PY)']['Accrual Reversal']
-                jan_acc = self.column_map.get('Jan', {}).get('Accrual')
-                if jan_acc:
-                    summary_cols[column_index_from_string(col_letter)] = jan_acc
+            _py_key = next((k for k in self.column_map if k.endswith("(PY)")), None)
+            if _py_key and 'Accrual Reversal' in self.column_map[_py_key]:
+                col_letter = self.column_map[_py_key]['Accrual Reversal']
+                _first_month = next(
+                    (k for k in sorted(self.column_map, key=month_sort_key) if not k.endswith("(PY)")),
+                    None,
+                )
+                first_acc = self.column_map.get(_first_month, {}).get('Accrual') if _first_month else None
+                if first_acc:
+                    summary_cols[column_index_from_string(col_letter)] = first_acc
 
             months_ordered = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
             for idx, m_key in enumerate(months_ordered[:-1]):
@@ -456,7 +463,7 @@ class TemplateWriter:
         # We can loop through each month in column_map, get the Accrual and Actual columns,
         # and write the IF(OR(Accrual="",Actual=""),"",Accrual-Actual) formula into the Variance column.
         for month_key, month_cols in self.column_map.items():
-            if month_key == "Dec (PY)":
+            if month_key.endswith("(PY)"):
                 continue
             actual_col = month_cols.get('Actual')
             accrual_col = month_cols.get('Accrual')
@@ -569,7 +576,8 @@ class TemplateWriter:
         }
 
         col_map: dict[str, dict[str, str]] = {}
-        dec_py_seen = False  # first 'Dec' Accrual Reversal is Dec (PY)
+        py_col_seen = False   # True once the prior-year accrual reversal column is mapped
+        any_month_seen = False  # True once any month column has been mapped
         max_col = self.sheet.max_column or 200
 
         # Use the actual header row position rather than the config value so this
@@ -598,13 +606,18 @@ class TemplateWriter:
             if month_key is None:
                 continue
 
-            # The very first 'Accrual Reversal Dec' is the prior-year Dec column
-            if matched_metric == "Accrual Reversal" and month_key == "Dec" and not dec_py_seen:
-                month_key = "Dec (PY)"
-                dec_py_seen = True
+            # The first 'Accrual Reversal <month>' that appears before any other
+            # month column is the prior-year accrual reversal.  Tag it as
+            # '<month> (PY)' so it stays distinct from the same month's current-year
+            # block.  This works regardless of whether the template starts in December
+            # (giving 'Dec (PY)') or January (giving 'Nov (PY)') or any other month.
+            if matched_metric == "Accrual Reversal" and not py_col_seen and not any_month_seen:
+                month_key = f"{month_key} (PY)"
+                py_col_seen = True
 
             if month_key not in col_map:
                 col_map[month_key] = {}
+            any_month_seen = True
 
             # Guard against duplicate headers (e.g. two "Accrual May" cells where
             # the second should have been "Actual May").  If this metric slot is
@@ -668,6 +681,7 @@ class TemplateWriter:
         hierarchy: dict,
         pos: dict[str, int],
         blank_po_rows: list[int] | None = None,
+        exception_log=None,
     ) -> dict[str, int]:
         """
         For each cost center in the hierarchy:
@@ -684,6 +698,10 @@ class TemplateWriter:
             marker where col B was empty at template-read time.  These rows are
             filled in-place before any new rows are inserted.
         """
+        # Yellow highlight is only applied when the template already had POs in it
+        # (i.e. it was a filled-out template, not a blank one).
+        _template_was_filled = bool(pos)
+
         stop_row = None
         for row_idx in range(1, (self.sheet.max_row or 1000) + 1):
             cell_val = self.sheet[f"A{row_idx}"].value
@@ -815,8 +833,19 @@ class TemplateWriter:
                 if self.p3_id_column is not None and self.project_name_col is not None:
                     if _po_obj.project_name is not None:
                         self.sheet.cell(row=_target_row, column=self.project_name_col, value=_po_obj.project_name)
+                if _template_was_filled:
+                    _muted_yellow = PatternFill(fill_type="solid", fgColor="FFF2CC")
+                    self.sheet.cell(row=_target_row, column=po_col_idx).fill = _muted_yellow
                 pos[_po_num] = _target_row
                 filled_blank.append(_po_num)
+                if exception_log is not None:
+                    exception_log.log(
+                        ExceptionType.NOT_WORKED_ON_TEMPLATE,
+                        po=_po_num,
+                        wbs=_wbs_to_write,
+                        cost_center=_cc_id,
+                        vendor_name=_po_obj.vendor_name,
+                    )
 
             if filled_blank:
                 print(f"Filled {len(filled_blank)} blank PO row(s) from transactional data: {filled_blank}")
@@ -948,8 +977,19 @@ class TemplateWriter:
                     prj_val = po_project_name_map.get(po_number)
                     if prj_val is not None:
                         self.sheet.cell(row=insert_at, column=self.project_name_col, value=prj_val)
+                if _template_was_filled:
+                    _muted_yellow = PatternFill(fill_type="solid", fgColor="FFF2CC")
+                    self.sheet.cell(row=insert_at, column=po_col_idx).fill = _muted_yellow
                 pos[po_number] = insert_at
                 inserted.append(po_number)
+                if exception_log is not None:
+                    exception_log.log(
+                        ExceptionType.NOT_WORKED_ON_TEMPLATE,
+                        po=po_number,
+                        wbs=po_wbs_map.get(po_number),
+                        cost_center=cc_id,
+                        vendor_name=po_vendor_map.get(po_number),
+                    )
 
                 # Every insertion shifts all rows below by 1 — update pos accordingly
                 for key in pos:
@@ -1297,12 +1337,17 @@ class TemplateWriter:
                             self.sheet.cell(row=row, column=self.project_name_col).value = po.project_name
 
                     # Monthly metric values.
-                    # If a month produced by the intl −2 shift (e.g. "Dec (PY)",
-                    # "Nov (PY)") has no column in this template, fold its values
-                    # into the earliest template month that does exist so no data
-                    # is silently lost.
+                    # If a month produced by the shift logic (e.g. "Dec (PY)",
+                    # "Nov (PY)") has no exact column in this template, redirect
+                    # any (PY) data key to whichever (PY) column the template has —
+                    # e.g. a January-starting template uses "Nov (PY)" while the
+                    # reader emits "Dec (PY)" for January reversals.  Only fall
+                    # back to the earliest column as a last resort for non-PY months.
                     _sorted_template_months = sorted(
                         self.column_map.keys(), key=month_sort_key
+                    )
+                    _template_py_key = next(
+                        (k for k in _sorted_template_months if k.endswith("(PY)")), None
                     )
                     # Pass 1 — bucket every month into its write target and merge metrics.
                     # Also remap po.reclass_adjustments keys to the same target month.
@@ -1311,6 +1356,10 @@ class TemplateWriter:
                     for month, metrics in po.monthly_data.items():
                         if month in self.column_map:
                             target = month
+                        elif month.endswith("(PY)") and _template_py_key:
+                            # Data uses a different (PY) name than this template —
+                            # redirect to whichever prior-year column the template has.
+                            target = _template_py_key
                         elif _sorted_template_months:
                             target = _sorted_template_months[0]
                             print(
@@ -1708,10 +1757,18 @@ class TemplateWriter:
                             break
                 return self._norm_po(val) if val else ''
 
-            active_entries = [
-                e for e in exception_log.entries
-                if e.exception_type != ExceptionType.RECLASS and e.amount is not None
-            ]
+            # De-duplicate entries by row_index so the same source row is never listed twice.
+            # RECLASS entries are included so they show their On Template status.
+            active_entries = []
+            seen_rows = set()
+            for e in exception_log.entries:
+                if e.amount is None:
+                    continue
+                row_key = e.row_index if e.row_index is not None else id(e)
+                if row_key in seen_rows:
+                    continue
+                seen_rows.add(row_key)
+                active_entries.append(e)
 
             visible_headers = [
                 'Cost Center', 'Accounting Period', 'WBS',
@@ -1727,7 +1784,15 @@ class TemplateWriter:
 
             for entry in active_entries:
                 _po_val  = _resolve_po(entry)
-                _on_tmpl = 'Yes' if _po_val and _po_val in template_pos else 'No'
+                # For RECLASS entries, also check the RECLASS-{cc} key used on the template
+                if entry.exception_type == ExceptionType.RECLASS:
+                    _reclass_key = f"RECLASS-{entry.cost_center}" if entry.cost_center else None
+                    _on_tmpl = 'Yes' if (
+                        (_po_val and _po_val in template_pos)
+                        or (_reclass_key and _reclass_key in template_pos)
+                    ) else 'No'
+                else:
+                    _on_tmpl = 'Yes' if _po_val and _po_val in template_pos else 'No'
 
                 ws.cell(row=row, column=1, value=entry.cost_center)
                 ws.cell(row=row, column=2, value=entry.month)
@@ -1760,14 +1825,17 @@ class TemplateWriter:
         """Write raw exception data to hidden sheet for formula reference"""
         ws = self.wb.create_sheet("Exception_Data")
 
-        # Exclude reclasses
-        class _FilteredLog:
-            def __init__(self, entries):
-                self.entries = entries
-        exception_log = _FilteredLog([
-            e for e in exception_log.entries
-            if e.exception_type != ExceptionType.RECLASS
-        ])
+        # Exclude reclasses and deduplicate by row_index
+        filtered_entries = []
+        seen_rows = set()
+        for e in exception_log.entries:
+            if e.exception_type == ExceptionType.RECLASS:
+                continue
+            row_key = e.row_index if e.row_index is not None else id(e)
+            if row_key in seen_rows:
+                continue
+            seen_rows.add(row_key)
+            filtered_entries.append(e)
 
         # Headers
         headers = ['Cost Center', 'WBS', 'PO', 'Exception Type', 'Accounting Period', 'Amount', 'Type']
@@ -1776,7 +1844,7 @@ class TemplateWriter:
             ws.cell(row=1, column=col_idx).font = Font(bold=True)
 
         # Data rows
-        for row_idx, entry in enumerate(exception_log.entries, start=2):
+        for row_idx, entry in enumerate(filtered_entries, start=2):
             ws.cell(row=row_idx, column=1, value=entry.cost_center or '')
             ws.cell(row=row_idx, column=2, value=entry.wbs or '')
             ws.cell(row=row_idx, column=3, value=self._extract_er_number(entry.po) or '')

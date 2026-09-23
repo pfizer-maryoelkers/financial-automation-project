@@ -98,6 +98,7 @@ def main():
         hierarchy,
         pos=template_reader.pos,
         blank_po_rows=template_reader.blank_po_rows,
+        exception_log=exception_log,
     )
     template_writer.write_hierarchy(hierarchy, pos=pos)
 

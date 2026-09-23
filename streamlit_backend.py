@@ -338,7 +338,7 @@ class PipelineOrchestrator:
         )
         self._update_progress(70)
 
-        pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+        pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos, exception_log=self.exception_log)
         pos = template_writer.insert_er_rows(hierarchy, pos=pos)
         template_writer.write_hierarchy(hierarchy, pos=pos)
         self._update_progress(80)
@@ -496,6 +496,7 @@ class PipelineOrchestrator:
             hierarchy,
             pos=template_reader.pos,
             blank_po_rows=template_reader.blank_po_rows,
+            exception_log=self.exception_log,
         )
         template_writer.write_hierarchy(hierarchy, pos=pos)
         self._update_progress(80)

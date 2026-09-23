@@ -75,7 +75,7 @@ def main():
     )
     ## Step 3: Write to template
     print("Step 3: Writing template output\n")
-    pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos)
+    pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos, exception_log=exception_log)
     template_writer.write_hierarchy(hierarchy, pos=pos)
 
     ## Step 4: Exception reporting
