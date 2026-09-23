@@ -746,7 +746,7 @@ class TemplateWriter:
                     _po_to_cc[self._norm_po(_po_num)] = _cc_id
 
         def _get_ref_styles(ref_row: int) -> tuple[dict, float | None]:
-            """Snapshot per-column styles from ref_row."""
+            """Snapshot per-column styles and formula values from ref_row."""
             styles = {}
             for col_idx in range(1, max_col + 1):
                 src = self.sheet.cell(row=ref_row, column=col_idx)
@@ -757,6 +757,8 @@ class TemplateWriter:
                     'number_format': src.number_format,
                     'fill': _copy_fill(src.fill),
                     'comment': copy(src.comment),
+                    'formula': src.value if isinstance(src.value, str) and src.value.startswith('=') else None,
+                    'ref_row': ref_row,
                 }
             return styles, self.sheet.row_dimensions[ref_row].height
 
@@ -931,11 +933,15 @@ class TemplateWriter:
                 ref_styles, ref_height = _get_ref_styles(style_source_row)
                 self._shift_comments(insert_at)
                 self.sheet.insert_rows(insert_at)
+                # Columns whose values are written by the pipeline — don't
+                # copy formulas into these or the pipeline value gets clobbered.
+                _pipeline_cols: set[int] = {po_col_idx, wbs_col_idx, 5, 7}  # PO, WBS, Vendor, GL
+                for _mc in self.column_map.values():
+                    for _cl in _mc.values():
+                        _pipeline_cols.add(column_index_from_string(_cl))
+
                 for col_idx in range(1, max_col + 1):
                     new_cell = self.sheet.cell(row=insert_at, column=col_idx)
-                    # openpyxl copies the value from the displaced row into the
-                    # new row — clear it so no stale formula survives.
-                    new_cell.value = None
                     s = ref_styles[col_idx]
                     new_cell.font = copy(s['font'])
                     new_cell.border = copy(s['border'])
@@ -943,6 +949,14 @@ class TemplateWriter:
                     new_cell.number_format = s['number_format']
                     new_cell.fill = _copy_fill(s['fill'])
                     new_cell.comment = copy(s['comment'])
+                    # Translate formulas from the reference row to the new row,
+                    # but skip columns the pipeline will write data into.
+                    if s['formula'] and col_idx not in _pipeline_cols:
+                        new_cell.value = Translator(
+                            s['formula'], origin=f"{get_column_letter(col_idx)}{s['ref_row']}"
+                        ).translate_formula(f"{get_column_letter(col_idx)}{insert_at}")
+                    else:
+                        new_cell.value = None
                 if ref_height:
                     self.sheet.row_dimensions[insert_at].height = ref_height
 
@@ -1093,7 +1107,7 @@ class TemplateWriter:
         )
 
         def _get_er_ref_styles(ref_row: int) -> tuple[dict, float | None]:
-            """Snapshot per-column styles from ref_row for ER insertion."""
+            """Snapshot per-column styles and formula values from ref_row for ER insertion."""
             styles = {}
             for col_idx in range(1, max_col + 1):
                 src = self.sheet.cell(row=ref_row, column=col_idx)
@@ -1104,6 +1118,8 @@ class TemplateWriter:
                     'number_format': src.number_format,
                     'fill': _copy_fill(src.fill),
                     'comment': copy(src.comment),
+                    'formula': src.value if isinstance(src.value, str) and src.value.startswith('=') else None,
+                    'ref_row': ref_row,
                 }
             return styles, self.sheet.row_dimensions[ref_row].height
 
@@ -1130,11 +1146,15 @@ class TemplateWriter:
             self._shift_comments(insert_at)
             self.sheet.insert_rows(insert_at)
 
+            # Columns the pipeline writes data into — skip formula copy for these
+            _er_pipeline_cols: set[int] = {po_col_idx, 6, 5}  # ER/PO, WBS, Vendor
+            for _mc in self.column_map.values():
+                for _cl in _mc.values():
+                    _er_pipeline_cols.add(column_index_from_string(_cl))
+
             # Apply reference row formatting to every cell in the new row
             for col_idx in range(1, max_col + 1):
                 new_cell = self.sheet.cell(row=insert_at, column=col_idx)
-                # Clear any value openpyxl copied from the displaced row.
-                new_cell.value = None
                 s = ref_styles[col_idx]
                 new_cell.font = copy(s['font'])
                 new_cell.comment = copy(s['comment'])
@@ -1154,6 +1174,13 @@ class TemplateWriter:
                     new_cell.fill = green_fill
                 else:
                     new_cell.fill = _copy_fill(s['fill'])
+                # Translate formulas from the reference row, skipping pipeline columns
+                if s['formula'] and col_idx not in _er_pipeline_cols:
+                    new_cell.value = Translator(
+                        s['formula'], origin=f"{get_column_letter(col_idx)}{s['ref_row']}"
+                    ).translate_formula(f"{get_column_letter(col_idx)}{insert_at}")
+                else:
+                    new_cell.value = None
 
             if ref_height:
                 self.sheet.row_dimensions[insert_at].height = ref_height
