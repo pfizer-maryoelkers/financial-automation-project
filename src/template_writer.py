@@ -158,11 +158,14 @@ class TemplateWriter:
         Rules:
         - Always write when overwrite=True.
         - Never overwrite an existing formula when overwrite=False.
+        - Never overwrite an existing numeric value when overwrite=False.
         - Write when the cell is blank (None or empty string).
         """
         if self.overwrite:
             return True
         if isinstance(existing, str) and existing.startswith('='):
+            return False
+        if isinstance(existing, (int, float)):
             return False
         return existing is None or str(existing).strip() == ""
 
@@ -648,6 +651,9 @@ class TemplateWriter:
             col_map[month_key][matched_metric] = get_column_letter(col_idx)
 
         if col_map:
+            print("DEBUG column_map:")
+            for m, cols in col_map.items():
+                print(f"  {m}: { {k: v for k, v in cols.items()} }")
             return col_map
 
         # ----------------------------------------------------------------
