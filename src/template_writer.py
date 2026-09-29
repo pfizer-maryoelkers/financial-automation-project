@@ -74,8 +74,6 @@ def _append_comment(existing_comment: Comment | None, new_text: str) -> Comment:
 def month_sort_key(month_str):
     """Convert month string to sortable key for proper chronological ordering"""
     month_order = {
-        'Nov (PY)': -1,
-        'Dec (PY)': 0,
         'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
         'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
         'Unknown': 13
@@ -123,6 +121,9 @@ class TemplateWriter:
         )
 
         # Month → metric → column-letter map built from the header row.
+        # dec_acc_reversal_col is used only as the fallback starting column when
+        # no metric headers are found in the sheet (blank template); it now points
+        # to the first Jan column rather than a prior-year Dec column.
         self.dec_acc_reversal_col = dec_acc_reversal_col
         self.column_map = self.get_column_map(starting_col=self.dec_acc_reversal_col)
 
@@ -360,21 +361,9 @@ class TemplateWriter:
             return re.sub(r'\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)', replacer, formula_text)
 
         # Build dynamic mapping from summary column index to its correct accrual column letter.
-        # Find whichever prior-year key exists (e.g. 'Dec (PY)' or 'Nov (PY)') and map its
-        # accrual reversal column to the first non-PY month's accrual column.
+        # Each month's Accrual Reversal column should reference the same month's Accrual column.
         summary_cols = {}
         if self.p3_id_column is not None:
-            _py_key = next((k for k in self.column_map if k.endswith("(PY)")), None)
-            if _py_key and 'Accrual Reversal' in self.column_map[_py_key]:
-                col_letter = self.column_map[_py_key]['Accrual Reversal']
-                _first_month = next(
-                    (k for k in sorted(self.column_map, key=month_sort_key) if not k.endswith("(PY)")),
-                    None,
-                )
-                first_acc = self.column_map.get(_first_month, {}).get('Accrual') if _first_month else None
-                if first_acc:
-                    summary_cols[column_index_from_string(col_letter)] = first_acc
-
             months_ordered = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
             for idx, m_key in enumerate(months_ordered[:-1]):
                 next_month = months_ordered[idx + 1]
@@ -466,8 +455,6 @@ class TemplateWriter:
         # We can loop through each month in column_map, get the Accrual and Actual columns,
         # and write the IF(OR(Accrual="",Actual=""),"",Accrual-Actual) formula into the Variance column.
         for month_key, month_cols in self.column_map.items():
-            if month_key.endswith("(PY)"):
-                continue
             actual_col = month_cols.get('Actual')
             accrual_col = month_cols.get('Accrual')
             if actual_col and accrual_col:
@@ -579,8 +566,6 @@ class TemplateWriter:
         }
 
         col_map: dict[str, dict[str, str]] = {}
-        py_col_seen = False   # True once the prior-year accrual reversal column is mapped
-        any_month_seen = False  # True once any month column has been mapped
         max_col = self.sheet.max_column or 200
 
         # Use the actual header row position rather than the config value so this
@@ -609,18 +594,8 @@ class TemplateWriter:
             if month_key is None:
                 continue
 
-            # The first 'Accrual Reversal <month>' that appears before any other
-            # month column is the prior-year accrual reversal.  Tag it as
-            # '<month> (PY)' so it stays distinct from the same month's current-year
-            # block.  This works regardless of whether the template starts in December
-            # (giving 'Dec (PY)') or January (giving 'Nov (PY)') or any other month.
-            if matched_metric == "Accrual Reversal" and not py_col_seen and not any_month_seen:
-                month_key = f"{month_key} (PY)"
-                py_col_seen = True
-
             if month_key not in col_map:
                 col_map[month_key] = {}
-            any_month_seen = True
 
             # Guard against duplicate headers (e.g. two "Accrual May" cells where
             # the second should have been "Actual May").  If this metric slot is
@@ -666,7 +641,6 @@ class TemplateWriter:
             f"'{starting_col}'."
         )
         months_fb = [
-            "Dec (PY)",
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ]
@@ -1399,9 +1373,6 @@ class TemplateWriter:
                     _sorted_template_months = sorted(
                         self.column_map.keys(), key=month_sort_key
                     )
-                    _template_py_key = next(
-                        (k for k in _sorted_template_months if k.endswith("(PY)")), None
-                    )
                     # Pass 1 — bucket every month into its write target and merge metrics.
                     # Also remap po.reclass_adjustments keys to the same target month.
                     _write_data: dict[str, MonthlyMetrics] = {}
@@ -1409,10 +1380,6 @@ class TemplateWriter:
                     for month, metrics in po.monthly_data.items():
                         if month in self.column_map:
                             target = month
-                        elif month.endswith("(PY)") and _template_py_key:
-                            # Data uses a different (PY) name than this template —
-                            # redirect to whichever prior-year column the template has.
-                            target = _template_py_key
                         elif _sorted_template_months:
                             target = _sorted_template_months[0]
                             print(

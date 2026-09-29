@@ -3,20 +3,19 @@ import pandas as pd
 import re
 
 class TransactionalDetailReader:
-    """Class for reading transactional detail file and extracts accruals, actuals, and reversals.
+    """Reads a C-TIES or Consolidated Actuals file and extracts typed, month-bucketed transactions.
 
-    Includes the following methods:
-        - load_transactional_detail_file(): Loads TIES file into singular dataframe
-        - _categorize_row(): categorizes row type as actual, accrual, etc.
-        - get_transactional_data(): reads dataframe and filters data, returns dict of data we need
-        
-    Codes for AP Voucher Number (used in categorize row):
-        210 - Accrual/Reversal
-        510 - Invoice
-        900 - Reclass
+    Classification rules (in priority order):
+        1. Document number / Vendor Invoice / AP Voucher Number prefix + amount sign:
+               "2" + positive → Accrual,  "2" + negative → Reversal
+               "5" → Actual
+               "9" → Reclass
+        2. CO Doc Line Item Txt keywords (fallback when no prefix matches):
+               reversal → Reversal, accrual → Accrual, reclass → Reclass, invoice/vendor → Actual
+        3. Amount sign fallback for unresolved rows
 
-    __init__ defines required cols, required types, and a column map for easy configuration of newly formatted CTIES files.
-    
+    Month mapping is direct: AP01 = Jan, AP02 = Feb, … AP12 = Dec.
+    Two Decembers are distinguished by year: the smaller year → "Dec (PY)".
     """
 
     def __init__(self, file_path, required_cols, valid_types, colmap):
@@ -82,31 +81,58 @@ class TransactionalDetailReader:
         df.columns = df.columns.str.strip().str.replace(r'\s+', ' ', regex=True)
         return df
 
-    def _parse_month_num(self, raw_month) -> 'int | None':
-        """Parse a raw month value from any supported format to a 1-12 integer.
+    def _parse_ap(self, raw_month) -> 'tuple[int, int] | tuple[None, None]':
+        """Parse a raw Accounting Period value to a (month_num, year) tuple.
 
-        Handles:
-          • plain integers 1-12
-          • YYYYMM integers (e.g. 202601 → 1)
-          • "Period 01 2026" / "Period 01" strings
-          • pandas Timestamps (uses .month)
+        AP values seen in practice:
+          • "AP202501"  / 202501  → (1, 2025)   i.e. January 2025
+          • "AP202512"  / 202512  → (12, 2025)  i.e. December 2025  ← prior-year Dec
+          • "AP202612"  / 202612  → (12, 2026)  i.e. December 2026  ← current-year Dec
+          • "Period 01 2026"      → (1, 2026)
+          • plain integer 1–12   → (month, None)  — year unknown, treated as current year
+          • pandas Timestamp      → (month, year)
 
-        Returns None when the value cannot be parsed or is out of range.
+        Returns (None, None) when the value cannot be parsed or month is out of range.
         """
         import pandas as _pd
         if isinstance(raw_month, _pd.Timestamp):
-            return raw_month.month
+            return raw_month.month, raw_month.year
+
         try:
             raw_str = str(raw_month).strip()
-            period_match = re.search(r'period\s+(\d+)', raw_str, re.IGNORECASE)
+
+            # "Period 01 2026" / "Period 01"
+            period_match = re.search(r'period\s+(\d+)(?:\s+(\d{4}))?', raw_str, re.IGNORECASE)
             if period_match:
                 month_num = int(period_match.group(1))
+                year = int(period_match.group(2)) if period_match.group(2) else None
+                return (month_num, year) if 1 <= month_num <= 12 else (None, None)
+
+            # Strip leading non-digit characters (e.g. "AP" prefix)
+            digits_only = re.sub(r'^[^0-9]+', '', raw_str)
+            if not digits_only:
+                return None, None
+
+            raw_int = int(float(digits_only))
+            if raw_int > 12:
+                # YYYYMM format: e.g. 202501 → month=1, year=2025
+                year = raw_int // 100
+                month_num = raw_int % 100
             else:
-                raw_int = int(float(raw_str))
-                month_num = raw_int % 100 if raw_int > 12 else raw_int
+                # Plain 1–12 — year unknown
+                month_num = raw_int
+                year = None
+
         except (TypeError, ValueError):
-            return None
-        return month_num if 1 <= month_num <= 12 else None
+            return None, None
+
+        return (month_num, year) if 1 <= month_num <= 12 else (None, None)
+
+    def _parse_month_num(self, raw_month) -> 'int | None':
+        """Convenience wrapper around _parse_ap that returns only the month number.
+        Used by callers that do not need year-awareness (reclass helpers, etc.)."""
+        month, _ = self._parse_ap(raw_month)
+        return month
 
     def _detect_header_row(self, sheet_name: str) -> int:
         """Return the 0-based header row index for a sheet.
@@ -173,8 +199,7 @@ class TransactionalDetailReader:
                 # When the Consolidated file also has a Vendor Invoice column,
                 # that column is the real classifier (2=Accrual/Reversal,
                 # 5=Invoice, 9=Reclass).  Do NOT copy the PO column into
-                # cls_target — leave cls_target to be filled by Vendor Invoice
-                # in the classifier block below so _categorize_row works correctly.
+                # cls_target — leave cls_target to be filled by Vendor Invoice.
                 if (
                     cls_target != po_target
                     and cls_target not in df.columns
@@ -462,24 +487,7 @@ class TransactionalDetailReader:
                 and 'AP Voucher Number' in self.data.columns
             )
             if not type_was_present:
-                po_col  = self.colmap['po']
-                cls_col = self.colmap.get('classifier', 'AP Voucher Number')
-                # Detect Consolidated format: the classifier column carries 2/5/9
-                # prefixes (Vendor Invoice) while PO numbers start with 95 / ER###.
-                # When >50% of rows have matching PO==classifier the PO was copied
-                # into the classifier slot — use the PO-based categoriser instead.
-                _is_consolidated = (
-                    cls_col in self.data.columns
-                    and po_col in self.data.columns
-                    and (
-                        self.data[cls_col].astype(str).str.strip()
-                        == self.data[po_col].astype(str).str.strip()
-                    ).mean() > 0.5
-                )
-                if _is_consolidated:
-                    self.data[type_col] = self._categorize_vectorised_consolidated()
-                else:
-                    self.data[type_col] = self._categorize_vectorised()
+                self.data[type_col] = self._categorize()
 
             # ── Normalise PO column (vectorised) ────────────────────────────────
             # Convert float-formatted integers: 9500905777.0 → "9500905777".
@@ -616,316 +624,66 @@ class TransactionalDetailReader:
         except Exception as e:
             print("Error loading transactional detail file:", e)
 
-    def _categorize_vectorised(self) -> 'pd.Series':
-        """Vectorised replacement for df.apply(_categorize_row, axis=1).
+    def _categorize(self) -> 'pd.Series':
+        """Categorise every row in self.data.
 
-        Priority order (same as _categorize_row):
-        1. CO Doc Line Item Txt keywords → ER / Reversal / Accrual / Reclass / Actual
-        2. Classifier (AP Voucher Number) prefix: 5→Actual, 2→Accrual|Reversal, 9→Reclass|ER
-        3. Amount sign fallback for unresolved rows.
-        """
-        df   = self.data
-        n    = len(df)
-        result = pd.Series(['Undefined'] * n, index=df.index, dtype=object)
-
-        # ── Step 1: CO Doc Line Item Txt ────────────────────────────────────
-        co_col = 'CO Doc Line Item Txt'
-        if co_col in df.columns:
-            desc = df[co_col].astype(str).str.strip().str.lower()
-            valid = desc.notna() & ~desc.isin({'nan', 'none', ''})
-            result = result.where(~(valid & desc.str.contains(r'\bER\d+\b', regex=True, na=False)), 'ER')
-            result = result.where(result != 'Undefined', 'Undefined')  # no-op, keeps logic readable
-            unset = result == 'Undefined'
-            result[unset & valid & desc.str.contains('reversal', na=False)] = 'Reversal'
-            unset = result == 'Undefined'
-            result[unset & valid & desc.str.contains('accrual', na=False)] = 'Accrual'
-            unset = result == 'Undefined'
-            result[unset & valid & desc.str.contains('reclass', na=False)] = 'Reclass'
-            unset = result == 'Undefined'
-            result[unset & valid & (desc.str.contains('invoice', na=False) | desc.str.contains('vendor', na=False))] = 'Actual'
-
-        # ── Step 2: Classifier prefix ────────────────────────────────────────
-        cls_col = self.colmap.get('classifier', 'AP Voucher Number')
-        if cls_col in df.columns:
-            cls = df[cls_col].astype(str).str.strip()
-            unset = result == 'Undefined'
-
-            # "5xx" → Actual
-            result[unset & cls.str.startswith('5')] = 'Actual'
-            unset = result == 'Undefined'
-
-            # "9xx" → Reclass (unless a desc col contains ER###)
-            nine_mask = unset & cls.str.startswith('9')
-            result[nine_mask] = 'Reclass'
-            for desc_col in ('GL Line Description', 'GL Transaction Description', 'Description', co_col):
-                if desc_col in df.columns:
-                    er_in_desc = df[desc_col].astype(str).str.contains(r'\bER\d+\b', regex=True, na=False)
-                    result[(result == 'Reclass') & nine_mask & er_in_desc] = 'ER'
-            unset = result == 'Undefined'
-
-            # "2xx" → Accrual (positive) or Reversal (negative)
-            two_mask = unset & cls.str.startswith('2')
-            amt_col  = self.colmap.get('amount', 'GL BER Corp Amount')
-            gl_col   = 'GL Transaction Amount'
-            sign_col = gl_col if gl_col in df.columns else (amt_col if amt_col in df.columns else None)
-            if sign_col:
-                amt = pd.to_numeric(df[sign_col], errors='coerce').fillna(0)
-            else:
-                amt = pd.Series(0.0, index=df.index)
-            result[two_mask & (amt >= 0)] = 'Accrual'
-            result[two_mask & (amt < 0)]  = 'Reversal'
-
-        # ── Step 3: Amount-sign fallback ─────────────────────────────────────
-        unset = result == 'Undefined'
-        if unset.any():
-            amt_col = self.colmap.get('amount', 'GL BER Corp Amount')
-            if amt_col in df.columns:
-                amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
-                result[unset & (amt < 0)] = 'Reversal'
-                result[unset & (amt > 0)] = 'Accrual'
-            result[result == 'Undefined'] = 'Actual'
-
-        return result
-
-    def _categorize_vectorised_consolidated(self) -> 'pd.Series':
-        """Vectorised replacement for df.apply(_categorize_consolidated_row, axis=1).
-
-        Priority order (same as _categorize_consolidated_row):
-        1. CO Doc Line Item Txt keywords → ER / Reversal / Accrual / Reclass / Actual
-        2. PO column: ER### pattern → ER
-        3. Vendor Invoice (classifier) prefix: 5→Actual, 2→Accrual|Reversal, 9→Reclass|ER
-        4. Amount sign fallback.
-        5. Default → Actual
+        Priority order:
+        1. Document number / Vendor Invoice / AP Voucher Number prefix + amount sign
+             "2" + positive → Accrual,  "2" + negative → Reversal
+             "5" → Actual
+             "9" → Reclass
+        2. CO Doc Line Item Txt keywords (fallback when no classifier prefix matches):
+             reversal → Reversal, accrual → Accrual,
+             reclass  → Reclass,  invoice/vendor → Actual
+        3. Amount sign for any row still unresolved:
+             negative → Reversal, positive → Accrual, zero → Actual.
         """
         df     = self.data
         result = pd.Series(['Undefined'] * len(df), index=df.index, dtype=object)
 
-        # ── Step 1: CO Doc Line Item Txt ────────────────────────────────────
+        # ── Step 1: classifier prefix (Document number / Vendor Invoice / AP Voucher Number)
+        cls_col = self.colmap.get('classifier', 'AP Voucher Number')
+        if cls_col in df.columns:
+            cls     = df[cls_col].astype(str).str.strip()
+            amt_col = self.colmap.get('amount', 'GL BER Corp Amount')
+            gl_col  = 'GL Transaction Amount'
+            sign_col = gl_col if gl_col in df.columns else (amt_col if amt_col in df.columns else None)
+            amt = pd.to_numeric(df[sign_col], errors='coerce').fillna(0) if sign_col else pd.Series(0.0, index=df.index)
+
+            result[cls.str.startswith('5')] = 'Actual'
+            result[cls.str.startswith('9')] = 'Reclass'
+
+            two_mask = cls.str.startswith('2')
+            result[two_mask & (amt >= 0)] = 'Accrual'
+            result[two_mask & (amt <  0)] = 'Reversal'
+
+        # ── Step 2: CO Doc Line Item Txt — fallback for rows with no prefix ──
         co_col = 'CO Doc Line Item Txt'
         if co_col in df.columns:
             desc  = df[co_col].astype(str).str.strip().str.lower()
             valid = ~desc.isin({'nan', 'none', ''})
-            result[valid & desc.str.contains(r'\bER\d+\b', regex=True, na=False)] = 'ER'
             unset = result == 'Undefined'
             result[unset & valid & desc.str.contains('reversal', na=False)] = 'Reversal'
             unset = result == 'Undefined'
-            result[unset & valid & desc.str.contains('accrual', na=False)] = 'Accrual'
+            result[unset & valid & desc.str.contains('accrual',  na=False)] = 'Accrual'
             unset = result == 'Undefined'
-            result[unset & valid & desc.str.contains('reclass', na=False)] = 'Reclass'
+            result[unset & valid & desc.str.contains('reclass',  na=False)] = 'Reclass'
             unset = result == 'Undefined'
             result[unset & valid & (
-                desc.str.contains('invoice', na=False) |
-                desc.str.contains('vendor', na=False) |
-                desc.str.contains('capitalised', na=False) |
-                desc.str.contains('capitalized', na=False)
+                desc.str.contains('invoice', na=False) | desc.str.contains('vendor', na=False)
             )] = 'Actual'
 
-        # ── Step 2: PO column — ER### pattern ────────────────────────────────
-        po_col = self.colmap['po']
-        if po_col in df.columns:
-            po_s  = df[po_col].astype(str).str.strip()
-            unset = result == 'Undefined'
-            result[unset & po_s.str.match(r'(?i)^ER\d+$')] = 'ER'
-
-        # ── Step 3: Vendor Invoice / classifier prefix ────────────────────────
-        cls_col = self.colmap.get('classifier', 'AP Voucher Number')
-        if cls_col in df.columns:
-            cls   = df[cls_col].astype(str).str.strip()
-            unset = result == 'Undefined'
-            result[unset & cls.str.startswith('5')] = 'Actual'
-
-            unset     = result == 'Undefined'
-            nine_mask = unset & cls.str.startswith('9')
-            result[nine_mask] = 'Reclass'
-            for desc_col in ('GL Line Description', 'GL Transaction Description', 'Description'):
-                if desc_col in df.columns:
-                    er_in_desc = df[desc_col].astype(str).str.contains(r'\bER\d+\b', regex=True, na=False)
-                    result[(result == 'Reclass') & nine_mask & er_in_desc] = 'ER'
-
-            unset    = result == 'Undefined'
-            two_mask = unset & cls.str.startswith('2')
-            amt_col  = self.colmap.get('amount', 'GL BER Corp Amount')
-            if amt_col in df.columns:
-                amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
-            else:
-                amt = pd.Series(0.0, index=df.index)
-            result[two_mask & (amt >= 0)] = 'Accrual'
-            result[two_mask & (amt < 0)]  = 'Reversal'
-
-        # ── Step 4: Amount-sign fallback ─────────────────────────────────────
+        # ── Step 3: amount-sign fallback for anything still unresolved ───────
         unset = result == 'Undefined'
         if unset.any():
             amt_col = self.colmap.get('amount', 'GL BER Corp Amount')
             if amt_col in df.columns:
                 amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
-                result[unset & (amt < 0)] = 'Reversal'
-                result[unset & (amt > 0)] = 'Accrual'
+                result[unset & (amt <  0)] = 'Reversal'
+                result[unset & (amt >  0)] = 'Accrual'
+            result[result == 'Undefined'] = 'Actual'
 
-        # ── Step 5: default ───────────────────────────────────────────────────
-        result[result == 'Undefined'] = 'Actual'
         return result
-
-
-    # Internal helper function that categorizes a row in CTIES file as Actual, Accrual, Reversal, etc.
-    # Use by calling df["Type"] = df.apply(self._categorize_row, axis=1)
-    def _categorize_row(self, row):
-        '''
-        Returns value for row 'Type' as a string.
-
-        Priority order:
-        1. CO Doc Line Item Txt — most reliable; checked first across all rows.
-           Keywords: reversal, accrual, reclass, invoice / vendor.
-           Also scanned for ER<digits> pattern → ER.
-        2. Vendor Invoice / AP Voucher Number prefix:
-             "5xx" = Actual (vendor invoice)
-             "2xx" = Accrual (positive GL Transaction Amount) or Reversal (negative)
-             "9xx" = Reclass (or ER if a description column contains ER<digits>)
-        3. Amount sign fallback for "2xx" rows when description is ambiguous:
-             positive → Accrual, negative → Reversal
-        '''
-        classifier = str(row[self.colmap["classifier"]])
-
-        # --- Step 1: CO Doc Line Item Txt — authoritative description check ---
-        # Checked before the classifier prefix because the description is the
-        # most reliable signal the user reviews manually.
-        co_doc_col = "CO Doc Line Item Txt"
-        if co_doc_col in row.index:
-            desc = str(row[co_doc_col]).strip().lower()
-            if desc and desc not in ('nan', 'none', ''):
-                # ER number anywhere in the description takes priority
-                if re.search(r'\bER\d+\b', desc, re.IGNORECASE):
-                    return "ER"
-                if 'reversal' in desc:
-                    return "Reversal"
-                if 'accrual' in desc:
-                    return "Accrual"
-                if 'reclass' in desc:
-                    return "Reclass"
-                if 'invoice' in desc or 'vendor' in desc:
-                    return "Actual"
-
-        # --- Step 2: Vendor Invoice / AP Voucher Number prefix ---
-        # "2" → Accrual/Reversal, "5" → vendor invoice (Actual), "9" → Reclass.
-        # Not always conclusive on its own — description check above takes precedence.
-
-        # For "9xx": scan all description columns for an ER number before
-        # defaulting to Reclass.
-        if classifier.startswith("9"):
-            for desc_col in ("GL Line Description", "GL Transaction Description",
-                             "Description", "CO Doc Line Item Txt"):
-                txt = str(row.get(desc_col, "")).strip()
-                if txt and txt.lower() not in ('nan', 'none', ''):
-                    if re.search(r'\bER\d+\b', txt, re.IGNORECASE):
-                        return "ER"
-            return "Reclass"
-
-        if classifier.startswith("5"):
-            return "Actual"
-
-        # "2xx": use GL Transaction Amount sign to distinguish Accrual vs Reversal.
-        if classifier.startswith("2"):
-            gl_trans_col = "GL Transaction Amount"
-            if gl_trans_col in row.index:
-                try:
-                    sign_amount = float(row[gl_trans_col])
-                except (TypeError, ValueError):
-                    sign_amount = 0.0
-            else:
-                try:
-                    sign_amount = float(row[self.colmap["amount"]])
-                except (TypeError, ValueError):
-                    sign_amount = 0.0
-            return "Accrual" if sign_amount >= 0 else "Reversal"
-
-        return "Undefined"
-
-    def _categorize_consolidated_row(self, row):
-        """Categorise a row from a Consolidated Actuals file.
-
-        The Consolidated file has no AP Voucher Number in the C-TIES sense —
-        the Document number column carries the PO number, and the Vendor Invoice
-        column carries a classifier prefix ("2" = accrual/reversal, "5" = vendor
-        invoice, "9" = reclass).  Classification rules in priority order:
-
-        1. CO Doc Line Item Txt — most reliable; reviewed manually first.
-           Keywords: reversal, accrual, reclass, invoice/vendor, capitalised.
-           Also scanned for ER<digits> pattern → ER.
-        2. Document number (PO column):
-             starts with '9' → vendor invoice (Actual)
-             matches ER\\d+  → ER
-        3. Vendor Invoice / classifier prefix:
-             "5xx" → Actual
-             "2xx" → Accrual (positive amount) or Reversal (negative amount)
-             "9xx" → Reclass (after checking descriptions for ER<digits>)
-        4. Amount sign fallback for rows not resolved above:
-             positive → Accrual, negative → Reversal
-        5. Default → Actual
-        """
-        po_val = str(row[self.colmap['po']]).strip()
-
-        # --- Rule 1: CO Doc Line Item Txt — authoritative description ---
-        co_doc_col = 'CO Doc Line Item Txt'
-        if co_doc_col in row.index:
-            desc = str(row[co_doc_col]).strip().lower()
-            if desc and desc not in ('nan', 'none', ''):
-                # ER number in the description takes priority over everything
-                if re.search(r'\bER\d+\b', desc, re.IGNORECASE):
-                    return 'ER'
-                if 'reversal' in desc:
-                    return 'Reversal'
-                if 'accrual' in desc:
-                    return 'Accrual'
-                if 'reclass' in desc:
-                    return 'Reclass'
-                if 'invoice' in desc or 'vendor' in desc:
-                    return 'Actual'
-                if 'capitalised' in desc or 'capitalized' in desc:
-                    return 'Actual'
-
-        # --- Rule 2: Document number (PO column) ---
-        # Real project POs start with '95'.  An ER### identifier means ER.
-        # Note: do NOT return 'Actual' just because the PO starts with '9' —
-        # the Vendor Invoice column (classifier) carries the authoritative prefix.
-        if re.match(r'^ER\d+$', po_val, re.IGNORECASE):
-            return 'ER'
-
-        # --- Rule 3: Vendor Invoice / classifier prefix ---
-        # "5" = vendor invoice, "2" = accrual/reversal, "9" = reclass.
-        # Not always conclusive — description check above takes precedence.
-        classifier = str(row.get(self.colmap.get('classifier', 'AP Voucher Number'), '')).strip()
-
-        if classifier.startswith('5'):
-            return 'Actual'
-
-        if classifier.startswith('9'):
-            # Scan all description columns for an ER number before defaulting to Reclass
-            for desc_col in ('GL Line Description', 'GL Transaction Description', 'Description'):
-                if desc_col in row.index:
-                    txt = str(row[desc_col]).strip()
-                    if txt and txt.lower() not in ('nan', 'none', ''):
-                        if re.search(r'\bER\d+\b', txt, re.IGNORECASE):
-                            return 'ER'
-            return 'Reclass'
-
-        if classifier.startswith('2'):
-            try:
-                amt = float(row[self.colmap['amount']])
-            except (TypeError, ValueError):
-                amt = 0.0
-            return 'Reversal' if amt < 0 else 'Accrual'
-
-        # --- Rule 4: amount sign fallback ---
-        try:
-            amt = float(row[self.colmap['amount']])
-        except (TypeError, ValueError):
-            amt = 0.0
-        if amt < 0:
-            return 'Reversal'
-        if amt > 0:
-            return 'Accrual'
-
-        # --- Rule 5: default ---
-        return 'Actual'
 
     def get_transactional_data(self) -> dict:
         '''
@@ -1017,52 +775,16 @@ class TransactionalDetailReader:
         valid_with_reclass = list(self.valid_types) + ["Reclass"]
         data_copy = data_copy[data_copy[self.colmap["type"]].isin(valid_with_reclass)]
 
-        # Posting-date override: for Accrual and Reversal rows, the GL Posting
-        # Date determines which month column they land in — not the Accounting
-        # Period.  Parse the month number from the posting date (handles both
-        # "M/D/YYYY" and "MM/D/YYYY" formats) and overwrite the Accounting Period
-        # for every Accrual/Reversal row that has a valid posting date.
-        if posting_date_col:
-            month_col    = self.colmap["month"]
-            type_col     = self.colmap["type"]
-            accrual_mask = data_copy[type_col].isin(["Accrual", "Reversal"])
-            raw_dates    = data_copy[posting_date_col]
+        # Derive the current fiscal year from the AP values in the data so that
+        # two December rows (AP12 2025 = prior-year Dec, AP12 2026 = current Dec)
+        # can be told apart.  The maximum year seen across all AP values is treated
+        # as the current year; any December with a smaller year is "Dec (PY)".
+        month_col = self.colmap["month"]
+        parsed_years = data_copy[month_col].apply(lambda v: self._parse_ap(v)[1])
+        known_years = parsed_years.dropna()
+        current_year = int(known_years.max()) if not known_years.empty else None
 
-            # Derive month number from posting date regardless of storage format:
-            #   - datetime / Timestamp (Excel native): use .dt.month
-            #   - string "M/D/YYYY" or "MM/D/YYYY": extract leading digits before "/"
-            if pd.api.types.is_datetime64_any_dtype(raw_dates):
-                parsed_month_num = raw_dates.dt.month.astype(float)
-            else:
-                # Try coercing to datetime first (handles mixed/object columns)
-                coerced = pd.to_datetime(raw_dates, errors='coerce')
-                if coerced.notna().sum() > coerced.isna().sum():
-                    # Majority parsed as datetime — use .dt.month
-                    parsed_month_num = coerced.dt.month.astype(float)
-                else:
-                    # Fall back to string extraction for "M/D/YYYY" format
-                    posting_str = raw_dates.astype(str).str.strip()
-                    parsed_month = posting_str.str.extract(r'^(\d{1,2})[/\-]', expand=False)
-                    parsed_month_num = pd.to_numeric(parsed_month, errors='coerce')
-
-            # AP202512 (month 12) always routes to December regardless of posting
-            # date — exclude those rows from the override.
-            ap_month = data_copy[month_col].apply(self._parse_month_num)
-            not_dec_ap = ap_month != 12
-
-            valid_posting = accrual_mask & not_dec_ap & parsed_month_num.between(1, 12)
-            data_copy.loc[valid_posting, month_col] = parsed_month_num[valid_posting]
-        # Build a per-PO country lookup before grouping (country is not aggregatable)
-        _INTL_COUNTRIES = {'india', 'in'}
-        intl_po_set: set = set()
-        if country_col:
-            _po_col = self.colmap["po"]
-            _cc_data = data_copy[[_po_col, country_col]].copy()
-            _cc_data[country_col] = _cc_data[country_col].astype(str).str.strip().str.lower()
-            _cc_data = _cc_data[_cc_data[country_col].isin(_INTL_COUNTRIES)]
-            intl_po_set = set(_cc_data[_po_col].astype(str).str.strip().unique())
-
-        # Drop country column before grouping (it is not numeric)
+        # Group by PO / Month / Type / Cost Center / WBS
         group_cols = [
             self.colmap["po"],
             self.colmap["month"],
@@ -1070,51 +792,52 @@ class TransactionalDetailReader:
             self.colmap["cost_center"],
             self.colmap["wbs"],
         ]
-        # Group by PO / Month / Type / Cost Center / WBS
         grouped = (
             data_copy.groupby(group_cols)[self.colmap["amount"]]
             .sum()
             .reset_index()
         )
-        # Build results
+
+        # Build results.
+        # Month mapping is direct: AP01 = Jan, AP02 = Feb, … AP12 = Dec.
+        # The only special case is December — when two Decembers appear in the
+        # data (AP12 of the prior year and AP12 of the current year), the one
+        # whose year is less than current_year lands in "Dec (PY)".
         result = {}
         for _, row in grouped.iterrows():
-            po = row[self.colmap["po"]]
-            raw_month = row[self.colmap["month"]]
-            type_name = row[self.colmap["type"]]
-            value = row[self.colmap["amount"]]
+            po          = row[self.colmap["po"]]
+            raw_month   = row[self.colmap["month"]]
+            type_name   = row[self.colmap["type"]]
+            value       = row[self.colmap["amount"]]
             cost_center = str(row[self.colmap["cost_center"]]).strip()
-            wbs = str(row[self.colmap["wbs"]]).strip()
+            wbs         = str(row[self.colmap["wbs"]]).strip()
 
-            month_num = self._parse_month_num(raw_month)
+            month_num, ap_year = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
-            is_intl = str(po).strip() in intl_po_set
-
-            # Actuals/ER/Reclass: December (month 12) is never shifted — it lands
-            # in the current-year Dec column directly.  Other months shift by −1
-            # (domestic) or −2 (international).
-            if month_num == 12:
-                actual_month = "Dec"
+            # Accrual Reversals are labelled in the template by the month of the
+            # original accrual, not the month they post.  A reversal in AP02
+            # (February) cancels the January accrual, so it belongs in the "Jan"
+            # column (Accrual Reversal Jan).  Shift back by one month.
+            # AP01 reversals (rev_num == 0) are dropped — we only track Jan–Dec of
+            # the current year and do not maintain a prior-year December column.
+            #
+            # All other types (Actual, Accrual, Reclass, ER) map directly:
+            # AP01 = Jan, AP02 = Feb, … AP12 = Dec.  Prior-year December rows
+            # (AP12 of a year earlier than the current year) are skipped.
+            if type_name == "Reversal":
+                rev_num = month_num - 1
+                if rev_num == 0:
+                    continue  # January reversal cancels prior-year Dec — skip
+                write_month = self.month_map.get(rev_num)
+            elif month_num == 12 and current_year is not None and ap_year is not None and ap_year < current_year:
+                continue  # prior-year December — skip
             else:
-                actual_shift = 2 if is_intl else 1
-                actual_shifted = month_num - actual_shift
-                if actual_shifted <= 0:
-                    actual_month = "Nov (PY)" if actual_shifted == -1 else "Dec (PY)"
-                else:
-                    actual_month = self.month_map.get(actual_shifted)
+                write_month = self.month_map.get(month_num)
 
-            # Accruals/Reversals: the GL Posting Date override (applied before
-            # grouping above) has already rewritten month_num to the posting month,
-            # so use month_map directly — no shift needed.  December columns are
-            # only populated when the posting date is genuinely in December.
-            # When posting date is unavailable, fall back to domestic −1 shift;
-            # if that lands at 0 (AP01) use "Dec (PY)" as the prior-year bucket.
-            accrual_month = self.month_map.get(month_num)
-            if accrual_month is None:
-                # month_num out of range — shouldn't happen but guard anyway
-                accrual_month = "Dec (PY)"
+            if not write_month:
+                continue
 
             # Initialize (PO, cost_center) bucket
             key = (po, cost_center)
@@ -1125,36 +848,24 @@ class TransactionalDetailReader:
                     "gross_ber_total": gross_by_po_cc.get(key) or gross_by_po.get(po, 0.0),
                 }
 
-            # Determine which month slot each type writes into
-            if type_name in ["Actual", "ER", "Reclass"]:
-                write_month = actual_month
-            elif type_name in ["Accrual", "Reversal"]:
-                write_month = accrual_month
-            else:
-                continue
-
             # Initialize month bucket
-            if write_month and write_month not in result[key]:
+            if write_month not in result[key]:
                 result[key][write_month] = {
                     "Actual": 0,
                     "Accrual": 0,
                     "Reversal": 0,
                 }
 
-            # Assign value
-            if not write_month:
-                continue
+            # Assign value by type
             if type_name in ["Actual", "ER", "Reclass"]:
                 result[key][write_month]["Actual"] = result[key][write_month].get("Actual", 0) + value
             elif type_name in ["Accrual", "Reversal"]:
                 result[key][write_month][type_name] = value
 
-        # Sort months for readability, preserve cost_center and wbs.
-        # "Nov (PY)" can appear for international POs with a Jan accounting period (−2 shift).
+        # Sort months chronologically: Jan–Dec.
         month_order = [
-            "Nov (PY)", "Dec (PY)",
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ]
         for key in result:
             result[key] = {
@@ -1167,6 +878,15 @@ class TransactionalDetailReader:
                     if month in result[key]
                 }
             }
+
+        # DEBUG — print first 3 PO keys so month placement is visible
+        print("DEBUG transactional_data sample:")
+        for i, (key, val) in enumerate(result.items()):
+            if i >= 3:
+                break
+            months = {m: v for m, v in val.items() if m not in ('cost_center', 'wbs', 'gross_ber_total')}
+            print(f"  {key}: {months}")
+
         return result
     
 
@@ -1223,6 +943,12 @@ class TransactionalDetailReader:
             reclass_rows[self.colmap["amount"]], errors='coerce'
         ).fillna(0.0)
 
+        # Determine current year for Dec (PY) detection.
+        _month_col = self.colmap["month"]
+        _parsed_years = reclass_rows[_month_col].apply(lambda v: self._parse_ap(v)[1])
+        _known_years = _parsed_years.dropna()
+        _current_year = int(_known_years.max()) if not _known_years.empty else None
+
         result = {}
         for _, row in reclass_rows.iterrows():
             cc = str(row[self.colmap["cost_center"]]).strip()
@@ -1230,19 +956,16 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            month_num = self._parse_month_num(raw_month)
+            month_num, ap_year = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
-            # Reclass amounts are posted in the current period — use actual_month
-            # (current month - 1) to stay consistent with how Actuals are placed.
-            # December is never shifted — maps directly to current-year Dec.
-            if month_num == 12:
-                month_label = "Dec"
-            elif month_num == 1:
+            # Direct mapping: AP01 = Jan … AP12 = Dec.
+            # Prior-year December → "Dec (PY)".
+            if month_num == 12 and _current_year is not None and ap_year is not None and ap_year < _current_year:
                 month_label = "Dec (PY)"
             else:
-                month_label = self.month_map.get(month_num - 1)
+                month_label = self.month_map.get(month_num)
             if not month_label:
                 continue
 
@@ -1280,6 +1003,12 @@ class TransactionalDetailReader:
             reclass_po_rows[self.colmap["amount"]], errors='coerce'
         ).fillna(0.0)
 
+        # Determine current year for Dec (PY) detection.
+        _rn_month_col = self.colmap["month"]
+        _rn_parsed_years = reclass_po_rows[_rn_month_col].apply(lambda v: self._parse_ap(v)[1])
+        _rn_known_years = _rn_parsed_years.dropna()
+        _rn_current_year = int(_rn_known_years.max()) if not _rn_known_years.empty else None
+
         result = {}
         for _, row in reclass_po_rows.iterrows():
             po = str(row[self.colmap["po"]]).strip()
@@ -1287,17 +1016,16 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            month_num = self._parse_month_num(raw_month)
+            month_num, ap_year = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
-            # December is never shifted — maps directly to current-year Dec.
-            if month_num == 12:
-                month_label = "Dec"
-            elif month_num == 1:
+            # Direct mapping: AP01 = Jan … AP12 = Dec.
+            # Prior-year December → "Dec (PY)".
+            if month_num == 12 and _rn_current_year is not None and ap_year is not None and ap_year < _rn_current_year:
                 month_label = "Dec (PY)"
             else:
-                month_label = self.month_map.get(month_num - 1)
+                month_label = self.month_map.get(month_num)
 
             po_key = po
             if po_key not in result and po_key.replace('.', '', 1).replace('-', '', 1).isdigit():
