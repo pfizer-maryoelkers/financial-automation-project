@@ -263,7 +263,6 @@ class PipelineOrchestrator:
                 colmap=self.config['transactional_detail_reader']['colmap']
             )
             transactional_data = transactional_reader.get_transactional_data()
-            reclass_data       = transactional_reader.get_reclass_data()
             reclass_notes      = transactional_reader.get_reclass_notes()
             hierarchy_map      = transactional_reader.get_hierarchy_map()
             intl_po_set        = transactional_reader.get_intl_po_set()
@@ -272,7 +271,6 @@ class PipelineOrchestrator:
             self.logger.info(f"Loaded transactional data: {row_count} rows")
         else:
             transactional_data = {}
-            reclass_data       = {}
             reclass_notes      = {}
             hierarchy_map      = {}
             intl_po_set        = set()
@@ -308,7 +306,6 @@ class PipelineOrchestrator:
             forecast_data=forecast_data,
             exception_log=self.exception_log,
             transactional_df=transactional_df,
-            reclass_data=reclass_data,
             reclass_notes=reclass_notes,
             template_pos=template_reader.pos,
             template_rows=template_reader.template_rows,
@@ -410,7 +407,6 @@ class PipelineOrchestrator:
                 colmap=pcfg['transactional_detail_reader']['colmap'],
             )
             transactional_data = transactional_reader.get_transactional_data()
-            reclass_data       = transactional_reader.get_reclass_data()
             reclass_notes      = transactional_reader.get_reclass_notes()
             hierarchy_map      = transactional_reader.get_hierarchy_map()
             intl_po_set        = transactional_reader.get_intl_po_set()
@@ -419,7 +415,6 @@ class PipelineOrchestrator:
             self.logger.info(f"Loaded transactional data: {row_count} rows")
         else:
             transactional_data = {}
-            reclass_data       = {}
             reclass_notes      = {}
             hierarchy_map      = {}
             intl_po_set        = set()
@@ -461,7 +456,6 @@ class PipelineOrchestrator:
             exception_log=self.exception_log,
             transactional_df=transactional_df,
             p3_wbs_map=p3_wbs_map,
-            reclass_data=reclass_data,
             reclass_notes=reclass_notes,
             template_pos=template_reader.pos,
             intl_po_set=intl_po_set,

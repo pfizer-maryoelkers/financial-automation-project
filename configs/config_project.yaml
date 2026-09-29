@@ -64,6 +64,7 @@ transactional_detail_reader:
     req_title: "CO Doc Line Item Txt"
     type: "Type"
     project_name: "Project Name"
+    gl_posting_date: "GL Posting Date"
 
 # ============================
 ## Template Writer

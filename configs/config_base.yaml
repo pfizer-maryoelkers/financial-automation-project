@@ -41,6 +41,7 @@ transactional_detail_reader:
     gl_account: "Cost Element"
     req_title: "PO Line Item Desc"
     type: "Type"
+    gl_posting_date: "GL Posting Date"
 # ============================
 ## Template Writer
 template_writer:
@@ -73,7 +74,6 @@ template_writer:
     - "Description"
     - "GL Transaction Amount"
     - "GL BER Corp Amount"
-    - "Accounting Period"
     - "AP01"
     - "AP02"
     - "AP03"

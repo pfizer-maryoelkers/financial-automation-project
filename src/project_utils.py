@@ -38,7 +38,6 @@ def build_project_hierarchy(
     exception_log: ExceptionLog,
     transactional_df: pd.DataFrame,
     p3_wbs_map: dict[str, list[str]],
-    reclass_data: dict | None = None,
     reclass_notes: dict | None = None,
     template_pos: dict | None = None,
     intl_po_set: set | None = None,

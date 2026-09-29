@@ -7,7 +7,6 @@ All progress is reported via a simple callback float (0.0–1.0).
 import shutil
 import tempfile
 import time
-import traceback
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
@@ -173,7 +172,6 @@ class PipelineOrchestrator:
                 colmap=self.config["transactional_detail_reader"]["colmap"],
             )
             transactional_data = transactional_reader.get_transactional_data()
-            reclass_data = transactional_reader.get_reclass_data()
             reclass_notes = transactional_reader.get_reclass_notes()
             hierarchy_map = transactional_reader.get_hierarchy_map()
             intl_po_set = transactional_reader.get_intl_po_set()
@@ -182,7 +180,6 @@ class PipelineOrchestrator:
             self.logger.info(f"Transactional loaded: {row_count} rows")
         else:
             transactional_data = {}
-            reclass_data = {}
             reclass_notes = {}
             hierarchy_map = {}
             intl_po_set = set()
@@ -220,7 +217,6 @@ class PipelineOrchestrator:
             forecast_data=forecast_data,
             exception_log=self.exception_log,
             transactional_df=transactional_df,
-            reclass_data=reclass_data,
             reclass_notes=reclass_notes,
             template_pos=template_reader.pos,
             template_rows=template_reader.template_rows,

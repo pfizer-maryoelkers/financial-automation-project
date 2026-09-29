@@ -15,7 +15,7 @@ If no argument is passed the script looks for configs/config_base.yaml.
 """
 
 import sys
-from src.utils import load_config, convert_base64, detect_template_type
+from src.utils import load_config, detect_template_type
 from src.models import ExceptionLog
 
 
@@ -65,7 +65,6 @@ def _run_opex(config: dict) -> None:
     print("Step 1: Loading data\n")
     forecast_data      = forecast_reader.get_forecast_data()
     transactional_data = transactional_reader.get_transactional_data()
-    reclass_data       = transactional_reader.get_reclass_data()
     reclass_notes      = transactional_reader.get_reclass_notes()
     hierarchy_map      = transactional_reader.get_hierarchy_map()
     intl_po_set        = transactional_reader.get_intl_po_set()
@@ -80,7 +79,6 @@ def _run_opex(config: dict) -> None:
         forecast_data=forecast_data,
         exception_log=exception_log,
         transactional_df=transactional_reader.data,
-        reclass_data=reclass_data,
         reclass_notes=reclass_notes,
         template_pos=template_reader.pos,
         template_rows=template_reader.template_rows,
@@ -146,7 +144,6 @@ def _run_project(config: dict) -> None:
     print("Step 1: Loading data\n")
     forecast_data      = forecast_reader.get_forecast_data()
     transactional_data = transactional_reader.get_transactional_data()
-    reclass_data       = transactional_reader.get_reclass_data()
     reclass_notes      = transactional_reader.get_reclass_notes()
     hierarchy_map      = transactional_reader.get_hierarchy_map()
     intl_po_set        = transactional_reader.get_intl_po_set()
@@ -162,7 +159,6 @@ def _run_project(config: dict) -> None:
         exception_log=exception_log,
         transactional_df=transactional_reader.data,
         p3_wbs_map=template_reader.p3_wbs_map,
-        reclass_data=reclass_data,
         reclass_notes=reclass_notes,
         template_pos=template_reader.pos,
         intl_po_set=intl_po_set,

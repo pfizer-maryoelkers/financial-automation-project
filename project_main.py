@@ -10,7 +10,7 @@ Usage:
     py project_main.py
 """
 
-from src.utils import load_config, convert_base64
+from src.utils import load_config
 from src.forecast_reader import ForecastReader
 from src.transactional_detail_reader import TransactionalDetailReader
 from src.project_template_reader import ProjectTemplateReader
@@ -67,7 +67,6 @@ def main():
     print("Loaded forecast data\n")
 
     transactional_data = transactional_reader.get_transactional_data()
-    reclass_data       = transactional_reader.get_reclass_data()
     reclass_notes      = transactional_reader.get_reclass_notes()
     hierarchy_map      = transactional_reader.get_hierarchy_map()
     intl_po_set        = transactional_reader.get_intl_po_set()
@@ -85,7 +84,6 @@ def main():
         exception_log=exception_log,
         transactional_df=transactional_reader.data,
         p3_wbs_map=template_reader.p3_wbs_map,
-        reclass_data=reclass_data,
         reclass_notes=reclass_notes,
         template_pos=template_reader.pos,
         intl_po_set=intl_po_set,

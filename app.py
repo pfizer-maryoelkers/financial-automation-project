@@ -9,7 +9,7 @@ import tempfile
 import streamlit as st
 from pathlib import Path
 from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
-from streamlit_config import ConfigManager, AppConfig
+from streamlit_config import ConfigManager
 
 # Page configuration
 st.set_page_config(

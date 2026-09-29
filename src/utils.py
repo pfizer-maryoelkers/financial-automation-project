@@ -77,6 +77,8 @@ def convert_base64(bytes_string: str):
 
 
 # Forecast month shift: maps a 3-letter month key one step back.
+# International POs shift the forecast month back by 1 so Forecast and
+# Actual land in the same column.
 _FORECAST_MONTH_SHIFT = {
     "Feb": "Jan",
     "Mar": "Feb",
@@ -98,7 +100,6 @@ def build_hierarchy(
     forecast_data: dict,
     exception_log: ExceptionLog,
     transactional_df: pd.DataFrame,
-    reclass_data: dict | None = None,
     reclass_notes: dict | None = None,
     template_pos: dict | None = None,
     template_rows: dict | None = None,

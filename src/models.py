@@ -1,7 +1,6 @@
 from dataclasses import dataclass, field
 from typing import Optional
 from enum import Enum
-import pandas as pd
 from collections import Counter
 
 @dataclass
@@ -70,7 +69,15 @@ class ExceptionEntry:
 @dataclass
 class ExceptionLog:
     entries: list[ExceptionEntry] = field(default_factory=list)
+    _seen_keys: set = field(default_factory=set, repr=False)
+
     def log(self, exception_type: ExceptionType, **kwargs):
+        # Prevent logging the exact same source row more than once
+        row_idx = kwargs.get('row_index')
+        if row_idx is not None:
+            if row_idx in self._seen_keys:
+                return
+            self._seen_keys.add(row_idx)
         self.entries.append(ExceptionEntry(exception_type=exception_type, **kwargs))
 
     def summary(self):
