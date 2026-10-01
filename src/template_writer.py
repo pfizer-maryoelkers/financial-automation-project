@@ -1396,9 +1396,19 @@ class TemplateWriter:
                     # Also remap po.reclass_adjustments keys to the same target month.
                     _write_data: dict[str, MonthlyMetrics] = {}
                     _reclass_map: dict[str, list] = {}  # target_month → combined reclass entries
+                    # Build a lookup so "Dec (25)" data finds "Dec (25)" column, and
+                    # plain "Dec" data finds "Dec" column. If the exact key is missing,
+                    # try the base month name (strip the year suffix) before falling back.
+                    _col_map_keys = set(self.column_map.keys())
                     for month, metrics in po.monthly_data.items():
-                        if month in self.column_map:
+                        if month in _col_map_keys:
                             target = month
+                        elif month.startswith("Dec (") and "Dec" in _col_map_keys:
+                            # Reader emitted "Dec (25)" but template only has plain "Dec"
+                            target = "Dec"
+                        elif month == "Dec" and any(k.startswith("Dec (") for k in _col_map_keys):
+                            # Reader emitted "Dec" but template only has "Dec (YY)" block
+                            target = next(k for k in _sorted_template_months if k.startswith("Dec ("))
                         elif _sorted_template_months:
                             target = _sorted_template_months[0]
                             print(

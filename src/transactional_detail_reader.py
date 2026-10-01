@@ -861,7 +861,7 @@ class TransactionalDetailReader:
             if type_name in ["Actual", "ER", "Reclass"]:
                 result[key][write_month]["Actual"] = result[key][write_month].get("Actual", 0) + value
             elif type_name in ["Accrual", "Reversal"]:
-                result[key][write_month][type_name] = value
+                result[key][write_month][type_name] = result[key][write_month].get(type_name, 0) + value
 
         # Sort months chronologically: prior-year December suffix first, then Jan–Dec.
         # The prior-year December key is dynamic e.g. "Dec (25)" — collect any such
