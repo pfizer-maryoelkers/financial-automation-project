@@ -887,13 +887,20 @@ class TransactionalDetailReader:
                 }
             }
 
-        # DEBUG — print first 3 PO keys so month placement is visible
-        print("DEBUG transactional_data sample:")
+        # DEBUG — print month placement for all POs, highlighting May/June accruals
+        print("DEBUG transactional_data sample (first 5 POs):")
         for i, (key, val) in enumerate(result.items()):
-            if i >= 3:
+            if i >= 5:
                 break
             months = {m: v for m, v in val.items() if m not in ('cost_center', 'wbs', 'gross_ber_total')}
             print(f"  {key}: {months}")
+        # Extra: show May/June accruals across ALL POs so mismatches are visible
+        print("DEBUG May/June Accruals across all POs:")
+        for key, val in result.items():
+            may_accrual = val.get('May', {}).get('Accrual', 0)
+            jun_accrual = val.get('Jun', {}).get('Accrual', 0)
+            if may_accrual or jun_accrual:
+                print(f"  PO {key}: May Accrual={may_accrual}, Jun Accrual={jun_accrual}")
 
         return result
     
