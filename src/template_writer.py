@@ -645,9 +645,6 @@ class TemplateWriter:
             col_map[month_key][matched_metric] = get_column_letter(col_idx)
 
         if col_map:
-            print("DEBUG column_map:")
-            for m, cols in col_map.items():
-                print(f"  {m}: { {k: v for k, v in cols.items()} }")
             return col_map
 
         # ----------------------------------------------------------------
