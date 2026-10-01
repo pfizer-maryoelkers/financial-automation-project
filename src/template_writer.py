@@ -72,12 +72,16 @@ def _append_comment(existing_comment: Comment | None, new_text: str) -> Comment:
 
 
 def month_sort_key(month_str):
-    """Convert month string to sortable key for proper chronological ordering"""
+    """Convert month string to sortable key for proper chronological ordering.
+    Keys like 'Dec (25)' (prior-year December with year suffix) sort before January."""
     month_order = {
         'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
         'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
         'Unknown': 13
     }
+    # Any "Dec (YY)" key sorts before January
+    if month_str.startswith('Dec ('):
+        return 0
     return month_order.get(month_str, 13)
 
 
@@ -533,10 +537,11 @@ class TemplateWriter:
                 if "contact for po" in text:
                     return r
                 # Strategy 2 — metric+month header cell
+                # Scan every token for a month alias (handles "Actual Dec (25)" etc.)
                 for kw in _metric_kws:
                     if text.startswith(kw):
                         words = text.split()
-                        if words and words[-1].rstrip('.,') in _month_kws:
+                        if any(w.rstrip('.,()') in _month_kws for w in words):
                             metric_month_hits += 1
                         break
             if metric_month_hits >= 2:
@@ -550,10 +555,6 @@ class TemplateWriter:
         The header row contains cells like 'Forecast Jan', 'Accrual Reversal Dec',
         'Actual   Feb', etc.  We parse each cell to extract the metric keyword and
         the month keyword, normalise both, and record the column letter.
-
-        The first 'Accrual Reversal Dec' column (col N in the current template) is
-        the prior-year December accrual reversal — mapped to the key 'Dec (PY)' so
-        it stays distinct from the current-year 'Dec' block.
 
         Falls back to the old fixed-offset arithmetic if no header cells are found
         (e.g. a blank template that hasn't been opened in Excel yet).
@@ -587,12 +588,30 @@ class TemplateWriter:
             if matched_metric is None:
                 continue
 
-            # Extract the month word (last token in the cell text)
+            # Extract month key from the cell text.
+            # Scan every token for the first known month alias, then check if any
+            # subsequent token is a year-suffix in parentheses like "(25)" or "(2025)".
+            # "Actual Dec (25)"  → month_key = "Dec (25)"
+            # "Actual Dec"       → month_key = "Dec"
+            # "Forecast Jan"     → month_key = "Jan"
             words = text.split()
-            month_word = words[-1].lower().rstrip('.,').strip() if words else ""
-            month_key = self._HEADER_MONTH_ALIASES.get(month_word)
+            month_key = None
+            year_suffix = None
+            for i, word in enumerate(words):
+                candidate = word.lower().rstrip('.,()').strip()
+                if self._HEADER_MONTH_ALIASES.get(candidate) is not None:
+                    month_key = self._HEADER_MONTH_ALIASES[candidate]
+                    # Look ahead for a year-in-parens token e.g. "(25)" or "(2025)"
+                    for ahead in words[i + 1:]:
+                        ahead_stripped = ahead.strip()
+                        if ahead_stripped.startswith('(') and ahead_stripped.endswith(')'):
+                            year_suffix = ahead_stripped  # e.g. "(25)"
+                        break
+                    break
             if month_key is None:
                 continue
+            if year_suffix:
+                month_key = f"{month_key} {year_suffix}"  # e.g. "Dec (25)"
 
             if month_key not in col_map:
                 col_map[month_key] = {}

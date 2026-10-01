@@ -816,23 +816,24 @@ class TransactionalDetailReader:
             if month_num is None:
                 continue
 
-            # Accrual Reversals are labelled in the template by the month of the
-            # original accrual, not the month they post.  A reversal in AP02
-            # (February) cancels the January accrual, so it belongs in the "Jan"
-            # column (Accrual Reversal Jan).  Shift back by one month.
-            # AP01 reversals (rev_num == 0) are dropped — we only track Jan–Dec of
-            # the current year and do not maintain a prior-year December column.
+            # Actuals (Actual, ER, Reclass) and Reversals shift back one month:
+            # AP posted in period N reflects activity from period N-1.
+            # AP01 → "Dec (25)" (the prior-year December column), AP02 → Jan, … AP12 → Nov.
             #
-            # All other types (Actual, Accrual, Reclass, ER) map directly:
-            # AP01 = Jan, AP02 = Feb, … AP12 = Dec.  Prior-year December rows
-            # (AP12 of a year earlier than the current year) are skipped.
-            if type_name == "Reversal":
-                rev_num = month_num - 1
-                if rev_num == 0:
-                    continue  # January reversal cancels prior-year Dec — skip
-                write_month = self.month_map.get(rev_num)
+            # Accruals map directly: AP01 = Jan, AP02 = Feb, … AP12 = Dec.
+            # Prior-year data (AP12 of a year < current_year) is skipped.
+            if type_name in ("Actual", "ER", "Reclass", "Reversal"):
+                shifted_num = month_num - 1
+                if shifted_num == 0:
+                    # AP01 of the current year → prior-year December column.
+                    # The year suffix matches the prior year (current_year - 1), shortened to 2 digits.
+                    # e.g. current_year=2026 → "Dec (25)"; current_year=2027 → "Dec (26)"
+                    py = (current_year - 1) if current_year else None
+                    write_month = f"Dec ({str(py)[2:]})" if py else "Dec"
+                else:
+                    write_month = self.month_map.get(shifted_num)
             elif month_num == 12 and current_year is not None and ap_year is not None and ap_year < current_year:
-                continue  # prior-year December — skip
+                continue  # prior-year December Accrual — skip, same as any prior-year data
             else:
                 write_month = self.month_map.get(month_num)
 
@@ -862,8 +863,15 @@ class TransactionalDetailReader:
             elif type_name in ["Accrual", "Reversal"]:
                 result[key][write_month][type_name] = value
 
-        # Sort months chronologically: Jan–Dec.
-        month_order = [
+        # Sort months chronologically: prior-year December suffix first, then Jan–Dec.
+        # The prior-year December key is dynamic e.g. "Dec (25)" — collect any such
+        # keys present in any PO bucket and sort them before January.
+        _py_dec_keys = sorted({
+            m for vals in result.values()
+            for m in vals
+            if isinstance(m, str) and m.startswith("Dec (")
+        })
+        month_order = _py_dec_keys + [
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ]
@@ -943,11 +951,8 @@ class TransactionalDetailReader:
             reclass_rows[self.colmap["amount"]], errors='coerce'
         ).fillna(0.0)
 
-        # Determine current year for Dec (PY) detection.
-        _month_col = self.colmap["month"]
-        _parsed_years = reclass_rows[_month_col].apply(lambda v: self._parse_ap(v)[1])
-        _known_years = _parsed_years.dropna()
-        _current_year = int(_known_years.max()) if not _known_years.empty else None
+        _parsed_years = reclass_rows[self.colmap["month"]].apply(lambda v: self._parse_ap(v)[1])
+        _current_year = int(_parsed_years.dropna().max()) if not _parsed_years.dropna().empty else None
 
         result = {}
         for _, row in reclass_rows.iterrows():
@@ -956,16 +961,18 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            month_num, ap_year = self._parse_ap(raw_month)
+            month_num, _ = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
-            # Direct mapping: AP01 = Jan … AP12 = Dec.
-            # Prior-year December → "Dec (PY)".
-            if month_num == 12 and _current_year is not None and ap_year is not None and ap_year < _current_year:
-                month_label = "Dec (PY)"
+            # Shift back one month: AP01 → "Dec (YY)", AP02 → Jan, …
+            # e.g. current_year=2026 → "Dec (25)"; current_year=2027 → "Dec (26)"
+            shifted_num = month_num - 1
+            if shifted_num == 0:
+                py = (_current_year - 1) if _current_year else None
+                month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
             else:
-                month_label = self.month_map.get(month_num)
+                month_label = self.month_map.get(shifted_num)
             if not month_label:
                 continue
 
@@ -1003,11 +1010,8 @@ class TransactionalDetailReader:
             reclass_po_rows[self.colmap["amount"]], errors='coerce'
         ).fillna(0.0)
 
-        # Determine current year for Dec (PY) detection.
-        _rn_month_col = self.colmap["month"]
-        _rn_parsed_years = reclass_po_rows[_rn_month_col].apply(lambda v: self._parse_ap(v)[1])
-        _rn_known_years = _rn_parsed_years.dropna()
-        _rn_current_year = int(_rn_known_years.max()) if not _rn_known_years.empty else None
+        _rn_parsed_years = reclass_po_rows[self.colmap["month"]].apply(lambda v: self._parse_ap(v)[1])
+        _rn_current_year = int(_rn_parsed_years.dropna().max()) if not _rn_parsed_years.dropna().empty else None
 
         result = {}
         for _, row in reclass_po_rows.iterrows():
@@ -1016,16 +1020,18 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            month_num, ap_year = self._parse_ap(raw_month)
+            month_num, _ = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
-            # Direct mapping: AP01 = Jan … AP12 = Dec.
-            # Prior-year December → "Dec (PY)".
-            if month_num == 12 and _rn_current_year is not None and ap_year is not None and ap_year < _rn_current_year:
-                month_label = "Dec (PY)"
+            # Shift back one month: AP01 → "Dec (YY)", AP02 → Jan, …
+            # e.g. current_year=2026 → "Dec (25)"; current_year=2027 → "Dec (26)"
+            shifted_num = month_num - 1
+            if shifted_num == 0:
+                py = (_rn_current_year - 1) if _rn_current_year else None
+                month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
             else:
-                month_label = self.month_map.get(month_num)
+                month_label = self.month_map.get(shifted_num)
 
             po_key = po
             if po_key not in result and po_key.replace('.', '', 1).replace('-', '', 1).isdigit():

@@ -273,12 +273,43 @@ class ForecastReader:
         # Identify forecast columns (those ending with '- FTotal')
         forecast_cols = [col for col in self.data.columns if col.endswith('- FTotal')]
 
-        # Normalize month names (e.g., 'Jan', 'Feb', 'Mar')
-        month_map = {}
+        # Parse each FTotal column into (month_abbr, year).
+        # Example: "Dec 2025 - FTotal" → ("Dec", 2025)
+        #          "Dec 2026 - FTotal" → ("Dec", 2026)
+        # When two columns share the same 3-letter month name (e.g. two Decembers
+        # from adjacent years), keep only the one whose year is the maximum year
+        # present across all FTotal columns — that is the current budget year.
+        import re as _re
+        _col_meta: list[tuple[str, str, int | None]] = []  # (col, month_abbr, year)
         for col in forecast_cols:
-            # Example: "Jan 2025 - FTotal" → "Jan"
-            month_name = col.split()[0][:3]  # Take first 3 letters for consistency
-            month_map[col] = month_name
+            parts = col.split()
+            month_abbr = parts[0][:3]
+            year: int | None = None
+            for part in parts:
+                m = _re.fullmatch(r'\d{4}', part)
+                if m:
+                    year = int(part)
+                    break
+            _col_meta.append((col, month_abbr, year))
+
+        # Determine the current budget year (maximum year seen across all columns).
+        _years = [y for _, _, y in _col_meta if y is not None]
+        _budget_year = max(_years) if _years else None
+
+        # Build month_map: for each 3-letter month, prefer the column whose year
+        # matches _budget_year; if no year info exists, take first seen.
+        month_map: dict[str, str] = {}  # col → month_abbr (only kept columns)
+        _month_to_col: dict[str, str] = {}  # month_abbr → winning col
+        for col, month_abbr, year in _col_meta:
+            if month_abbr not in _month_to_col:
+                _month_to_col[month_abbr] = col
+            elif _budget_year is not None and year == _budget_year:
+                # A later December (or any month) for the budget year wins
+                _month_to_col[month_abbr] = col
+        month_map = {col: abbr for abbr, col in _month_to_col.items()}
+
+        # Restrict forecast_cols to only the winning columns
+        forecast_cols = list(month_map.keys())
 
         # Normalize numeric data
         for col in forecast_cols:
