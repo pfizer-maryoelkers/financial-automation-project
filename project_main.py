@@ -100,6 +100,17 @@ def main():
     )
     template_writer.write_hierarchy(hierarchy, pos=pos)
 
+    # Restrict the exception sheet to only the P3 IDs explicitly listed in
+    # the template's mapping section or the config p3_ids list — not all IDs
+    # discovered from transactional data when the template was blank.
+    _template_p3_ids = set(template_reader.p3_wbs_map.keys())
+    if not _template_p3_ids:
+        # Blank template — fall back to the configured p3_ids list if provided
+        _config_p3_ids = config.get('template', {}).get('p3_ids') or []
+        _template_p3_ids = set(_config_p3_ids)
+    if _template_p3_ids:
+        template_writer._hierarchy_ids = _template_p3_ids
+
     # ── Step 4: Exception reporting ───────────────────────────────────────
     print("Step 4: Writing exception reports\n")
     exception_log.summary()
