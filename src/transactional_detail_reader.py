@@ -308,17 +308,14 @@ class TransactionalDetailReader:
                     rename[alias] = project_name_target
                     break
 
-        # ── Classifier (AP Voucher Number) ───────────────────────────────────
-        # Vendor Invoice is the real classifier for the Consolidated format
-        # (2=Accrual/Reversal, 5=Invoice/Actual, 9=Reclass).  When it exists,
-        # always prefer it over anything already in cls_target (which may have
-        # been filled from the PO column above).
-        if 'Vendor Invoice' in df.columns:
-            if 'Vendor Invoice' not in rename.values():  # not already being renamed
-                df = df.copy()
-                df[cls_target] = df['Vendor Invoice']
-        elif cls_target not in df.columns:
-            for alias in ('AP Voucher Number',):
+        # ── Classifier (Vendor Invoice # / AP Voucher Number) ────────────────
+        # "Vendor Invoice #" is the primary classifier column name in the
+        # C-TIES format.  "Vendor Invoice" is used by the Consolidated format.
+        # Both carry the same 2/5/9 prefix convention.
+        # When the column name already matches cls_target nothing is needed;
+        # otherwise rename the first alias found to the configured target.
+        if cls_target not in df.columns:
+            for alias in ('Vendor Invoice #', 'Vendor Invoice', 'AP Voucher Number'):
                 if alias in df.columns:
                     rename[alias] = cls_target
                     break
@@ -370,8 +367,8 @@ class TransactionalDetailReader:
             _swap(['Amount - BER', 'Amount - MAR', 'Amount'], self.colmap.get('amount', 'GL BER Corp Amount'))
 
         _swap(['GL Transaction Amount', 'Amount - BER', 'Amount'], 'GL Transaction Amount')
-        _swap(['Vendor Invoice', 'AP Voucher Number', 'Document Number / PO#', 'Document num/PO#'],
-              self.colmap.get('classifier', 'AP Voucher Number'))
+        _swap(['Vendor Invoice #', 'Vendor Invoice', 'AP Voucher Number', 'Document Number / PO#', 'Document num/PO#'],
+              self.colmap.get('classifier', 'Vendor Invoice #'))
 
         # Treat any required col that matches a normalised alias as satisfied.
         # Also ensure Type is considered present — Consolidated synthesises it.
@@ -482,9 +479,13 @@ class TransactionalDetailReader:
             # _normalise_cols fills a synthetic all-'Actual' column when the
             # source has no Type column at all (both Consolidated variants).
             # That synthetic fill does NOT count as "supplied" — we re-classify.
+            # Re-classify when the only Type values are synthetic 'Actual' placeholders
+            # (set by _normalise_cols when the source has no real Type column) AND a
+            # classifier column is present so we can do a proper prefix-based classification.
+            _cls_col = self.colmap.get('classifier', 'Vendor Invoice #')
             type_was_present = type_col in self.data.columns and not (
                 (self.data[type_col] == 'Actual').all()
-                and 'AP Voucher Number' in self.data.columns
+                and _cls_col in self.data.columns
             )
             if not type_was_present:
                 self.data[type_col] = self._categorize()

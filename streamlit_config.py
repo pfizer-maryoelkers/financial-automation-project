@@ -40,7 +40,7 @@ class TransactionalConfig:
         'po': 'PO Number',
         'month': 'Accounting Period',
         'amount': 'GL BER Corp Amount',
-        'classifier': 'AP Voucher Number',
+        'classifier': 'Vendor Invoice #',
         'cost_center': 'Cost Center*',
         'wbs': 'WBS Element',
         'legal_entity': 'Legal Entity',
@@ -66,7 +66,7 @@ class WriterConfig:
         "Oct 2026 - FTotal", "Nov 2026 - FTotal", "Dec 2026 - FTotal"
     ])
     transactional_source_cols: List[str] = field(default_factory=lambda: [
-        "PO Number", "Accounting Period", "AP Voucher Number",
+        "PO Number", "Accounting Period", "Vendor Invoice #",
         "Vendor Name", "WBS Element", "GL Invoice Date",
         "GL Posting Date", "GL Line Description", "Description",
         "GL Transaction Amount", "GL BER Corp Amount",

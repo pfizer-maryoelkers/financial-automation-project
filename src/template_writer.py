@@ -1615,6 +1615,7 @@ class TemplateWriter:
         if is_project:
             header_remap = {
                 'Accounting Period': 'Fiscal Year/Period',
+                'Vendor Invoice #':  'Vendor Invoice',
                 'AP Voucher Number': 'Vendor Invoice',
                 'PO Number':         'Document num/PO#',
             }
@@ -1804,7 +1805,7 @@ class TemplateWriter:
                 if val.lower() in _BLANK_FILTER:
                     val = ''
                 if not val and e.source_row_data:
-                    for _k in ('PO Number', 'AP Voucher Number'):
+                    for _k in ('PO Number', 'Vendor Invoice #', 'AP Voucher Number'):
                         _c = str(e.source_row_data.get(_k) or '').strip()
                         if _c and _c.lower() not in _BLANK_FILTER:
                             val = _c

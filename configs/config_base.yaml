@@ -32,7 +32,7 @@ transactional_detail_reader:
     po: "PO Number"
     month: "Accounting Period"
     amount: "GL BER Corp Amount"
-    classifier: "AP Voucher Number"
+    classifier: "Vendor Invoice #"
     cost_center: "Cost Center*"
     wbs: "WBS Element"
     legal_entity: "Legal Entity"
@@ -65,7 +65,7 @@ template_writer:
   transactional_source_cols:
     - "PO Number"
     - "Accounting Period"
-    - "AP Voucher Number"
+    - "Vendor Invoice #"
     - "Vendor Name"
     - "WBS Element"
     - "GL Invoice Date"

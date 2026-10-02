@@ -502,7 +502,7 @@ def render_config_section():
                 config.template_writer.transactional_source_cols = st.multiselect(
                     "trans_cols_label",
                     options=[
-                        "PO Number", "Accounting Period", "AP Voucher Number",
+                        "PO Number", "Accounting Period", "Vendor Invoice #",
                         "Vendor Name", "WBS Element", "GL Invoice Date",
                         "GL Posting Date", "GL Line Description", "Description",
                         "GL Transaction Amount", "GL BER Corp Amount",
