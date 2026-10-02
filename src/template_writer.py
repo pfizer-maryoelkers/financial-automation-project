@@ -73,15 +73,18 @@ def _append_comment(existing_comment: Comment | None, new_text: str) -> Comment:
 
 def month_sort_key(month_str):
     """Convert month string to sortable key for proper chronological ordering.
-    Keys like 'Dec (25)' (prior-year December with year suffix) sort before January."""
+    Prior-year suffixed keys like 'Nov (25)' and 'Dec (25)' sort before January,
+    in calendar order (Nov before Dec)."""
     month_order = {
         'Jan': 1, 'Feb': 2, 'Mar': 3, 'Apr': 4, 'May': 5, 'Jun': 6,
         'Jul': 7, 'Aug': 8, 'Sep': 9, 'Oct': 10, 'Nov': 11, 'Dec': 12,
         'Unknown': 13
     }
-    # Any "Dec (YY)" key sorts before January
+    # "Nov (YY)" and "Dec (YY)" sort before January, in calendar order
+    if month_str.startswith('Nov ('):
+        return -1   # Nov (25) before Dec (25)
     if month_str.startswith('Dec ('):
-        return 0
+        return 0    # Dec (25) before Jan
     return month_order.get(month_str, 13)
 
 
@@ -1399,13 +1402,19 @@ class TemplateWriter:
                     # Also remap po.reclass_adjustments keys to the same target month.
                     _write_data: dict[str, MonthlyMetrics] = {}
                     _reclass_map: dict[str, list] = {}  # target_month → combined reclass entries
-                    # Build a lookup so "Dec (25)" data finds "Dec (25)" column, and
-                    # plain "Dec" data finds "Dec" column. If the exact key is missing,
-                    # try the base month name (strip the year suffix) before falling back.
+                    # Build a lookup so suffixed keys ("Nov (25)", "Dec (25)") find the
+                    # matching suffixed column, and plain keys find plain columns.
+                    # Cross-fallbacks handle mismatches between old and new templates.
                     _col_map_keys = set(self.column_map.keys())
                     for month, metrics in po.monthly_data.items():
                         if month in _col_map_keys:
                             target = month
+                        elif month.startswith("Nov (") and "Nov" in _col_map_keys:
+                            # Reader emitted "Nov (25)" but template only has plain "Nov"
+                            target = "Nov"
+                        elif month == "Nov" and any(k.startswith("Nov (") for k in _col_map_keys):
+                            # Reader emitted "Nov" but template only has "Nov (YY)" block
+                            target = next(k for k in _sorted_template_months if k.startswith("Nov ("))
                         elif month.startswith("Dec (") and "Dec" in _col_map_keys:
                             # Reader emitted "Dec (25)" but template only has plain "Dec"
                             target = "Dec"

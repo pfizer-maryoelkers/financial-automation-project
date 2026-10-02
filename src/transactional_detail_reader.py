@@ -824,18 +824,23 @@ class TransactionalDetailReader:
 
             # Actuals (Actual, ER, Reclass) and Reversals shift back one month:
             # AP posted in period N reflects activity from period N-1.
-            # AP01 → "Dec (25)" (the prior-year December column), AP02 → Jan, … AP12 → Nov.
+            # AP01 → "Dec (25)", AP02 → Jan, … AP12 → "Nov (25)".
+            #
+            # AP01 and AP12 both cross into the prior fiscal year after shifting,
+            # so they receive a "(YY)" year suffix matching current_year - 1.
             #
             # Accruals map directly: AP01 = Jan, AP02 = Feb, … AP12 = Dec.
             # Prior-year data (AP12 of a year < current_year) is skipped.
             if type_name in ("Actual", "ER", "Reclass", "Reversal"):
                 shifted_num = month_num - 1
+                py = (current_year - 1) if current_year else None
+                py_suffix = f" ({str(py)[2:]})" if py else ""
                 if shifted_num == 0:
-                    # AP01 of the current year → prior-year December column.
-                    # The year suffix matches the prior year (current_year - 1), shortened to 2 digits.
-                    # e.g. current_year=2026 → "Dec (25)"; current_year=2027 → "Dec (26)"
-                    py = (current_year - 1) if current_year else None
-                    write_month = f"Dec ({str(py)[2:]})" if py else "Dec"
+                    # AP01 → prior-year December, e.g. "Dec (25)"
+                    write_month = f"Dec{py_suffix}" if py_suffix else "Dec"
+                elif shifted_num == 11:
+                    # AP12 → prior-year November, e.g. "Nov (25)"
+                    write_month = f"Nov{py_suffix}" if py_suffix else "Nov"
                 else:
                     write_month = self.month_map.get(shifted_num)
             elif month_num == 12 and current_year is not None and ap_year is not None and ap_year < current_year:
@@ -869,15 +874,18 @@ class TransactionalDetailReader:
             elif type_name in ["Accrual", "Reversal"]:
                 result[key][write_month][type_name] = result[key][write_month].get(type_name, 0) + value
 
-        # Sort months chronologically: prior-year December suffix first, then Jan–Dec.
-        # The prior-year December key is dynamic e.g. "Dec (25)" — collect any such
-        # keys present in any PO bucket and sort them before January.
-        _py_dec_keys = sorted({
-            m for vals in result.values()
-            for m in vals
-            if isinstance(m, str) and m.startswith("Dec (")
-        })
-        month_order = _py_dec_keys + [
+        # Sort months chronologically: prior-year suffixed keys first (Nov (25), Dec (25)),
+        # then Jan–Dec.  Collect all "(YY)" keys dynamically and sort them using
+        # month_sort_key so Nov (25) precedes Dec (25) precedes Jan.
+        _py_keys = sorted(
+            {
+                m for vals in result.values()
+                for m in vals
+                if isinstance(m, str) and (m.startswith("Nov (") or m.startswith("Dec ("))
+            },
+            key=lambda m: (0 if m.startswith("Nov (") else 1)
+        )
+        month_order = _py_keys + [
             "Jan", "Feb", "Mar", "Apr", "May", "Jun",
             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
         ]
