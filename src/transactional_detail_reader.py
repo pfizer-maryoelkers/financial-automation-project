@@ -674,13 +674,18 @@ class TransactionalDetailReader:
             )] = 'Actual'
 
         # ── Step 3: amount-sign fallback for anything still unresolved ───────
+        # Only negative amounts are classified as Reversal here; all other
+        # unresolved rows default to Actual.  Accruals are identified reliably
+        # in Steps 1 and 2 via the "2" prefix or keyword match — using a
+        # positive-amount heuristic here would mis-classify actual invoices
+        # (which also carry positive amounts) as Accrual, causing them to be
+        # placed in the wrong month column (no shift applied).
         unset = result == 'Undefined'
         if unset.any():
             amt_col = self.colmap.get('amount', 'GL BER Corp Amount')
             if amt_col in df.columns:
                 amt = pd.to_numeric(df[amt_col], errors='coerce').fillna(0)
                 result[unset & (amt <  0)] = 'Reversal'
-                result[unset & (amt >  0)] = 'Accrual'
             result[result == 'Undefined'] = 'Actual'
 
         return result
