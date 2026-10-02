@@ -113,6 +113,7 @@ class TemplateWriter:
         self.po_column = po_column
         self._pos: dict = {}
         self._transactional_df = None
+        self._hierarchy_ids: set = set()  # top-level keys from write_hierarchy (CC or P3 IDs)
 
         # Dynamically locate the header row by scanning the sheet; the config
         # value is only used as a fallback when no header marker is found.
@@ -1263,6 +1264,9 @@ class TemplateWriter:
         Iterates CostCenter -> WBSCode -> PO and writes MonthlyMetrics to correct cells.
         Only writes to blank cells unless overwrite=True.
         '''
+        # Record the top-level keys (cost center IDs or P3 IDs) so write_exception_sheet
+        # can filter the exception tab to only show IDs that are on this template.
+        self._hierarchy_ids = set(hierarchy.keys())
         reclass_fill = PatternFill(start_color="FFFF99", end_color="FFFF99", fill_type="solid")
         comments_col = self._get_comments_col()
 
@@ -1715,8 +1719,10 @@ class TemplateWriter:
             # "On Template" column at the end.
 
             if transactional_df is not None and not transactional_df.empty:
-                # Collect every P3 ID that was processed by the pipeline.
-                known_p3_ids: set = {
+                # Use the P3 IDs that are actually on this template tab (set by
+                # write_hierarchy). Fall back to exception-log entries only if
+                # write_hierarchy hasn't been called yet.
+                known_p3_ids: set = self._hierarchy_ids if self._hierarchy_ids else {
                     str(e.cost_center).strip()
                     for e in exception_log.entries
                     if e.cost_center and str(e.cost_center).strip()
