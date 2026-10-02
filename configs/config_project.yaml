@@ -21,7 +21,7 @@ template:
   po_col: "B"
   po_stop_marker: "Previous Period Invoices"
   wbs_col: "A"
-  p3_id_col: "A"          # "A" = new OpEx layout; "B" = old paired WBS/P3 layout
+  p3_id_col: "B"          # "A" = new OpEx layout; "B" = old paired WBS/P3 layout
   wbs_start_row: 9        # row after the "Cost Center" / P3 header label
   # P3 IDs to process when the template WBS/P3 mapping section is blank.
   # Each value must match the Cost Center* column in the transactional detail file.
