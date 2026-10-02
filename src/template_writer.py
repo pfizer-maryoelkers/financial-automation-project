@@ -412,13 +412,15 @@ class TemplateWriter:
                 v = cell.value
                 if v is None:
                     continue
-                # Project template: keep PO Total column (col I) and Invoice Amount
-                # summary row blank — wipe any formula or value in those columns.
+                # Project template: wipe formulas and numeric values in the
+                # PO Total / Invoice Amount columns so the summary area stays
+                # clean — but never wipe text labels/titles in those columns.
                 if self.p3_id_column is not None and (
                     (self.po_value_col is not None and col == self.po_value_col)
                     or (self.po_total_col is not None and col == self.po_total_col)
                 ):
-                    cell.value = None
+                    if isinstance(v, (int, float)) or (isinstance(v, str) and v.startswith('=')):
+                        cell.value = None
                     continue
                 if isinstance(v, ArrayFormula):
                     new_text = _replace_range(v.text)
