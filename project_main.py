@@ -1,10 +1,20 @@
 """project_main.py
 Entry point for the CapEx / Project pipeline.
 
-Mirrors main.py but uses:
-  - ProjectTemplateReader  (groups by WBS root instead of Cost Center)
-  - build_project_hierarchy (from src/project_utils.py)
-  - configs/config_project.yaml
+New layout (v2):
+    The template workbook contains a sheet called "Enter All Your P3 IDs":
+        B4  = label "Enter All Your P3 IDs"
+        B5+ = P3 ID
+        C5+ = tab name for that P3 ID
+
+    For each P3 ID → tab pair the pipeline:
+      1. Clones the master template sheet into a fresh tab named by column C.
+      2. Runs build_project_hierarchy for that single P3 ID.
+      3. Writes the hierarchy into the cloned tab.
+      4. Writes exception data for that P3 ID.
+    All tabs are saved together in one output workbook at the end.
+
+Legacy layout (no "Enter All Your P3 IDs" sheet) still works as before.
 
 Usage:
     py project_main.py
@@ -32,7 +42,9 @@ transactional_reader = TransactionalDetailReader(
     colmap=config['transactional_detail_reader']['colmap'],
 )
 
-t = config['template']
+t  = config['template']
+tw = config['template_writer']
+
 template_reader = ProjectTemplateReader(
     file_path=t['file_path'],
     header_row=t['header_row'],
@@ -41,9 +53,9 @@ template_reader = ProjectTemplateReader(
     wbs_col=t.get('wbs_col', 'A'),
     p3_id_col=t.get('p3_id_col', 'B'),
     wbs_start_row=t.get('wbs_start_row', 9),
+    template_sheet_name=t.get('template_sheet_name'),
 )
 
-tw = config['template_writer']
 template_writer = TemplateWriter(
     file_path=t['file_path'],
     header_row=t['header_row'],
@@ -54,16 +66,16 @@ template_writer = TemplateWriter(
     forecast_source_cols=tw['forecast_source_cols'],
     transactional_source_cols=tw['transactional_source_cols'],
     p3_id_column=t.get('p3_id_col'),
+    template_sheet_name=t.get('template_sheet_name'),
 )
 
 
 def main():
     print("============  PROJECT PIPELINE  ============")
-    exception_log = ExceptionLog()
 
-    # ── Step 1: Load data ─────────────────────────────────────────────────
+    # ── Step 1: Load transactional + forecast data ────────────────────────
     print("Step 1: Loading data\n")
-    forecast_data   = forecast_reader.get_forecast_data()
+    forecast_data      = forecast_reader.get_forecast_data()
     print("Loaded forecast data\n")
 
     transactional_data = transactional_reader.get_transactional_data()
@@ -72,47 +84,106 @@ def main():
     intl_po_set        = transactional_reader.get_intl_po_set()
     print("Loaded transactional data\n")
 
-    # ── Step 2: Build project hierarchy ──────────────────────────────────
-    print("Step 2: Building project hierarchy\n")
     assert transactional_reader.data is not None, "Transactional data should be loaded"
 
-    hierarchy = build_project_hierarchy(
-        projects=template_reader.projects,
-        hierarchy_map=hierarchy_map,
-        transactional_data=transactional_data,
-        forecast_data=forecast_data,
-        exception_log=exception_log,
-        transactional_df=transactional_reader.data,
-        p3_wbs_map=template_reader.p3_wbs_map,
-        reclass_notes=reclass_notes,
-        template_pos=template_reader.pos,
-        intl_po_set=intl_po_set,
-        p3_ids=config.get('template', {}).get('p3_ids'),
-    )
+    # ── Step 2: Determine P3 ID → tab mapping ────────────────────────────
+    # New layout: config sheet gives explicit {p3_id: tab_name} pairs.
+    # Legacy layout: fall back to single-sheet processing.
+    p3_tab_map: dict[str, str] = template_reader.p3_tab_map
 
-    # ── Step 3: Write to template ─────────────────────────────────────────
-    print("Step 3: Writing template output\n")
-    pos = template_writer.insert_missing_po_rows(
-        hierarchy,
-        pos=template_reader.pos,
-        blank_po_rows=template_reader.blank_po_rows,
-        exception_log=exception_log,
-    )
-    template_writer.write_hierarchy(hierarchy, pos=pos)
+    if p3_tab_map:
+        print(f"Step 2: Processing {len(p3_tab_map)} P3 ID(s) across separate tabs\n")
+        all_exception_logs: list[tuple[str, ExceptionLog]] = []
 
-    # Restrict the exception sheet to only the P3 IDs explicitly listed in
-    # the template's mapping section (p3_wbs_map keys).  The config p3_ids
-    # list is NOT used here — it drives hierarchy building but must not
-    # expand the exception filter beyond what is physically on the template.
-    _template_p3_ids = set(template_reader.p3_wbs_map.keys())
-    if _template_p3_ids:
-        template_writer._hierarchy_ids = _template_p3_ids
+        for p3_id, tab_name in p3_tab_map.items():
+            print(f"  ── P3 ID: {p3_id}  →  tab: '{tab_name}' ──")
 
-    # ── Step 4: Exception reporting ───────────────────────────────────────
-    print("Step 4: Writing exception reports\n")
-    exception_log.summary()
-    template_writer.write_exception_data_sheet(exception_log)
-    template_writer.write_exception_sheet(exception_log, transactional_reader.data)
+            # ── 2a: Clone a fresh template sheet for this P3 ID ──────────
+            # clone_template_sheet deletes any existing tab with this name,
+            # copies the master blank template, and switches the writer to it.
+            template_writer.clone_template_sheet(tab_name)
+
+            # ── 2b: Build hierarchy for this single P3 ID ────────────────
+            exception_log = ExceptionLog()
+            single_p3_map = {p3_id: []}   # p3_wbs_map for this P3 only
+
+            hierarchy = build_project_hierarchy(
+                projects=template_reader.projects,
+                hierarchy_map=hierarchy_map,
+                transactional_data=transactional_data,
+                forecast_data=forecast_data,
+                exception_log=exception_log,
+                transactional_df=transactional_reader.data,
+                p3_wbs_map=single_p3_map,
+                reclass_notes=reclass_notes,
+                template_pos=template_reader.get_pos_for_sheet(tab_name),
+                intl_po_set=intl_po_set,
+                p3_ids=[p3_id],
+            )
+
+            # ── 2c: Write hierarchy into the cloned tab ───────────────────
+            pos = template_writer.insert_missing_po_rows(
+                hierarchy,
+                pos=template_reader.get_pos_for_sheet(tab_name),
+                blank_po_rows=template_reader.get_blank_po_rows_for_sheet(tab_name),
+                exception_log=exception_log,
+            )
+            template_writer.write_hierarchy(hierarchy, pos=pos)
+
+            # Restrict exception sheet filter to this P3 ID only
+            template_writer._hierarchy_ids = {p3_id}
+            all_exception_logs.append((p3_id, exception_log))
+
+        # ── Step 3: Write combined exception reports ──────────────────────
+        print("\nStep 3: Writing exception reports\n")
+        # Merge all exception logs into one for the shared exception sheets
+        merged_log = ExceptionLog()
+        for _p3_id, el in all_exception_logs:
+            for entry in el.entries:
+                merged_log.entries.append(entry)
+            merged_log._seen_keys.update(el._seen_keys)
+
+        merged_log.summary()
+        template_writer.write_exception_data_sheet(merged_log)
+        template_writer.write_exception_sheet(merged_log, transactional_reader.data)
+
+    else:
+        # ── Legacy single-sheet path ──────────────────────────────────────
+        print("Step 2: Building project hierarchy (legacy single-sheet mode)\n")
+        exception_log = ExceptionLog()
+
+        hierarchy = build_project_hierarchy(
+            projects=template_reader.projects,
+            hierarchy_map=hierarchy_map,
+            transactional_data=transactional_data,
+            forecast_data=forecast_data,
+            exception_log=exception_log,
+            transactional_df=transactional_reader.data,
+            p3_wbs_map=template_reader.p3_wbs_map,
+            reclass_notes=reclass_notes,
+            template_pos=template_reader.pos,
+            intl_po_set=intl_po_set,
+            p3_ids=config.get('template', {}).get('p3_ids'),
+        )
+
+        print("Step 3: Writing template output\n")
+        pos = template_writer.insert_missing_po_rows(
+            hierarchy,
+            pos=template_reader.pos,
+            blank_po_rows=template_reader.blank_po_rows,
+            exception_log=exception_log,
+        )
+        template_writer.write_hierarchy(hierarchy, pos=pos)
+
+        _template_p3_ids = set(template_reader.p3_wbs_map.keys())
+        if _template_p3_ids:
+            template_writer._hierarchy_ids = _template_p3_ids
+
+        print("Step 4: Writing exception reports\n")
+        exception_log.summary()
+        template_writer.write_exception_data_sheet(exception_log)
+        template_writer.write_exception_sheet(exception_log, transactional_reader.data)
+
     template_writer.save()
 
 

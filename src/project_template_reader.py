@@ -61,14 +61,23 @@ def wbs_charge_type(wbs: str) -> str:
 class ProjectTemplateReader:
     """Reads a project (CapEx) template.
 
-    The template lists WBS root codes in a designated column (defaulting to
-    column A) starting from a header marker row.  PO numbers are read from
-    a separate column (defaulting to column B) between the header row and a
-    stop marker.
+    New layout (v2):
+        Sheet "Enter All Your P3 IDs":
+            B4  = header label "Enter All Your P3 IDs"
+            B5+ = P3 ID values
+            C5+ = tab name for each P3 ID
 
-    This is structurally identical to TemplateReader but uses *WBS root codes*
-    as the top-level grouping key instead of cost center IDs.
+        One data sheet per P3 ID, named by the tab name in column C.
+        Each data sheet is a copy of the master template sheet.
+
+    Legacy layout (still supported via wbs_col / p3_id_col config):
+        Active sheet, WBS in col A, P3 ID in col B (or OpEx layout).
     """
+
+    CONFIG_SHEET = "Enter All Your P3 IDs"
+    CONFIG_P3_COL  = "B"   # P3 ID values start at B5
+    CONFIG_TAB_COL = "C"   # Tab name values start at C5
+    CONFIG_START_ROW = 5   # First data row (row 4 is the label)
 
     def __init__(
         self,
@@ -80,36 +89,147 @@ class ProjectTemplateReader:
         p3_id_col: str | None = None,
         wbs_start_row: int = 9,
         wbs_end_row: int | None = None,
+        template_sheet_name: str | None = None,
         **kwargs,
     ):
         self.wb = load_workbook(file_path)
-        self.sheet: Worksheet = self.wb.active  # type: ignore[assignment]
-        if self.sheet is None:
-            raise ValueError(f"Could not load active sheet from {file_path}")
-
-        # Dynamically detect the real header row; the config value is the fallback.
-        self.header_row = header_row
-        self.header_row = self._find_actual_header_row()
+        self.file_path = file_path
         self.po_col = po_col
         self.po_stop_marker = po_stop_marker
         self.wbs_col = wbs_col
-        self.p3_id_col = p3_id_col  # Column for P3 ID (e.g., "B")
+        self.p3_id_col = p3_id_col
         self.wbs_start_row = wbs_start_row
         self.wbs_end_row = wbs_end_row
 
-        # Read on init
-        self.p3_wbs_map = self._get_p3_wbs_mapping()  # {p3_id: [wbs_codes]}
-        # projects is derived from p3_wbs_map — the flat list of all WBS roots
+        # Determine which sheet is the master blank template to clone from.
+        if template_sheet_name and template_sheet_name in self.wb.sheetnames:
+            self._template_sheet_name = template_sheet_name
+        else:
+            # Use first non-config sheet as the template
+            non_config = [s for s in self.wb.sheetnames if s != self.CONFIG_SHEET]
+            self._template_sheet_name = non_config[0] if non_config else self.wb.sheetnames[0]
+
+        self.sheet: Worksheet = self.wb[self._template_sheet_name]  # type: ignore[assignment]
+        if self.sheet is None:
+            raise ValueError(f"Could not load template sheet from {file_path}")
+
+        # Dynamically detect the real header row from the template sheet.
+        self.header_row = header_row
+        self.header_row = self._find_actual_header_row()
+
+        # ── New layout: read P3 ID → tab name from the config sheet ──────
+        if self.CONFIG_SHEET in self.wb.sheetnames:
+            self.p3_tab_map: dict[str, str] = self._read_config_sheet()
+            # p3_wbs_map: each P3 ID has an empty WBS list (matched via cost_center)
+            self.p3_wbs_map: dict[str, list[str]] = {p: [] for p in self.p3_tab_map}
+        else:
+            # ── Legacy layout ────────────────────────────────────────────
+            self.p3_tab_map = {}
+            self.p3_wbs_map = self._get_p3_wbs_mapping()
+
         self.projects = list({
             extract_project_root(wbs)
             for wbs_list in self.p3_wbs_map.values()
             for wbs in wbs_list
         })
-        self.pos = self._get_existing_pos()
-        # Rows between header and stop marker where col B is blank — these are
-        # pre-formatted placeholder rows whose PO number can be filled from the
-        # transactional file rather than inserting a brand-new row.
-        self.blank_po_rows: list[int] = self._get_blank_po_rows()
+
+        # pos / blank_po_rows are per-sheet; populated per tab in main loop.
+        # Provide empty defaults so legacy callers still work.
+        self.pos: dict[str, int] = {}
+        self.blank_po_rows: list[int] = []
+        if not self.p3_tab_map:
+            # Legacy: read pos from the single active sheet
+            self.pos = self._get_existing_pos()
+            self.blank_po_rows = self._get_blank_po_rows()
+
+    # ------------------------------------------------------------------
+    # Config sheet reader (new layout)
+    # ------------------------------------------------------------------
+
+    def _read_config_sheet(self) -> dict[str, str]:
+        """Read P3 ID → tab name pairs from the 'Enter All Your P3 IDs' sheet.
+
+        Layout:
+            B4  = label (ignored)
+            B5+ = P3 ID
+            C5+ = tab name
+        Stops at the first row where B is blank.
+        """
+        ws = self.wb[self.CONFIG_SHEET]
+        mapping: dict[str, str] = {}
+        row = self.CONFIG_START_ROW
+        max_row = ws.max_row or 1000
+        while row <= max_row:
+            p3_val  = ws[f"{self.CONFIG_P3_COL}{row}"].value
+            tab_val = ws[f"{self.CONFIG_TAB_COL}{row}"].value
+            p3_text  = str(p3_val).strip()  if p3_val  is not None else ""
+            tab_text = str(tab_val).strip() if tab_val is not None else ""
+            if not p3_text:
+                break
+            if tab_text:
+                mapping[p3_text] = tab_text
+            else:
+                # Use the P3 ID itself as the tab name if column C is blank
+                mapping[p3_text] = p3_text
+            row += 1
+        print(
+            f"Config sheet '{self.CONFIG_SHEET}': found {len(mapping)} P3 ID(s): "
+            + ", ".join(f"{p}→{t}" for p, t in mapping.items())
+        )
+        return mapping
+
+    def get_pos_for_sheet(self, sheet_name: str) -> dict[str, int]:
+        """Return existing PO → row mapping from a named sheet."""
+        ws = self.wb[sheet_name]
+        stop_row = self._find_stop_row_on(ws)
+        # Detect header row on this sheet
+        hr = self._find_actual_header_row_on(ws)
+        pos: dict[str, int] = {}
+        row = hr + 1
+        while row < stop_row:
+            val = ws[f"{self.po_col}{row}"].value
+            if val is not None:
+                s = str(val).strip()
+                if s and s.lower() != "none":
+                    if s.replace('.', '', 1).replace('-', '', 1).isdigit():
+                        try:
+                            s = str(int(float(s)))
+                        except (ValueError, OverflowError):
+                            pass
+                    pos[s] = row
+            row += 1
+        return pos
+
+    def get_blank_po_rows_for_sheet(self, sheet_name: str) -> list[int]:
+        """Return blank PO row numbers from a named sheet."""
+        ws = self.wb[sheet_name]
+        stop_row = self._find_stop_row_on(ws)
+        hr = self._find_actual_header_row_on(ws)
+        blank_rows: list[int] = []
+        for row in range(hr + 1, stop_row):
+            val = ws[f"{self.po_col}{row}"].value
+            if val is None or str(val).strip() == "" or str(val).strip().lower() == "none":
+                blank_rows.append(row)
+        return blank_rows
+
+    def _find_stop_row_on(self, ws) -> int:
+        max_row = ws.max_row or 1000
+        for r in range(1, max_row + 1):
+            if ws[f"A{r}"].value == self.po_stop_marker:
+                return r
+        return max_row + 1
+
+    def _find_actual_header_row_on(self, ws) -> int:
+        max_col = ws.max_column or 50
+        max_row = ws.max_row or 1000
+        for r in range(1, max_row + 1):
+            for c in range(1, max_col + 1):
+                v = ws.cell(row=r, column=c).value
+                if v is None:
+                    continue
+                if "contact for po" in str(v).strip().lower():
+                    return r
+        return self.header_row  # fallback
 
     # ------------------------------------------------------------------
     # Dynamic header detection

@@ -23,8 +23,12 @@ template:
   wbs_col: "A"
   p3_id_col: "B"          # "A" = new OpEx layout; "B" = old paired WBS/P3 layout
   wbs_start_row: 9        # row after the "Cost Center" / P3 header label
-  # P3 IDs to process when the template WBS/P3 mapping section is blank.
-  # Each value must match the Cost Center* column in the transactional detail file.
+  # Name of the master blank template sheet to clone for each P3 ID.
+  # The pipeline copies this sheet for every P3 ID → tab pair defined in
+  # the "Enter All Your P3 IDs" config sheet.
+  # Leave blank to auto-detect (first non-config sheet in the workbook).
+  template_sheet_name: "Sheet1"
+  # Legacy fallback: explicit P3 IDs when no config sheet is present.
   p3_ids:
     - "P325-0015419"
     - "P324-0013567"

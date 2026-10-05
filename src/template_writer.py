@@ -101,9 +101,22 @@ class TemplateWriter:
         forecast_source_cols,
         transactional_source_cols,
         p3_id_column: str | None = None,
+        template_sheet_name: str | None = None,
     ):
         self.wb = load_workbook(file_path)
-        self.sheet: Worksheet = self.wb.active  # type: ignore[assignment]
+        self._file_path = file_path          # kept for clone operations
+        self._header_row_config = header_row  # original config value, used as fallback
+        self._p3_id_column_raw = p3_id_column
+
+        # The sheet we treat as the canonical blank template to clone from.
+        # Defaults to the active sheet; can be overridden via template_sheet_name.
+        if template_sheet_name and template_sheet_name in self.wb.sheetnames:
+            self._template_sheet_name: str = template_sheet_name
+        else:
+            active = self.wb.active
+            self._template_sheet_name = active.title if active else self.wb.sheetnames[0]
+
+        self.sheet: Worksheet = self.wb[self._template_sheet_name]  # type: ignore[assignment]
         if self.sheet is None:
             raise ValueError(
                 f"Could not load active sheet from the template file '{file_path}'. "
@@ -149,6 +162,70 @@ class TemplateWriter:
         self.po_status_col = self._get_col_by_header("po status")
         self.legal_entity_col = self._get_col_by_header("legal entity")
         self.country_col = self._get_col_by_header("country")
+
+    # ------------------------------------------------------------------
+    # Per-tab sheet management (project pipeline)
+    # ------------------------------------------------------------------
+
+    def clone_template_sheet(self, tab_name: str) -> None:
+        """Copy the canonical template sheet into a new sheet named *tab_name*.
+
+        If a sheet with *tab_name* already exists it is deleted first so the
+        tab is always a fresh copy of the blank template.  After cloning,
+        ``switch_sheet`` is called so the writer immediately targets the new tab.
+
+        The canonical template sheet (``self._template_sheet_name``) is never
+        deleted — it serves as the master blank to clone from for every P3 ID.
+        """
+        # Remove existing tab with this name if present (keep template intact)
+        if tab_name in self.wb.sheetnames and tab_name != self._template_sheet_name:
+            del self.wb[tab_name]
+
+        # Copy the template sheet and rename it
+        cloned: Worksheet = self.wb.copy_worksheet(self.wb[self._template_sheet_name])  # type: ignore[assignment]
+        cloned.title = tab_name
+
+        # Move the cloned sheet to sit just after the template sheet
+        template_idx = self.wb.sheetnames.index(self._template_sheet_name)
+        current_idx  = self.wb.sheetnames.index(tab_name)
+        self.wb.move_sheet(tab_name, offset=template_idx - current_idx + 1)
+
+        # Retarget the writer at the newly cloned sheet
+        self.switch_sheet(tab_name)
+
+    def switch_sheet(self, tab_name: str) -> None:
+        """Retarget the writer at an existing sheet named *tab_name*.
+
+        Re-derives all header-row-dependent attributes (column_map, header_row,
+        etc.) from the new sheet so that every subsequent write operation lands
+        in the correct tab.
+        """
+        if tab_name not in self.wb.sheetnames:
+            raise ValueError(
+                f"Sheet '{tab_name}' not found in workbook. "
+                f"Available sheets: {self.wb.sheetnames}"
+            )
+        self.sheet = self.wb[tab_name]  # type: ignore[assignment]
+
+        # Reset per-sheet state
+        self._pos = {}
+        self._hierarchy_ids = set()
+        self.header_row = self._header_row_config
+        self.header_row = self._find_actual_header_row()
+        self.p3_id_column = (
+            column_index_from_string(self._p3_id_column_raw)
+            if self._p3_id_column_raw else None
+        )
+        self.column_map   = self.get_column_map(starting_col=self.dec_acc_reversal_col)
+        self.total_col    = self._get_total_col()
+        self.po_value_col = self._get_po_value_col()
+        self.po_total_col = self._get_po_total_col()
+        self.req_title_cols     = self._get_req_title_cols()
+        self.project_name_col   = self._get_col_by_header("project name")
+        self.po_status_col      = self._get_col_by_header("po status")
+        self.legal_entity_col   = self._get_col_by_header("legal entity")
+        self.country_col        = self._get_col_by_header("country")
+        print(f"  Writer switched to sheet '{tab_name}' (header row {self.header_row}).")
 
     @staticmethod
     def _norm_po(v) -> str:
