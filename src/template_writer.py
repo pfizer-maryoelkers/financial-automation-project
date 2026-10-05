@@ -168,29 +168,72 @@ class TemplateWriter:
     # ------------------------------------------------------------------
 
     def clone_template_sheet(self, tab_name: str) -> None:
-        """Copy the canonical template sheet into a new sheet named *tab_name*.
+        """Copy the canonical template sheet into a fresh blank tab named *tab_name*.
 
-        If a sheet with *tab_name* already exists it is deleted first so the
-        tab is always a fresh copy of the blank template.  After cloning,
-        ``switch_sheet`` is called so the writer immediately targets the new tab.
-
-        The canonical template sheet (``self._template_sheet_name``) is never
-        deleted — it serves as the master blank to clone from for every P3 ID.
+        Steps:
+          1. Delete any existing tab with *tab_name* (always start fresh).
+          2. Copy the master template sheet (``self._template_sheet_name``).
+          3. Wipe every PO data row in the clone — i.e. every row between the
+             column-header row and the 'Previous Period Invoices' stop marker —
+             so only the structural rows (summary area, column headers, stop
+             marker) remain.  The master template sheet is never touched.
+          4. Call ``switch_sheet`` so the writer targets the clean clone.
         """
-        # Remove existing tab with this name if present (keep template intact)
+        # ── 1. Remove any stale tab ───────────────────────────────────────
         if tab_name in self.wb.sheetnames and tab_name != self._template_sheet_name:
             del self.wb[tab_name]
 
-        # Copy the template sheet and rename it
+        # ── 2. Copy the master template sheet ────────────────────────────
         cloned: Worksheet = self.wb.copy_worksheet(self.wb[self._template_sheet_name])  # type: ignore[assignment]
         cloned.title = tab_name
 
-        # Move the cloned sheet to sit just after the template sheet
+        # Move the cloned sheet to sit just after the master template sheet
         template_idx = self.wb.sheetnames.index(self._template_sheet_name)
         current_idx  = self.wb.sheetnames.index(tab_name)
         self.wb.move_sheet(tab_name, offset=template_idx - current_idx + 1)
 
-        # Retarget the writer at the newly cloned sheet
+        # ── 3. Wipe data rows — keep structure, clear PO values ───────────
+        # Detect the header row and stop-marker row on the cloned sheet so we
+        # know exactly which rows to clear without touching the summary area
+        # (rows 1..header_row) or the stop-marker row itself.
+        max_col = cloned.max_column or 200
+        max_row = cloned.max_row or 1000
+
+        # Find header row (contains "contact for po")
+        clone_header_row: int = self._header_row_config
+        for r in range(1, max_row + 1):
+            for c in range(1, max_col + 1):
+                v = cloned.cell(row=r, column=c).value
+                if v is not None and "contact for po" in str(v).strip().lower():
+                    clone_header_row = r
+                    break
+            else:
+                continue
+            break
+
+        # Find stop-marker row ("Previous Period Invoices" in col A)
+        stop_marker = "Previous Period Invoices"
+        clone_stop_row: int = max_row + 1
+        for r in range(clone_header_row + 1, max_row + 1):
+            if cloned.cell(row=r, column=1).value == stop_marker:
+                clone_stop_row = r
+                break
+
+        # Clear every cell in each data row (header+1 … stop_row-1)
+        for r in range(clone_header_row + 1, clone_stop_row):
+            for c in range(1, max_col + 1):
+                cell = cloned.cell(row=r, column=c)
+                cell.value = None
+                # Remove comments so stale annotations don't carry over
+                cell.comment = None
+
+        print(
+            f"  Cloned '{self._template_sheet_name}' → '{tab_name}': "
+            f"cleared rows {clone_header_row + 1}–{clone_stop_row - 1} "
+            f"(kept header row {clone_header_row} and structure)."
+        )
+
+        # ── 4. Retarget the writer at the newly cloned sheet ─────────────
         self.switch_sheet(tab_name)
 
     def switch_sheet(self, tab_name: str) -> None:
