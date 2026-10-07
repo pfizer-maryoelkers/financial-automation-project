@@ -20,6 +20,10 @@ Usage:
     py project_main.py
 """
 
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
+
 from src.utils import load_config
 from src.forecast_reader import ForecastReader
 from src.transactional_detail_reader import TransactionalDetailReader
@@ -40,6 +44,7 @@ transactional_reader = TransactionalDetailReader(
     required_cols=config['transactional_detail_reader']['required_cols'],
     valid_types=config['transactional_detail_reader']['valid_types'],
     colmap=config['transactional_detail_reader']['colmap'],
+    shift_months=config['transactional_detail_reader'].get('shift_months', True),
 )
 
 t  = config['template']
@@ -94,14 +99,22 @@ def main():
     if p3_tab_map:
         print(f"Step 2: Processing {len(p3_tab_map)} P3 ID(s) across separate tabs\n")
         all_exception_logs: list[tuple[str, ExceptionLog]] = []
+        all_p3_ids: set[str] = set()
 
         for p3_id, tab_name in p3_tab_map.items():
-            print(f"  ── P3 ID: {p3_id}  →  tab: '{tab_name}' ──")
+            # Sanitise the tab name before use so all callers see the same name.
+            tab_name = TemplateWriter._sanitise_tab_name(tab_name)
+            print(f"  -- P3 ID: {p3_id}  ->  tab: '{tab_name}' --")
 
             # ── 2a: Clone a fresh template sheet for this P3 ID ──────────
             # clone_template_sheet deletes any existing tab with this name,
             # copies the master blank template, and switches the writer to it.
             template_writer.clone_template_sheet(tab_name)
+
+            # Write the P3 ID into B2 on the cloned tab — this is the "corner"
+            # cell that identifies the P3 ID for this sheet, replacing the old
+            # workflow of typing it in manually.
+            template_writer.sheet["B2"] = p3_id
 
             # ── 2b: Build hierarchy for this single P3 ID ────────────────
             exception_log = ExceptionLog()
@@ -116,7 +129,7 @@ def main():
                 transactional_df=transactional_reader.data,
                 p3_wbs_map=single_p3_map,
                 reclass_notes=reclass_notes,
-                template_pos=template_reader.get_pos_for_sheet(tab_name),
+                template_pos={},   # cloned tab is always blank — no pre-existing POs
                 intl_po_set=intl_po_set,
                 p3_ids=[p3_id],
             )
@@ -124,17 +137,19 @@ def main():
             # ── 2c: Write hierarchy into the cloned tab ───────────────────
             pos = template_writer.insert_missing_po_rows(
                 hierarchy,
-                pos=template_reader.get_pos_for_sheet(tab_name),
-                blank_po_rows=template_reader.get_blank_po_rows_for_sheet(tab_name),
+                pos={},            # cloned tab is always blank — no pre-existing POs
+                blank_po_rows=[],  # no blank placeholder rows on a fresh clone
                 exception_log=exception_log,
             )
             template_writer.write_hierarchy(hierarchy, pos=pos)
 
-            # Restrict exception sheet filter to this P3 ID only
-            template_writer._hierarchy_ids = {p3_id}
+            all_p3_ids.add(p3_id)
             all_exception_logs.append((p3_id, exception_log))
 
         # ── Step 3: Write combined exception reports ──────────────────────
+        # Set _hierarchy_ids to ALL processed P3 IDs so the exception sheet
+        # filters the transactional data correctly across every tab.
+        template_writer._hierarchy_ids = all_p3_ids
         print("\nStep 3: Writing exception reports\n")
         # Merge all exception logs into one for the shared exception sheets
         merged_log = ExceptionLog()

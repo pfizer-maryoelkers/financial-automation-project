@@ -43,6 +43,11 @@ transactional_detail_reader:
     type: "Type"
     gl_posting_date: "GL Posting Date"
 # ============================
+# ============================
+## LE File (optional — provides UID lookup for col H of the OpEx template)
+le_file:
+  file_path: ""   # set to absolute or relative path of the ERP LE .xlsx file, or leave blank
+# ============================
 ## Template Writer
 template_writer:
   output_path: "data/templates/template_AP03.xlsx"

@@ -16,8 +16,8 @@
 # Old format: WBS codes in col A, P3 ID in col B on the same row.
 #   Set p3_id_col = "B" and wbs_col = "A".
 template:
-  file_path: "data/templates/Project Test.xlsx"
-  header_row: 16
+  file_path: "data/templates/P3 Testing.xlsx"
+  header_row: 12
   po_col: "B"
   po_stop_marker: "Previous Period Invoices"
   wbs_col: "A"
@@ -25,9 +25,9 @@ template:
   wbs_start_row: 9        # row after the "Cost Center" / P3 header label
   # Name of the master blank template sheet to clone for each P3 ID.
   # The pipeline copies this sheet for every P3 ID → tab pair defined in
-  # the "Enter All Your P3 IDs" config sheet.
-  # Leave blank to auto-detect (first non-config sheet in the workbook).
-  template_sheet_name: "Sheet1"
+  # the "Insert P3 HERE" (or "Enter All Your P3 IDs") config sheet.
+  # Tab 1 = "Insert P3 HERE" config sheet, Tab 2 = blank template.
+  template_sheet_name: "Project Template"
   # Legacy fallback: explicit P3 IDs when no config sheet is present.
   p3_ids:
     - "P325-0015419"
@@ -47,6 +47,9 @@ forecast_reader:
 # normalised automatically by TransactionalDetailReader.
 transactional_detail_reader:
   file_path: "data/transactional/AP07 2026 Actuals Consolidated File PGS & ES.xlsx"
+  # Period N maps directly to month N in the Consolidated Actuals file
+  # (no shift-back-one like the OpEx TIES file uses).
+  shift_months: false
   required_cols:
     - "Amount - BER"
   valid_types:
@@ -73,7 +76,7 @@ transactional_detail_reader:
 # ============================
 ## Template Writer
 template_writer:
-  output_path: "data/templates/Project Test.xlsx"
+  output_path: "data/templates/P3 Testing.xlsx"
   overwrite: False
   dec_acc_reversal_col: "N"  # same as OpEx layout
   forecast_source_cols:

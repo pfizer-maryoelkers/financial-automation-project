@@ -109,12 +109,22 @@ class TemplateWriter:
         self._p3_id_column_raw = p3_id_column
 
         # The sheet we treat as the canonical blank template to clone from.
-        # Defaults to the active sheet; can be overridden via template_sheet_name.
+        # Can be overridden by name; otherwise auto-detects the correct sheet:
+        #   - Project pipeline (p3_id_column set): sheet index 1, which by
+        #     convention is the blank template sitting right after the
+        #     "Insert P3 HERE" config sheet.
+        #   - OpEx pipeline (no p3_id_column): sheet index 0, which is the
+        #     active/main data sheet that TemplateReader also reads.
         if template_sheet_name and template_sheet_name in self.wb.sheetnames:
             self._template_sheet_name: str = template_sheet_name
         else:
-            active = self.wb.active
-            self._template_sheet_name = active.title if active else self.wb.sheetnames[0]
+            sheets = self.wb.sheetnames
+            # Use sheet[1] only for the project pipeline (p3_id_column provided).
+            # OpEx templates have their data on the active sheet (index 0).
+            if p3_id_column and len(sheets) > 1:
+                self._template_sheet_name = sheets[1]
+            else:
+                self._template_sheet_name = sheets[0]
 
         self.sheet: Worksheet = self.wb[self._template_sheet_name]  # type: ignore[assignment]
         if self.sheet is None:
@@ -130,6 +140,9 @@ class TemplateWriter:
         self._pos: dict = {}
         self._transactional_df = None
         self._hierarchy_ids: set = set()  # top-level keys from write_hierarchy (CC or P3 IDs)
+        # WBS/Project-Code → UID lookup built from the LE file.
+        # Populated by load_uid_map(); empty dict = no LE file provided.
+        self._uid_map: dict[str, str] = {}
 
         # Dynamically locate the header row by scanning the sheet; the config
         # value is only used as a fallback when no header marker is found.
@@ -162,23 +175,105 @@ class TemplateWriter:
         self.po_status_col = self._get_col_by_header("po status")
         self.legal_entity_col = self._get_col_by_header("legal entity")
         self.country_col = self._get_col_by_header("country")
+        self.uid_col = self._get_col_by_header("uid")
+
+    # ------------------------------------------------------------------
+    # LE UID map (OpEx pipeline)
+    # ------------------------------------------------------------------
+
+    def load_uid_map(self, le_path: str) -> None:
+        """Read the ERP LE file and build a Cost Center → UID lookup.
+
+        The LE file's 'ERP' sheet has:
+          - col A  'UID'          — unique row identifier, e.g. 'L-ERP-324'
+          - col N  'Cost Center*' — numeric cost center IDs, e.g. '2329946'
+                                    (may contain multiple IDs separated by ';')
+
+        This builds a mapping  {cost_center_id: uid}  so that write_hierarchy
+        can fill the UID column (col H) on each PO row by matching against the
+        cc_id (cost center) that owns the PO in the hierarchy.
+
+        When a cost center appears on multiple LE rows the first UID is kept,
+        consistent with the first-occurrence rule used elsewhere for this file.
+
+        Args:
+            le_path: Absolute path to the ERP LE .xlsx file.
+        """
+        from openpyxl import load_workbook as _lw
+        le_wb = _lw(le_path, read_only=True, data_only=True)
+        if "ERP" not in le_wb.sheetnames:
+            le_wb.close()
+            print(f"WARNING: load_uid_map — 'ERP' sheet not found in '{le_path}'. UID column will not be populated.")
+            return
+        le_ws = le_wb["ERP"]
+
+        HEADER_ROW = 7
+        header_values = list(le_ws.iter_rows(
+            min_row=HEADER_ROW, max_row=HEADER_ROW, values_only=True
+        ))[0]
+        col_idx: dict[str, int] = {}
+        for i, val in enumerate(header_values):
+            if val is not None:
+                key = str(val).strip()
+                if key not in col_idx:
+                    col_idx[key] = i  # 0-based, keep first occurrence
+
+        uid_col = col_idx.get("UID")
+        cc_col  = col_idx.get("Cost Center*")
+        if uid_col is None or cc_col is None:
+            le_wb.close()
+            print(
+                f"WARNING: load_uid_map — 'UID' or 'Cost Center*' column not found in "
+                f"LE file '{le_path}'. UID column will not be populated."
+            )
+            return
+
+        uid_map: dict[str, str] = {}
+        for row in le_ws.iter_rows(min_row=HEADER_ROW + 1, values_only=True):
+            uid_val = row[uid_col]
+            cc_val  = row[cc_col]
+            if uid_val is None or cc_val is None:
+                continue
+            uid_str = str(uid_val).strip()
+            # A single cell can hold multiple cost centers separated by ";"
+            for cc in str(cc_val).split(";"):
+                cc_key = cc.strip()
+                if cc_key and cc_key not in uid_map:
+                    uid_map[cc_key] = uid_str
+
+        le_wb.close()
+        self._uid_map = uid_map
+        print(f"load_uid_map: built UID map with {len(uid_map)} cost center(s) from LE file.")
 
     # ------------------------------------------------------------------
     # Per-tab sheet management (project pipeline)
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _sanitise_tab_name(name: str) -> str:
+        """Return a valid Excel sheet-tab name.
+
+        Excel forbids: \\ / ? * [ ] : and names longer than 31 characters.
+        """
+        for ch in ('\\', '/', '?', '*', '[', ']', ':'):
+            name = name.replace(ch, '-')
+        return name[:31].strip()
+
     def clone_template_sheet(self, tab_name: str) -> None:
         """Copy the canonical template sheet into a fresh blank tab named *tab_name*.
 
         Steps:
-          1. Delete any existing tab with *tab_name* (always start fresh).
-          2. Copy the master template sheet (``self._template_sheet_name``).
-          3. Wipe every PO data row in the clone — i.e. every row between the
+          1. Sanitise tab_name (strip Excel-invalid characters, truncate to 31 chars).
+          2. Delete any existing tab with *tab_name* (always start fresh).
+          3. Copy the master template sheet (``self._template_sheet_name``).
+          4. Wipe every PO data row in the clone — i.e. every row between the
              column-header row and the 'Previous Period Invoices' stop marker —
              so only the structural rows (summary area, column headers, stop
              marker) remain.  The master template sheet is never touched.
-          4. Call ``switch_sheet`` so the writer targets the clean clone.
+          5. Call ``switch_sheet`` so the writer targets the clean clone.
         """
+        tab_name = self._sanitise_tab_name(tab_name)
+
         # ── 1. Remove any stale tab ───────────────────────────────────────
         if tab_name in self.wb.sheetnames and tab_name != self._template_sheet_name:
             del self.wb[tab_name]
@@ -228,8 +323,8 @@ class TemplateWriter:
                 cell.comment = None
 
         print(
-            f"  Cloned '{self._template_sheet_name}' → '{tab_name}': "
-            f"cleared rows {clone_header_row + 1}–{clone_stop_row - 1} "
+            f"  Cloned '{self._template_sheet_name}' -> '{tab_name}': "
+            f"cleared rows {clone_header_row + 1}-{clone_stop_row - 1} "
             f"(kept header row {clone_header_row} and structure)."
         )
 
@@ -268,6 +363,7 @@ class TemplateWriter:
         self.po_status_col      = self._get_col_by_header("po status")
         self.legal_entity_col   = self._get_col_by_header("legal entity")
         self.country_col        = self._get_col_by_header("country")
+        self.uid_col            = self._get_col_by_header("uid")
         print(f"  Writer switched to sheet '{tab_name}' (header row {self.header_row}).")
 
     @staticmethod
@@ -1158,7 +1254,7 @@ class TemplateWriter:
             print(f"Inserted {len(inserted)} PO row(s): {inserted}")
         else:
             print("No additional PO rows needed.")
-        self._pos = pos
+        self._pos.update(pos)
         return pos
 
     def insert_er_rows(self, hierarchy: dict, pos: dict[str, int]) -> dict[str, int]:
@@ -1486,6 +1582,16 @@ class TemplateWriter:
                             if self._should_write(country_cell.value):
                                 country_cell.value = po.country
 
+                        # UID (col H, or whichever column has "UID" in its header)
+                        # Match against the cost center (cc_id) that owns this PO
+                        # — the LE file's 'Cost Center*' column holds the same IDs.
+                        if self.uid_col is not None and self._uid_map:
+                            uid_val = self._uid_map.get(str(cc_id).strip())
+                            if uid_val:
+                                uid_cell = self.sheet.cell(row=row, column=self.uid_col)
+                                if self._should_write(uid_cell.value):
+                                    uid_cell.value = uid_val
+
                     # PO total (Invoice Amount = sum of Actual/ER rows for this PO).
                     # Only write when there is real invoiced spend; leave blank for
                     # accrual-only POs so the cell is not misleadingly shown as 0.
@@ -1643,6 +1749,145 @@ class TemplateWriter:
         # cover the full data range (rows header_row+1 … last data row).
         self._update_summary_formulas()
 
+        # For project templates: compute and cache the R9 / R10 summary totals
+        # directly as numeric values so they are visible without Excel recalculating
+        # the dynamic-array (FILTER) formulas that openpyxl cannot evaluate.
+        if self.p3_id_column is not None:
+            self._cache_project_summary_totals()
+
+
+    def _cache_project_summary_totals(self) -> None:
+        """Compute per-month totals from data rows and write them into the
+        R9 (P3 Actuals) and R10 (Forecast Actuals) summary cells.
+
+        The template uses Excel 365 FILTER array formulas in those cells,
+        which openpyxl cannot evaluate — so the cached value is None after
+        save and the cells appear blank until Excel opens the file.
+
+        Strategy: scan every data row (header_row+1 … Previous Period
+        Invoices row) for each month in column_map, then:
+          R9  ← Actual + Accrual (where Actual=0) + Accrual Reversal
+          R10 ← Forecast total
+
+        This gives instant visible numbers without changing the formulas.
+        """
+        from openpyxl.utils import column_index_from_string
+        from openpyxl.worksheet.formula import ArrayFormula
+
+        # Find the data range.
+        data_start = self.header_row + 1
+        data_end = data_start
+        for r in range(data_start, (self.sheet.max_row or 1000) + 1):
+            val = self.sheet.cell(row=r, column=1).value
+            if val is not None and str(val).strip() in ("Previous Period Invoices", "EXPENSE END"):
+                data_end = r - 1
+                break
+            data_end = r
+
+        if data_end < data_start:
+            return
+
+        # Find which rows in the template have the R9 / R10 summary labels.
+        # Scan for "P3 Actuals" and "Forecast Spreadsheet Actuals" in col I.
+        actuals_row: int | None = None
+        forecast_row: int | None = None
+        for r in range(1, self.header_row):
+            val = self.sheet.cell(row=r, column=9).value  # col I
+            if val is None:
+                continue
+            text = str(val).strip().lower()
+            if "p3 actuals" in text:
+                actuals_row = r
+            elif "forecast" in text and "actuals" in text:
+                forecast_row = r
+
+        def _read_num(row: int, col_letter: str | None) -> float:
+            if not col_letter:
+                return 0.0
+            v = self.sheet.cell(row=row, column=column_index_from_string(col_letter)).value
+            return float(v) if isinstance(v, (int, float)) else 0.0
+
+        def _safe_write(row: int, col_idx: int, value: float) -> None:
+            """Write value only to a real (non-merged) cell that currently holds
+            an ArrayFormula — merged cells raise AttributeError on .value = ..."""
+            from openpyxl.cell.cell import MergedCell
+            cell = self.sheet.cell(row=row, column=col_idx)
+            if isinstance(cell, MergedCell):
+                return
+            if isinstance(cell.value, ArrayFormula) and value != 0.0:
+                cell.value = round(value, 2)
+
+        # Build a lookup: for each summary row, map each ArrayFormula cell to the
+        # set of data columns it references.  This allows us to find the correct
+        # anchor cell for a given month without assuming a fixed column offset.
+        #
+        # Template pattern: month N's "P3 Actuals" group summary is anchored at
+        # the Accrual Reversal column of month N-1 (not at month N's own columns).
+        # Rather than hard-coding that offset, we scan the summary row for the
+        # ArrayFormula cell whose formula body references month N's Actual column.
+        import re as _re
+        _col_ref_rx = _re.compile(r'\b([A-Z]{1,3})\d+\b')
+
+        def _find_summary_anchor(summary_row: int | None, actual_col: str | None) -> int | None:
+            """Return the column index of the ArrayFormula cell in *summary_row*
+            whose formula body references *actual_col* (e.g. 'AH').
+            Returns None when no matching cell is found."""
+            if summary_row is None or not actual_col:
+                return None
+            max_col = self.sheet.max_column or 200
+            for ci in range(1, max_col + 1):
+                from openpyxl.cell.cell import MergedCell
+                cell = self.sheet.cell(row=summary_row, column=ci)
+                if isinstance(cell, MergedCell):
+                    continue
+                if not isinstance(cell.value, ArrayFormula):
+                    continue
+                formula_text = cell.value.text or ""
+                cols_referenced = set(_col_ref_rx.findall(formula_text))
+                if actual_col.upper() in cols_referenced:
+                    return ci
+            return None
+
+        # For each month, compute column sums and write into the correct summary cells.
+        for month_cols in self.column_map.values():
+            actual_col   = month_cols.get("Actual")
+            accrual_col  = month_cols.get("Accrual")
+            acc_rev_col  = month_cols.get("Accrual Reversal")
+            forecast_col = month_cols.get("Forecast")
+
+            # Sum each metric across all data rows.
+            actual_total   = 0.0
+            accrual_total  = 0.0
+            acc_rev_total  = 0.0
+            forecast_total = 0.0
+
+            for r in range(data_start, data_end + 1):
+                actual_total   += _read_num(r, actual_col)
+                accrual_total  += _read_num(r, accrual_col)
+                acc_rev_total  += _read_num(r, acc_rev_col)
+                forecast_total += _read_num(r, forecast_col)
+
+            group_total = actual_total + accrual_total + acc_rev_total
+
+            # R9: P3 Actuals — find the ArrayFormula cell in R9 that references
+            # this month's Actual column, and write the combined month total to it.
+            if group_total != 0.0 and actuals_row is not None:
+                anchor_col = _find_summary_anchor(actuals_row, actual_col)
+                if anchor_col is not None:
+                    _safe_write(actuals_row, anchor_col, group_total)
+                elif acc_rev_col:
+                    # Fallback to old behaviour if no matching formula found
+                    _safe_write(actuals_row, column_index_from_string(acc_rev_col), group_total)
+
+            # R10: Forecast total — find the ArrayFormula cell in R10 that
+            # references this month's Forecast column.
+            if forecast_total != 0.0 and forecast_row is not None:
+                anchor_col_fc = _find_summary_anchor(forecast_row, forecast_col)
+                if anchor_col_fc is not None:
+                    _safe_write(forecast_row, anchor_col_fc, forecast_total)
+                elif forecast_col:
+                    # Fallback
+                    _safe_write(forecast_row, column_index_from_string(forecast_col), forecast_total)
 
     def write_forecast_source_sheet(self, forecast_df, pos: dict[str, int]):
         """Write forecast data to a new 'Forecast Source Data' sheet, filtered to template POs."""
@@ -1816,12 +2061,13 @@ class TemplateWriter:
         with auto-filter across all columns, freeze panes at Row 2, and auto-fitted
         column widths, exactly matching the formatting of the other source tabs.
 
-        Project pipeline: every raw transaction row for the P3 IDs present in the
-        exception log is written, with an "On Template" column (Yes/No) indicating
-        whether the PO was placed on the main template tab.
+        Project pipeline: every raw transaction row for the P3 IDs is written
+        (all columns from the transactional file) with an "On Template" column
+        (Yes/No) showing whether that PO was placed on any template tab.
 
-        OpEx pipeline: only exception-log entries are written (unchanged behaviour),
-        also with an "On Template" column.
+        OpEx pipeline: only exception-log entries are written, with columns:
+            Cost Center | Accounting Period | WBS | Document Number |
+            Source Row | Amount | GL Line Description | Exception Type | On Template
         """
         ws = self.wb.create_sheet("Exceptions")
 
@@ -1833,49 +2079,42 @@ class TemplateWriter:
             v = str(val).strip() if val is not None else ''
             return '' if v.lower() in _BLANK_FILTER else v
 
-        # Determine pipeline
-        is_project = self.p3_id_column is not None
-
         # ── Style definitions ────────────────────────────────────────────────
         hdr_fill = PatternFill("solid", fgColor="1F4E79")
         hdr_font = Font(bold=True, color="FFFFFF")
 
         row = 2  # data starts on row 2 (row 1 = header)
 
+        is_project = self.p3_id_column is not None
+
         if is_project:
             # ── PROJECT PIPELINE ────────────────────────────────────────────
-            # Write every column from the transactional detail file for all
-            # rows belonging to the P3 IDs that were processed, plus an
-            # "On Template" column at the end.
+            # Write every transactional row for the matching P3 IDs, plus an
+            # "On Template" column indicating whether the PO was placed on any
+            # cloned template tab.
 
             if transactional_df is not None and not transactional_df.empty:
-                # Use the P3 IDs that are actually on this template tab (set by
-                # write_hierarchy). Fall back to exception-log entries only if
-                # write_hierarchy hasn't been called yet.
+                # P3 IDs that were processed (set by write_hierarchy on each tab).
                 known_p3_ids: set = self._hierarchy_ids if self._hierarchy_ids else {
                     str(e.cost_center).strip()
                     for e in exception_log.entries
                     if e.cost_center and str(e.cost_center).strip()
                 }
 
-                # Find the cost-center column (holds the P3 ID after normalisation).
                 _cc_col = next(
                     (c for c in ('Cost Center*', 'Cost Center', 'P3 ID') if c in transactional_df.columns),
                     None,
                 )
-                # Find the PO column for the "On Template" flag.
                 _po_col = next(
                     (c for c in ('PO Number', 'Document num/PO#', 'Document Number / PO#') if c in transactional_df.columns),
                     None,
                 )
-                # Find the amount column for number formatting.
                 _amt_col = next(
                     (c for c in ('GL BER Corp Amount', 'Amount - BER', 'Amount - MAR', 'Amount') if c in transactional_df.columns),
                     None,
                 )
                 _type_col = 'Type' if 'Type' in transactional_df.columns else None
 
-                # Display-name overrides: normalised internal names → human labels.
                 _HEADER_RENAMES = {
                     'Cost Center*': 'P3 ID',
                     'Cost Center':  'P3 ID',
@@ -1885,16 +2124,13 @@ class TemplateWriter:
                 if _cc_col and known_p3_ids:
                     cc_series = transactional_df[_cc_col].astype(str).str.strip()
                     mask = cc_series.isin(known_p3_ids)
-                    # Exclude Reclass rows (internal bookkeeping).
                     if _type_col:
                         mask = mask & (transactional_df[_type_col] != 'Reclass')
                     project_rows = transactional_df[mask]
 
-                    # Use every column from the dataframe as headers, plus "On Template".
                     df_columns = list(project_rows.columns)
                     visible_headers = [_HEADER_RENAMES.get(c, c) for c in df_columns] + ['On Template']
 
-                    # Write header row
                     for col_idx, h in enumerate(visible_headers, start=1):
                         cell = ws.cell(row=1, column=col_idx, value=h)
                         cell.font = hdr_font
@@ -1907,14 +2143,12 @@ class TemplateWriter:
 
                         for col_idx, col_name in enumerate(df_columns, start=1):
                             val = df_row[col_name]
-                            cell = ws.cell(row=row, column=col_idx, value=val if val == val else None)  # NaN → None
+                            cell = ws.cell(row=row, column=col_idx, value=val if val == val else None)
                             if col_name == _amt_col and val == val and val is not None:
                                 cell.number_format = '#,##0.00'
-                        # "On Template" is the last column
                         ws.cell(row=row, column=len(df_columns) + 1, value=on_tmpl)
                         row += 1
                 else:
-                    # No matching rows — still need visible_headers for auto-filter/auto-size
                     visible_headers = [_HEADER_RENAMES.get(c, c) for c in transactional_df.columns] + ['On Template']
                     for col_idx, h in enumerate(visible_headers, start=1):
                         cell = ws.cell(row=1, column=col_idx, value=h)
@@ -1926,8 +2160,6 @@ class TemplateWriter:
 
         else:
             # ── OPEX PIPELINE ────────────────────────────────────────────────
-            # Show only exception-log entries (existing behaviour).
-
             def _resolve_po(e) -> str:
                 """Return the best available normalised PO string for an entry."""
                 val = str(e.po).strip() if e.po is not None else ''
@@ -1942,7 +2174,6 @@ class TemplateWriter:
                 return self._norm_po(val) if val else ''
 
             # De-duplicate entries by row_index so the same source row is never listed twice.
-            # RECLASS entries are included so they show their On Template status.
             active_entries = []
             seen_rows = set()
             for e in exception_log.entries:
@@ -1957,18 +2188,16 @@ class TemplateWriter:
             visible_headers = [
                 'Cost Center', 'Accounting Period', 'WBS',
                 'Document Number', 'Source Row', 'Amount', 'GL Line Description',
-                'On Template'
+                'Exception Type', 'On Template'
             ]
 
-            # Write header
             for col_idx, h in enumerate(visible_headers, start=1):
                 cell = ws.cell(row=1, column=col_idx, value=h)
                 cell.font = hdr_font
                 cell.fill = hdr_fill
 
             for entry in active_entries:
-                _po_val  = _resolve_po(entry)
-                # For RECLASS entries, also check the RECLASS-{cc} key used on the template
+                _po_val = _resolve_po(entry)
                 if entry.exception_type == ExceptionType.RECLASS:
                     _reclass_key = f"RECLASS-{entry.cost_center}" if entry.cost_center else None
                     _on_tmpl = 'Yes' if (
@@ -1990,7 +2219,8 @@ class TemplateWriter:
                     row=row, column=7,
                     value=entry.source_row_data.get('GL Line Description') if entry.source_row_data else None,
                 )
-                ws.cell(row=row, column=8, value=_on_tmpl)
+                ws.cell(row=row, column=8, value=entry.exception_type.value)
+                ws.cell(row=row, column=9, value=_on_tmpl)
                 row += 1
 
         # ── Shared: freeze pane, auto-filter, auto-size ──────────────────────
@@ -2045,9 +2275,12 @@ class TemplateWriter:
         whose Cost Center matches any of the selected cost centers.
 
         Columns written:
-            Cost Center | Description | Project Code | LE0
+            UID | Cost Center | Description | Project Code | LE0
             + LE2, LE3, LE4 Final Submission columns when present in the file
             + a Totals row with SUM formulas below the data
+
+        The UID is taken from the 'UID' column of the LE file and uniquely
+        identifies each budget line (e.g. 'L-ERP-324').
 
         Args:
             le_path:       Absolute path to the ERP LE .xlsx file.
@@ -2080,7 +2313,9 @@ class TemplateWriter:
                 if key not in col_idx:   # keep first occurrence only
                     col_idx[key] = i  # 0-based
 
-        # Required columns (must exist) and optional LE submission columns
+        # Required columns (must exist) and optional LE submission columns.
+        # UID is optional — absent in older LE file versions — so we degrade
+        # gracefully when it is not found rather than raising.
         REQUIRED_COLS = {
             "Cost Center*":  "Cost Center",
             "Description*":  "Description",
@@ -2101,6 +2336,7 @@ class TemplateWriter:
                 f"Found headers: {list(col_idx.keys())}"
             )
 
+        uid_col  = col_idx.get("UID")          # None when column absent
         cc_col   = col_idx["Cost Center*"]
         desc_col = col_idx["Description*"]
         proj_col = col_idx["Project Code*"]
@@ -2112,6 +2348,7 @@ class TemplateWriter:
         cc_filter = {str(c).strip() for c in cost_centers}
 
         # ── Collect matching rows ─────────────────────────────────────────────
+        # Each tuple: (uid, cost_center, description, project_code, le0, *optional_le_vals)
         budget_rows: list[tuple] = []
         for row in le_ws.iter_rows(min_row=HEADER_ROW + 1, values_only=True):
             raw_cc = row[cc_col]
@@ -2121,8 +2358,10 @@ class TemplateWriter:
             cell_ccs = [c.strip() for c in str(raw_cc).split(";")]
             if cc_filter and not any(c in cc_filter for c in cell_ccs):
                 continue
+            uid_val = row[uid_col] if uid_col is not None else None
             optional_vals = tuple(row[idx] for _, idx in optional_le)
             budget_rows.append((
+                str(uid_val).strip() if uid_val is not None else "",
                 str(raw_cc).strip(),
                 row[desc_col] or "",
                 row[proj_col] or "",
@@ -2139,8 +2378,8 @@ class TemplateWriter:
             del self.wb["Budget"]
         ws = self.wb.create_sheet("Budget", index=1)
 
-        # Header row — fixed columns + any optional LE columns found in the file
-        fixed_headers = ["Cost Center", "Description", "Project Code", "LE0"]
+        # Header row — UID first, then fixed columns, then any optional LE columns
+        fixed_headers = ["UID", "Cost Center", "Description", "Project Code", "LE0"]
         optional_headers = [label for label, _ in optional_le]
         headers = fixed_headers + optional_headers
         header_fill = PatternFill(fill_type="solid", fgColor="4F81BD")
@@ -2152,13 +2391,17 @@ class TemplateWriter:
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
         # Data rows
+        # Layout: col 1 = UID, col 2 = Cost Center, col 3 = Description,
+        #         col 4 = Project Code, col 5 = LE0, col 6+ = optional LE cols
         num_fmt_currency = '#,##0.00'
         for row_num, row_data in enumerate(budget_rows, start=2):
-            cc, desc, proj = row_data[0], row_data[1], row_data[2]
-            ws.cell(row=row_num, column=1, value=cc)
-            ws.cell(row=row_num, column=2, value=desc)
-            ws.cell(row=row_num, column=3, value=proj)
-            for col_offset, val in enumerate(row_data[3:], start=4):
+            uid, cc, desc, proj = row_data[0], row_data[1], row_data[2], row_data[3]
+            ws.cell(row=row_num, column=1, value=uid)
+            ws.cell(row=row_num, column=2, value=cc)
+            ws.cell(row=row_num, column=3, value=desc)
+            ws.cell(row=row_num, column=4, value=proj)
+            # Numeric columns start at index 4 in the tuple (le0_val, *optional)
+            for col_offset, val in enumerate(row_data[4:], start=5):
                 budget_cell = ws.cell(row=row_num, column=col_offset, value=val)
                 if isinstance(val, (int, float)) and val is not None:
                     budget_cell.number_format = num_fmt_currency
@@ -2170,13 +2413,13 @@ class TemplateWriter:
             total_label_cell.font = Font(bold=True, size=11)
             total_fill = PatternFill(fill_type="solid", fgColor="D9E1F2")
             total_label_cell.fill = total_fill
-            # Columns 2 and 3 (Description, Project Code) — fill background only
-            for col_num in (2, 3):
+            # Columns 2–4 (Cost Center, Description, Project Code) — fill only
+            for col_num in (2, 3, 4):
                 ws.cell(row=total_row, column=col_num).fill = total_fill
-            # Numeric columns start at column 4 (LE0, LE2, LE3, LE4 …)
+            # Numeric columns start at column 5 (LE0, LE2, LE3, LE4 …)
             data_start = 2
             data_end = len(budget_rows) + 1
-            for col_num in range(4, len(headers) + 1):
+            for col_num in range(5, len(headers) + 1):
                 col_letter = get_column_letter(col_num)
                 total_cell = ws.cell(
                     row=total_row,

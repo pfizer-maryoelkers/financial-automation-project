@@ -14,29 +14,33 @@ def detect_template_type(file_path: str) -> str:
     -------
     "project"
         Detected by any of these signals (checked in order):
-        1. Old format: col-A says "WBS Code" AND col-B says "P3 ID" on the
-           same row within the first 20 rows.
-        2. New format (OpEx layout): col-A contains a P3 ID value — a cell
+        1. Config sheet present: the workbook contains a sheet named
+           "Insert P3 HERE" or "Enter All Your P3 IDs" — the new multi-tab
+           project format.
+        2. Old format: col-A says "WBS Code" AND col-B says "P3 ID" on the
+           same row within the first 20 rows of the active sheet.
+        3. New format (OpEx layout): col-A contains a P3 ID value — a cell
            whose text matches the pattern P<digits>-<digits> (e.g. P325-0015419)
-           — within the first 30 rows.  This handles project templates that
-           have been reformatted to use the same physical layout as OpEx.
+           — within the first 30 rows of the active sheet.
         The project pipeline (ProjectTemplateReader / build_project_hierarchy)
         should be used.
     "opex"
-        Neither project signal was found.  The OpEx pipeline
+        None of the project signals were found.  The OpEx pipeline
         (TemplateReader / build_hierarchy) should be used.
-
-    Detection strategy
-    ------------------
-    Signal 1 (old format): paired "WBS Code" / "P3 ID" header row.
-    Signal 2 (new format): P3 ID value (P<digits>-<digits>) in col A.
     """
     import re as _re
     from openpyxl import load_workbook
 
     _p3_pattern = _re.compile(r'^P\d+-\d+$', _re.IGNORECASE)
+    _config_sheet_names = {"insert p3 here", "enter all your p3 ids"}
 
     wb = load_workbook(file_path, read_only=True, data_only=True)
+
+    # Signal 1 — config sheet present (new multi-tab project format)
+    if any(s.strip().lower() in _config_sheet_names for s in wb.sheetnames):
+        wb.close()
+        return "project"
+
     ws = wb.active
 
     for r in range(1, 31):
@@ -45,12 +49,12 @@ def detect_template_type(file_path: str) -> str:
         a_text = str(a_val).strip().lower() if a_val is not None else ""
         b_text = str(b_val).strip().lower() if b_val is not None else ""
 
-        # Signal 1 — old format: "WBS Code" col A + "P3 ID" col B on same row
+        # Signal 2 — old format: "WBS Code" col A + "P3 ID" col B on same row
         if a_text == "wbs code" and b_text == "p3 id":
             wb.close()
             return "project"
 
-        # Signal 2 — new format: P3 ID value in col A (e.g. P325-0015419)
+        # Signal 3 — new format: P3 ID value in col A (e.g. P325-0015419)
         if a_val is not None and _p3_pattern.match(str(a_val).strip()):
             wb.close()
             return "project"

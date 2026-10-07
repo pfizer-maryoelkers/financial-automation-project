@@ -101,7 +101,7 @@ async def run_pipeline(
 
     **Form fields**
     - `template_file` — the Excel template
-    - `transactional_file` — CTIES / transactional detail file
+    - `transactional_file` — TIES / transactional detail file
     - `forecast_files` — one or more forecast files (repeat the field for multiple)
     - `selected_cost_centers` — optional comma-separated list, e.g. `"1234,5678"`
 

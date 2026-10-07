@@ -3,7 +3,7 @@ import pandas as pd
 import re
 
 class TransactionalDetailReader:
-    """Reads a C-TIES or Consolidated Actuals file and extracts typed, month-bucketed transactions.
+    """Reads a TIES or Consolidated Actuals file and extracts typed, month-bucketed transactions.
 
     Classification rules (in priority order):
         1. Document number / Vendor Invoice / AP Voucher Number prefix + amount sign:
@@ -18,14 +18,25 @@ class TransactionalDetailReader:
     Two Decembers are distinguished by year: the smaller year → "Dec (PY)".
     """
 
-    def __init__(self, file_path, required_cols, valid_types, colmap):
+    def __init__(self, file_path, required_cols, valid_types, colmap, shift_months: bool = True):
         """Initialize with the transactional detail file path.
-        
+
+        Parameters
+        ----------
+        shift_months : bool
+            When True (default, OpEx / TIES), Actuals and Reversals are
+            shifted back one period: Period N → month N-1.  This reflects the
+            TIES convention where postings land in the period *after* the
+            activity month.
+            When False (Consolidated Actuals / project pipeline), Period N
+            maps directly to month N with no shift.
+
         See config_base.yaml for default parameters
         """
         self.file_path = file_path
         self.data = None
         self._excel_row: 'pd.Series | None' = None  # maps pandas index → 1-based Excel row
+        self.shift_months = shift_months
 
         # Strip whitespace from required_cols and colmap values so they always
         # match file headers regardless of accidental leading/trailing spaces in config.
@@ -169,9 +180,9 @@ class TransactionalDetailReader:
 
     def _normalise_cols(self, df: 'pd.DataFrame') -> 'pd.DataFrame':
         """Rename format-specific column names to the standard names used by all
-        downstream logic.  Handles two Consolidated Actuals variants and C-TIES:
+        downstream logic.  Handles two Consolidated Actuals variants and TIES:
 
-        • C-TIES                 — standard format, minimal renames needed
+        • TIES                 — standard format, minimal renames needed
         • Consolidated AP07 2026 — WBS HIERARCHY, Document Number / PO#,
                                    Fiscal Year/Period, Vendor Desc, Company code
         • Consolidated Shalisha  — WBS/Internal Order, Document num/PO#,
@@ -310,7 +321,7 @@ class TransactionalDetailReader:
 
         # ── Classifier (Vendor Invoice # / AP Voucher Number) ────────────────
         # "Vendor Invoice #" is the primary classifier column name in the
-        # C-TIES format.  "Vendor Invoice" is used by the Consolidated format.
+        # TIES format.  "Vendor Invoice" is used by the Consolidated format.
         # Both carry the same 2/5/9 prefix convention.
         # When the column name already matches cls_target nothing is needed;
         # otherwise rename the first alias found to the configured target.
@@ -334,7 +345,7 @@ class TransactionalDetailReader:
 
     def _sheet_has_required_cols(self, preview: 'pd.DataFrame') -> bool:
         """Check required cols, accepting all known column-name aliases across
-        the three supported source formats (C-TIES, Chargeout, Consolidated)."""
+        the three supported source formats (TIES, Chargeout, Consolidated)."""
         cols = set(preview.columns)
 
         def _swap(aliases: list[str], target: str) -> None:
@@ -693,7 +704,7 @@ class TransactionalDetailReader:
 
     def get_transactional_data(self) -> dict:
         '''
-        Method that gets transactional data from C-TIES file. 
+        Method that gets transactional data from TIES file. 
         Extracts all rows, categorizes them, and returns a dict w/ actuals and accruals.
         Aggregates by PO / month.
         Returns:
@@ -822,19 +833,27 @@ class TransactionalDetailReader:
             if month_num is None:
                 continue
 
-            # Actuals (Actual, ER, Reclass) and Reversals shift back one month:
-            # AP posted in period N reflects activity from period N-1.
-            # AP01 → "Dec (25)", AP02 → Jan, … AP12 → "Nov (25)".
+            # Month bucketing — two modes controlled by self.shift_months:
             #
-            # AP01 and AP12 both cross into the prior fiscal year after shifting,
-            # so they receive a "(YY)" year suffix matching current_year - 1.
+            # shift_months=True  (OpEx / TIES):
+            #   Actuals/Reversals shift back one period: Period N → month N-1.
+            #   AP01 → "Dec (25)", AP02 → Jan, … AP12 → "Nov (25)".
+            #   Accruals map directly: AP01 = Jan, … AP12 = Dec.
             #
-            # Accruals map directly: AP01 = Jan, AP02 = Feb, … AP12 = Dec.
-            # Prior-year data (AP12 of a year < current_year) is skipped.
-            if type_name in ("Actual", "ER", "Reclass", "Reversal"):
+            # shift_months=False (Consolidated Actuals / projects):
+            #   All types map directly: Period 03 2026 → Mar, no shift.
+            #   Prior-year December (AP12 of year < current_year) is skipped.
+            py = (current_year - 1) if current_year else None
+            py_suffix = f" ({str(py)[2:]})" if py else ""
+
+            if not self.shift_months:
+                # Direct mapping — no shift for any type.
+                # Prior-year December (e.g. Period 12 2025 in a 2026 file) is
+                # kept and written to the "Dec" bucket so it lands in the
+                # "Accrual Reversal Dec" column (col K) of the project template.
+                write_month = self.month_map.get(month_num)
+            elif type_name in ("Actual", "ER", "Reclass", "Reversal"):
                 shifted_num = month_num - 1
-                py = (current_year - 1) if current_year else None
-                py_suffix = f" ({str(py)[2:]})" if py else ""
                 if shifted_num == 0:
                     # AP01 → prior-year December, e.g. "Dec (25)"
                     write_month = f"Dec{py_suffix}" if py_suffix else "Dec"
@@ -844,7 +863,7 @@ class TransactionalDetailReader:
                 else:
                     write_month = self.month_map.get(shifted_num)
             elif month_num == 12 and current_year is not None and ap_year is not None and ap_year < current_year:
-                continue  # prior-year December Accrual — skip, same as any prior-year data
+                continue  # prior-year December Accrual — skip
             else:
                 write_month = self.month_map.get(month_num)
 
@@ -972,14 +991,17 @@ class TransactionalDetailReader:
             if month_num is None:
                 continue
 
-            # Shift back one month: AP01 → "Dec (YY)", AP02 → Jan, …
-            # e.g. current_year=2026 → "Dec (25)"; current_year=2027 → "Dec (26)"
-            shifted_num = month_num - 1
-            if shifted_num == 0:
-                py = (_current_year - 1) if _current_year else None
-                month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
+            # Shift back one month (OpEx only): AP01 → "Dec (YY)", AP02 → Jan, …
+            # Projects (shift_months=False) map directly: Period N → month N.
+            if not self.shift_months:
+                month_label = self.month_map.get(month_num)
             else:
-                month_label = self.month_map.get(shifted_num)
+                shifted_num = month_num - 1
+                if shifted_num == 0:
+                    py = (_current_year - 1) if _current_year else None
+                    month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
+                else:
+                    month_label = self.month_map.get(shifted_num)
             if not month_label:
                 continue
 
@@ -1031,14 +1053,17 @@ class TransactionalDetailReader:
             if month_num is None:
                 continue
 
-            # Shift back one month: AP01 → "Dec (YY)", AP02 → Jan, …
-            # e.g. current_year=2026 → "Dec (25)"; current_year=2027 → "Dec (26)"
-            shifted_num = month_num - 1
-            if shifted_num == 0:
-                py = (_rn_current_year - 1) if _rn_current_year else None
-                month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
+            # Shift back one month (OpEx only): AP01 → "Dec (YY)", AP02 → Jan, …
+            # Projects (shift_months=False) map directly: Period N → month N.
+            if not self.shift_months:
+                month_label = self.month_map.get(month_num)
             else:
-                month_label = self.month_map.get(shifted_num)
+                shifted_num = month_num - 1
+                if shifted_num == 0:
+                    py = (_rn_current_year - 1) if _rn_current_year else None
+                    month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
+                else:
+                    month_label = self.month_map.get(shifted_num)
 
             po_key = po
             if po_key not in result and po_key.replace('.', '', 1).replace('-', '', 1).isdigit():

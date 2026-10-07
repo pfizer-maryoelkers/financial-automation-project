@@ -74,10 +74,16 @@ class ProjectTemplateReader:
         Active sheet, WBS in col A, P3 ID in col B (or OpEx layout).
     """
 
-    CONFIG_SHEET = "Enter All Your P3 IDs"
-    CONFIG_P3_COL  = "B"   # P3 ID values start at B5
-    CONFIG_TAB_COL = "C"   # Tab name values start at C5
-    CONFIG_START_ROW = 5   # First data row (row 4 is the label)
+    # Recognised names for the P3 config sheet.  The workbook may use any of
+    # these — both the original "Enter All Your P3 IDs" name and the newer
+    # "Insert P3 HERE" variant are accepted.
+    CONFIG_SHEET_NAMES = (
+        "Enter All Your P3 IDs",
+        "Insert P3 HERE",
+    )
+    CONFIG_P3_COL  = "A"   # P3 ID values — col A, starting at row 2
+    CONFIG_TAB_COL = "B"   # Tab name (informational) — col B
+    CONFIG_START_ROW = 2   # First data row (row 1 is the header label)
 
     def __init__(
         self,
@@ -101,13 +107,20 @@ class ProjectTemplateReader:
         self.wbs_start_row = wbs_start_row
         self.wbs_end_row = wbs_end_row
 
+        # Resolve the config sheet name present in this workbook (if any).
+        self._config_sheet_name: str | None = next(
+            (s for s in self.CONFIG_SHEET_NAMES if s in self.wb.sheetnames), None
+        )
+
         # Determine which sheet is the master blank template to clone from.
         if template_sheet_name and template_sheet_name in self.wb.sheetnames:
             self._template_sheet_name = template_sheet_name
         else:
-            # Use first non-config sheet as the template
-            non_config = [s for s in self.wb.sheetnames if s != self.CONFIG_SHEET]
-            self._template_sheet_name = non_config[0] if non_config else self.wb.sheetnames[0]
+            # Auto-detect: use the second sheet in the workbook (index 1).
+            # Convention: tab 1 = "Insert P3 HERE" config sheet, tab 2 = blank template.
+            # Fall back to the first sheet if there is only one.
+            sheets = self.wb.sheetnames
+            self._template_sheet_name = sheets[1] if len(sheets) > 1 else sheets[0]
 
         self.sheet: Worksheet = self.wb[self._template_sheet_name]  # type: ignore[assignment]
         if self.sheet is None:
@@ -118,7 +131,7 @@ class ProjectTemplateReader:
         self.header_row = self._find_actual_header_row()
 
         # ── New layout: read P3 ID → tab name from the config sheet ──────
-        if self.CONFIG_SHEET in self.wb.sheetnames:
+        if self._config_sheet_name is not None:
             self.p3_tab_map: dict[str, str] = self._read_config_sheet()
             # p3_wbs_map: each P3 ID has an empty WBS list (matched via cost_center)
             self.p3_wbs_map: dict[str, list[str]] = {p: [] for p in self.p3_tab_map}
@@ -147,18 +160,36 @@ class ProjectTemplateReader:
     # ------------------------------------------------------------------
 
     def _read_config_sheet(self) -> dict[str, str]:
-        """Read P3 ID → tab name pairs from the 'Enter All Your P3 IDs' sheet.
+        """Read P3 ID → tab name pairs from the config sheet.
 
-        Layout:
-            B4  = label (ignored)
-            B5+ = P3 ID
-            C5+ = tab name
-        Stops at the first row where B is blank.
+        Current layout:
+            A1: "Enter All Your P3 IDs" (header label)
+            A2: P324-0013439    B2: GSC EMEA Sub-cluster  ← tab label
+            A3: P325-0016238    B3: 2026 GSC APAC …
+            …
+
+        Col A (P3 ID) is the key — written into cell B2 of each cloned sheet.
+        Col B (Tab Name) becomes the Excel sheet tab label.
+        When col B is blank the P3 ID is used as the tab label instead.
+
+        The header row is detected dynamically so it works at any row position.
+        Falls back to CONFIG_START_ROW when the label is absent.
+        Stops at the first row where col A is blank.
         """
-        ws = self.wb[self.CONFIG_SHEET]
+        ws = self.wb[self._config_sheet_name]  # type: ignore[index]
         mapping: dict[str, str] = {}
-        row = self.CONFIG_START_ROW
         max_row = ws.max_row or 1000
+
+        # Locate the header row by scanning CONFIG_P3_COL for the label.
+        # Fall back to CONFIG_START_ROW if not found.
+        start_row = self.CONFIG_START_ROW
+        for r in range(1, max_row + 1):
+            val = ws[f"{self.CONFIG_P3_COL}{r}"].value
+            if val is not None and "enter all your p3" in str(val).strip().lower():
+                start_row = r + 1
+                break
+
+        row = start_row
         while row <= max_row:
             p3_val  = ws[f"{self.CONFIG_P3_COL}{row}"].value
             tab_val = ws[f"{self.CONFIG_TAB_COL}{row}"].value
@@ -166,15 +197,12 @@ class ProjectTemplateReader:
             tab_text = str(tab_val).strip() if tab_val is not None else ""
             if not p3_text:
                 break
-            if tab_text:
-                mapping[p3_text] = tab_text
-            else:
-                # Use the P3 ID itself as the tab name if column C is blank
-                mapping[p3_text] = p3_text
+            # Tab name drives the sheet tab label; fall back to P3 ID when blank.
+            mapping[p3_text] = tab_text if tab_text else p3_text
             row += 1
         print(
-            f"Config sheet '{self.CONFIG_SHEET}': found {len(mapping)} P3 ID(s): "
-            + ", ".join(f"{p}→{t}" for p, t in mapping.items())
+            f"Config sheet '{self._config_sheet_name}': found {len(mapping)} P3 ID(s): "
+            + ", ".join(f"{p} -> {t}" for p, t in mapping.items())
         )
         return mapping
 

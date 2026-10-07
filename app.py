@@ -568,8 +568,11 @@ with up_col1:
                     wbs_col=_pcfg.get('wbs_col', 'A'),
                     p3_id_col=_pcfg.get('p3_id_col', 'B'),
                     wbs_start_row=_pcfg.get('wbs_start_row', 2),
+                    template_sheet_name=_pcfg.get('template_sheet_name'),
                 )
-                identifiers = list(temp_reader.p3_wbs_map.keys())
+                # New multi-tab format: p3_tab_map has the P3 IDs from the config sheet.
+                # Legacy format: fall back to p3_wbs_map keys.
+                identifiers = list(temp_reader.p3_tab_map.keys() or temp_reader.p3_wbs_map.keys())
             else:
                 from src.template_reader import TemplateReader
                 temp_reader = TemplateReader(

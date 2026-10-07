@@ -72,6 +72,10 @@ def main():
     )
     ## Step 3: Write to template
     print("Step 3: Writing template output\n")
+    # Load UID map from LE file (optional) so write_hierarchy can populate col H.
+    le_path = config.get('le_file', {}).get('file_path') or ""
+    if le_path.strip():
+        template_writer.load_uid_map(le_path.strip())
     pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos, exception_log=exception_log)
     template_writer.write_hierarchy(hierarchy, pos=pos)
 
