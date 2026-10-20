@@ -115,10 +115,14 @@ Then:
 #### Option 2: Command Line
 
 ```bash
-python main.py
+python -m cli.run                              # auto-detects OpEx vs project template
+python -m cli.main                             # OpEx only
+python -m cli.project                          # project (P3 ID) only
+python -m cli.run configs/config_project.yaml  # explicit config
 ```
 
-Make sure to configure `configs/config_base.yaml` with your file paths first.
+Run these from the project root. Configure the matching file in `configs/` with
+your file paths first.
 
 ---
 
@@ -205,27 +209,47 @@ financial-automation-project/
  requirements.txt                   # Python dependencies
  .gitignore                         # Git ignore rules
 
- app.py                             # Streamlit web application
- main.py                            # Command-line entry point
- streamlit_backend.py               # Backend orchestration for Streamlit
- streamlit_config.py                # Configuration management for Streamlit
+ app.py                             # Streamlit entry point (run: streamlit run app.py)
+
+ webapp/                            # Streamlit support code
+    streamlit_backend.py           # Pipeline orchestration for the UI
+    streamlit_config.py            # Configuration management for the UI
+
+ api/                               # FastAPI service (run: uvicorn api.main:app)
+    main.py                        # App and endpoints
+    backend.py                     # Pipeline orchestrator
+    config.py                      # Config loading
+
+ cli/                               # Command-line entry points
+    run.py                         # Auto-detects OpEx vs project
+    main.py                        # OpEx pipeline
+    project.py                     # Project (P3 ID) pipeline
 
  src/                               # Core source code
-    __init__.py
-    forecast_reader.py             # Vendor forecast file reader
-    transactional_detail_reader.py # TIES file reader
-    template_reader.py             # Template structure reader
-    template_writer.py             # Output workbook writer
     models.py                      # Data models and exceptions
-    utils.py                       # Utility functions
+    readers/                       # Input readers
+       transactional_detail_reader.py
+       forecast_reader.py
+       template_reader.py          # OpEx template
+       project_template_reader.py  # Project template
+    writers/
+       template_writer.py          # Output workbook writer (also LE / Budget tab)
+    pipeline/                      # Hierarchy building
+       utils.py                    # OpEx hierarchy + config helpers
+       project_utils.py            # Project hierarchy
+    common/
+       col_utils.py                # Find columns by header text
+       notices.py                  # Front-end notices (month-end actuals banner)
+
+ tools/                             # One-off maintenance scripts
+    rebuild_p3_template.py
 
  configs/                           # Configuration files
     config_base.yaml               # Base configuration
     config_streamlit.yaml          # Streamlit-specific config (created by UI)
 
  data/                              # Sample data (not in repo)
-    flowchart.png                  # Architecture diagram
-    template_output.xlsx           # Sample output
+    (sample inputs / templates / LE files)
 
  notebooks/                         # Jupyter notebooks for exploration
     exploring_data.ipynb

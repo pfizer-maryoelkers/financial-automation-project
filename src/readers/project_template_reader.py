@@ -1,7 +1,7 @@
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from src.col_utils import find_po_col, norm as _hdr_norm
+from src.common.col_utils import find_po_col, norm as _hdr_norm
 import re
 
 # Month abbreviations used when scanning for metric+month header cells.

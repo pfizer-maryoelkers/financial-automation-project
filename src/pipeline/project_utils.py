@@ -18,7 +18,7 @@ import pandas as pd
 from collections import defaultdict
 
 from src.models import WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType, P3ID
-from src.project_template_reader import extract_project_root, wbs_charge_type
+from src.readers.project_template_reader import extract_project_root, wbs_charge_type
 
 # Forecast month shift: maps a 3-letter month key one step back (same as OpEx).
 _FORECAST_MONTH_SHIFT = {

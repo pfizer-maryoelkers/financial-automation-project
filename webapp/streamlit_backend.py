@@ -10,13 +10,13 @@ from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 from datetime import datetime
 
-from src.forecast_reader import ForecastReader
-from src.transactional_detail_reader import TransactionalDetailReader
-from src.template_reader import TemplateReader
-from src.project_template_reader import ProjectTemplateReader
-from src.template_writer import TemplateWriter
-from src.utils import build_hierarchy, detect_template_type
-from src.project_utils import build_project_hierarchy
+from src.readers.forecast_reader import ForecastReader
+from src.readers.transactional_detail_reader import TransactionalDetailReader
+from src.readers.template_reader import TemplateReader
+from src.readers.project_template_reader import ProjectTemplateReader
+from src.writers.template_writer import TemplateWriter
+from src.pipeline.utils import build_hierarchy, detect_template_type
+from src.pipeline.project_utils import build_project_hierarchy
 from src.models import ExceptionLog
 
 
@@ -386,7 +386,7 @@ class PipelineOrchestrator:
           3. Write combined exception reports once at the end.
         Falls back to the legacy single-sheet path when no config sheet is present.
         """
-        from src.utils import load_config as _load_yaml_config
+        from src.pipeline.utils import load_config as _load_yaml_config
 
         # Always use config_project.yaml for project settings.
         pcfg = _load_yaml_config('configs/config_project.yaml')

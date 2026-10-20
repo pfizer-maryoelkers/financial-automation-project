@@ -1,7 +1,7 @@
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from src.col_utils import find_header_row, find_label_col, find_po_col
+from src.common.col_utils import find_header_row, find_label_col, find_po_col
 
 
 class TemplateReader:
@@ -16,7 +16,7 @@ class TemplateReader:
 
     This reader is **OpEx-specific**.  For project / CapEx templates (those
     with a P3 ID config sheet or a WBS/P3-ID column pair) use
-    ``ProjectTemplateReader`` from ``src.project_template_reader`` instead.
+    ``ProjectTemplateReader`` from ``src.readers.project_template_reader`` instead.
 
     The pipeline separation is:
         OpEx  →  TemplateReader  +  build_hierarchy  +  TemplateWriter (no p3_id_column)

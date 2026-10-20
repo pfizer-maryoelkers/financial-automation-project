@@ -8,7 +8,7 @@ POST /extract-cost-centers     upload template → list of cost centers
 POST /run                      upload all 3 files → download output .xlsx
 
 Start the server:
-    uvicorn api:app --reload --port 8000
+    uvicorn api.main:app --reload --port 8000
 """
 
 import traceback
@@ -18,9 +18,9 @@ from typing import List, Optional
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
-from api_backend import FileHandler, PipelineOrchestrator
-from api_config import config_to_dict, load_config
-from src.template_reader import TemplateReader
+from api.backend import FileHandler, PipelineOrchestrator
+from api.config import config_to_dict, load_config
+from src.readers.template_reader import TemplateReader
 
 app = FastAPI(
     title="Financial Automation API",

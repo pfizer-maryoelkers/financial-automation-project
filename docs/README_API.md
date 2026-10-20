@@ -16,7 +16,7 @@ pip install -r requirements.txt
 ## Start the server
 
 ```bash
-uvicorn api:app --reload --port 8000
+uvicorn api.main:app --reload --port 8000
 ```
 
 The interactive docs are then at **http://localhost:8000/docs**
@@ -131,12 +131,12 @@ export async function POST(req: Request) {
 ## Project structure
 
 ```
-api.py              ← FastAPI app + all endpoints
-api_backend.py      ← Pipeline orchestrator (no UI dependency)
-api_config.py       ← Config loading (no Streamlit dependency)
-src/                ← Core pipeline — unchanged
-configs/            ← YAML configs — unchanged
+api/main.py         ← FastAPI app + all endpoints
+api/backend.py      ← Pipeline orchestrator (no UI dependency)
+api/config.py       ← Config loading (no Streamlit dependency)
+src/                ← Core pipeline (readers / writers / pipeline / common)
+configs/            ← YAML configs
 ```
 
-`app.py` and `streamlit_backend.py` are the old Streamlit layer and are no
+`app.py` and `webapp/` are the old Streamlit layer and are no
 longer needed once you move to the API backend.

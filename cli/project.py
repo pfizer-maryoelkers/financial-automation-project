@@ -1,4 +1,4 @@
-"""project_main.py
+"""cli/project.py
 Entry point for the CapEx / Project pipeline.
 
 New layout (v2):
@@ -17,19 +17,19 @@ New layout (v2):
 Legacy layout (no "Enter All Your P3 IDs" sheet) still works as before.
 
 Usage:
-    py project_main.py
+    py -m cli.project
 """
 
 import sys, io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
-from src.utils import load_config
-from src.forecast_reader import ForecastReader
-from src.transactional_detail_reader import TransactionalDetailReader
-from src.project_template_reader import ProjectTemplateReader
-from src.template_writer import TemplateWriter
-from src.project_utils import build_project_hierarchy
+from src.pipeline.utils import load_config
+from src.readers.forecast_reader import ForecastReader
+from src.readers.transactional_detail_reader import TransactionalDetailReader
+from src.readers.project_template_reader import ProjectTemplateReader
+from src.writers.template_writer import TemplateWriter
+from src.pipeline.project_utils import build_project_hierarchy
 from src.models import ExceptionLog
 
 config_path = 'configs/config_project.yaml'

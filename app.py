@@ -8,9 +8,9 @@ import tempfile
 
 import streamlit as st
 from pathlib import Path
-from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
-from streamlit_config import ConfigManager
-from src.notices import actuals_file_notice
+from webapp.streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
+from webapp.streamlit_config import ConfigManager
+from src.common.notices import actuals_file_notice
 
 # Page configuration
 st.set_page_config(
@@ -557,14 +557,14 @@ with up_col1:
                 tmp_file.write(template_file.getvalue())
                 tmp_path = tmp_file.name
 
-            from src.utils import detect_template_type
+            from src.pipeline.utils import detect_template_type
             ttype = detect_template_type(tmp_path)
             st.session_state.template_type = ttype
             app_config = st.session_state.app_config
 
             if ttype == 'project':
-                from src.project_template_reader import ProjectTemplateReader
-                from src.utils import load_config as _load_proj_cfg
+                from src.readers.project_template_reader import ProjectTemplateReader
+                from src.pipeline.utils import load_config as _load_proj_cfg
                 _pcfg = _load_proj_cfg('configs/config_project.yaml')['template']
                 temp_reader = ProjectTemplateReader(
                     file_path=tmp_path,
@@ -580,7 +580,7 @@ with up_col1:
                 # Legacy format: fall back to p3_wbs_map keys.
                 identifiers = list(temp_reader.p3_tab_map.keys() or temp_reader.p3_wbs_map.keys())
             else:
-                from src.template_reader import TemplateReader
+                from src.readers.template_reader import TemplateReader
                 temp_reader = TemplateReader(
                     file_path=tmp_path,
                     header_row=app_config.template.header_row,

@@ -1,4 +1,4 @@
-"""run.py
+"""cli/run.py
 Unified entry point for the financial automation pipeline.
 
 Automatically detects whether the configured template is an OpEx (Cost-Center)
@@ -7,25 +7,25 @@ corner of the workbook, then runs the appropriate pipeline.
 
 Usage
 -----
-    py run.py                          # uses configs/config_base.yaml  (OpEx)
-    py run.py configs/config_project.yaml   # uses project config explicitly
+    py -m cli.run                          # uses configs/config_base.yaml  (OpEx)
+    py -m cli.run configs/config_project.yaml   # uses project config explicitly
 
 The config file to use can also be changed by editing CONFIG_PATH below.
 If no argument is passed the script looks for configs/config_base.yaml.
 """
 
 import sys
-from src.utils import load_config, detect_template_type
+from src.pipeline.utils import load_config, detect_template_type
 from src.models import ExceptionLog
 
 
 def _run_opex(config: dict) -> None:
     """Run the OpEx (Cost-Center) pipeline."""
-    from src.forecast_reader import ForecastReader
-    from src.transactional_detail_reader import TransactionalDetailReader
-    from src.template_reader import TemplateReader
-    from src.template_writer import TemplateWriter
-    from src.utils import build_hierarchy
+    from src.readers.forecast_reader import ForecastReader
+    from src.readers.transactional_detail_reader import TransactionalDetailReader
+    from src.readers.template_reader import TemplateReader
+    from src.writers.template_writer import TemplateWriter
+    from src.pipeline.utils import build_hierarchy
 
     t  = config["template"]
     tw = config["template_writer"]
@@ -100,11 +100,11 @@ def _run_opex(config: dict) -> None:
 
 def _run_project(config: dict) -> None:
     """Run the CapEx / Project (P3-ID / WBS) pipeline."""
-    from src.forecast_reader import ForecastReader
-    from src.transactional_detail_reader import TransactionalDetailReader
-    from src.project_template_reader import ProjectTemplateReader
-    from src.template_writer import TemplateWriter
-    from src.project_utils import build_project_hierarchy
+    from src.readers.forecast_reader import ForecastReader
+    from src.readers.transactional_detail_reader import TransactionalDetailReader
+    from src.readers.project_template_reader import ProjectTemplateReader
+    from src.writers.template_writer import TemplateWriter
+    from src.pipeline.project_utils import build_project_hierarchy
 
     t  = config["template"]
     tw = config["template_writer"]
