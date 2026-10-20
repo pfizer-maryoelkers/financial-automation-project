@@ -15,6 +15,9 @@ class PO:
     monthly_data: dict[str, MonthlyMetrics] = field(default_factory=dict)
     reclass_adjustments: dict[str, list] = field(default_factory=dict)
     # reclass_adjustments: {month_label: [(amount, description), ...]}
+    er_adjustments: dict[str, list] = field(default_factory=dict)
+    # er_adjustments: {month_label: [(amount, er_number), ...]} — expense-report
+    # transactions that carried a real PO and so were posted on the PO's own row
     legal_entity: Optional[str] = None
     country: Optional[str] = None
     vendor_name: Optional[str] = None
@@ -70,6 +73,10 @@ class ExceptionEntry:
 class ExceptionLog:
     entries: list[ExceptionEntry] = field(default_factory=list)
     _seen_keys: set = field(default_factory=set, repr=False)
+    # Transactional-df indices of every row assigned to a P3 ID (project pipeline).
+    p3_row_indices: set = field(default_factory=set, repr=False)
+    # Transactional-df index → P3 ID tab the row was assigned to.
+    row_p3: dict = field(default_factory=dict, repr=False)
 
     def log(self, exception_type: ExceptionType, **kwargs):
         # Prevent logging the exact same source row more than once

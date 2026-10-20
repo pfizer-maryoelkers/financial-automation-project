@@ -157,6 +157,8 @@ def main():
             for entry in el.entries:
                 merged_log.entries.append(entry)
             merged_log._seen_keys.update(el._seen_keys)
+            merged_log.p3_row_indices.update(el.p3_row_indices)
+            merged_log.row_p3.update(el.row_p3)
 
         merged_log.summary()
         template_writer.write_exception_data_sheet(merged_log)

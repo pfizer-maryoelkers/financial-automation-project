@@ -310,6 +310,7 @@ class PipelineOrchestrator:
             template_pos=template_reader.pos,
             template_rows=template_reader.template_rows,
             intl_po_set=intl_po_set,
+            er_notes=transactional_reader.get_er_notes(),
         )
 
         total_exceptions = len(self.exception_log.entries)
@@ -320,7 +321,7 @@ class PipelineOrchestrator:
         self.logger.info("Step 3/4: Writing template output...")
         self._update_progress(65)
 
-        output_filename = Path(self.config['template_writer'].get('output_path', 'template_output.xlsx')).name
+        output_filename = Path(self.config['template_writer'].get('output_path', 'opex_output.xlsx')).name
         output_path = Path(file_paths['template']).parent / output_filename
 
         template_writer = TemplateWriter(
@@ -461,7 +462,7 @@ class PipelineOrchestrator:
                 p3_tab_map = {k: v for k, v in p3_tab_map.items() if k in selected_p3_ids}
                 self.logger.info(f"Filtered to {len(p3_tab_map)} selected P3 ID(s)")
 
-            output_filename = Path(ptw.get('output_path', 'P3 Testing.xlsx')).name
+            output_filename = Path(ptw.get('output_path', 'project_output.xlsx')).name
             output_path = Path(file_paths['template']).parent / output_filename
 
             template_writer = TemplateWriter(
@@ -535,6 +536,8 @@ class PipelineOrchestrator:
                 for entry in el.entries:
                     self.exception_log.entries.append(entry)
                 self.exception_log._seen_keys.update(el._seen_keys)
+                self.exception_log.p3_row_indices.update(el.p3_row_indices)
+                self.exception_log.row_p3.update(el.row_p3)
 
             self.logger.info(f"Step 4/4: {len(self.exception_log.entries)} total exceptions")
             self._update_progress(90)
@@ -572,7 +575,7 @@ class PipelineOrchestrator:
             self.logger.info("Step 3/4: Writing template output...")
             self._update_progress(65)
 
-            output_filename = Path(ptw.get('output_path', 'P3 Testing.xlsx')).name
+            output_filename = Path(ptw.get('output_path', 'project_output.xlsx')).name
             output_path = Path(file_paths['template']).parent / output_filename
 
             template_writer = TemplateWriter(

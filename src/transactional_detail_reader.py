@@ -37,6 +37,7 @@ class TransactionalDetailReader:
         self.data = None
         self._excel_row: 'pd.Series | None' = None  # maps pandas index → 1-based Excel row
         self.shift_months = shift_months
+        self._er_notes: 'dict | None' = None  # filled by get_transactional_data()
 
         # Strip whitespace from required_cols and colmap values so they always
         # match file headers regardless of accidental leading/trailing spaces in config.
@@ -560,6 +561,38 @@ class TransactionalDetailReader:
                         print(f"  - Converted {n_converted} Reclass row(s) without 95 PO to Actual PO rows (appended ' RC').")
 
 
+            # ── Detect Expense Reports from the GL line description ─────────────
+            # A line such as "ER91389 - SECURITY - SECURITY" marks an ER.  Treat
+            # the ER number as the PO so the ER gets its own PO-style row on the
+            # template with all of its transactions (actuals, accruals,
+            # reversals) alongside it.  Rows with a real 95… PO are left alone.
+            if po_col_name in self.data.columns and type_col_name in self.data.columns:
+                _er_rx = r'(?i)\b(ER\d+)\b'
+                _er_desc_cols = [c for c in (
+                    'GL Line Description', 'GL Transaction Description',
+                    'Description', 'CO Doc Line Item Txt', 'ER Description',
+                ) if c in self.data.columns]
+                _er_found = pd.Series(pd.NA, index=self.data.index, dtype=object)
+                for _c in _er_desc_cols:
+                    _ex = self.data[_c].astype(str).str.extract(_er_rx, expand=False).str.upper()
+                    _er_found = _er_found.where(_er_found.notna(), _ex)
+                _po_now = self.data[po_col_name].astype(str).str.strip()
+                # ER lines that already carry a real PO stay on that PO's row;
+                # remember the ER number so the template can flag them.
+                self.data['_ER_Ref'] = None
+                _er_with_po = _er_found.notna() & _po_now.str.startswith('95')
+                self.data.loc[_er_with_po, '_ER_Ref'] = _er_found[_er_with_po]
+                _er_rows = _er_found.notna() & ~_po_now.str.startswith('95')
+                if _er_rows.any():
+                    self.data.loc[_er_rows, po_col_name] = _er_found[_er_rows]
+                    # ER lines arrive as Actual or as Reclass (doc prefix 9 with
+                    # PO/WBS "#") — both become ER rows on the template.
+                    self.data.loc[
+                        _er_rows & self.data[type_col_name].isin(['Actual', 'Reclass']),
+                        type_col_name,
+                    ] = 'ER'
+                    print(f"  - Identified {int(_er_rows.sum())} Expense Report row(s) from GL line description.")
+
             # ── Resolve non-95 PO rows via CO Doc Line Item Txt (vectorised) ────
             # Rows where Document num/PO# does NOT start with '95' are not real
             # vendor POs.  The actual PO may be embedded in CO Doc Line Item Txt:
@@ -573,7 +606,8 @@ class TransactionalDetailReader:
                     if type_col_name in self.data.columns
                     else pd.Series(False, index=self.data.index)
                 )
-                non_po_mask = ~is_real_po & ~is_er_row & ~po_series.str.endswith(' RC', na=False)
+                is_er_row  = is_er_row | po_series.str.fullmatch(r'(?i)ER\d+', na=False)
+                non_po_mask = ~is_real_po & ~is_er_row &~po_series.str.endswith(' RC', na=False)
 
                 if non_po_mask.any() and _co_doc_col in self.data.columns:
                     # str.extract returns the first capture group (vectorised C loop)
@@ -781,7 +815,15 @@ class TransactionalDetailReader:
                 f"Please verify that your config colmap and raw sheet columns align. "
                 f"Available columns in the dataset after normalization: {list(self.data.columns)}"
             )
+        _er_ref_col = "_ER_Ref"
+        if _er_ref_col in self.data.columns:
+            cols.append(_er_ref_col)
         data_copy = self.data[cols].copy()
+        if _er_ref_col in data_copy.columns:
+            data_copy[_er_ref_col] = data_copy[_er_ref_col].fillna("")
+        else:
+            data_copy[_er_ref_col] = ""
+        self._er_notes = {}
         # Ensure amount column is numeric
         data_copy[self.colmap["amount"]] = pd.to_numeric(
             data_copy[self.colmap["amount"]],
@@ -801,6 +843,18 @@ class TransactionalDetailReader:
         known_years = parsed_years.dropna()
         current_year = int(known_years.max()) if not known_years.empty else None
 
+        # OpEx: flag rows whose GL Posting Date month equals the Accounting Period
+        # month.  Those invoices post in their own period (no one-month shift).
+        _pd_match_col = "_posting_matches_ap"
+        if posting_date_col:
+            _post_month = pd.to_datetime(
+                data_copy[posting_date_col], errors='coerce', format='mixed'
+            ).dt.month
+            _ap_month = data_copy[month_col].apply(lambda v: self._parse_ap(v)[0])
+            data_copy[_pd_match_col] = (_post_month == _ap_month) & _post_month.notna()
+        else:
+            data_copy[_pd_match_col] = False
+
         # Group by PO / Month / Type / Cost Center / WBS
         group_cols = [
             self.colmap["po"],
@@ -808,6 +862,8 @@ class TransactionalDetailReader:
             self.colmap["type"],
             self.colmap["cost_center"],
             self.colmap["wbs"],
+            _pd_match_col,
+            _er_ref_col,
         ]
         grouped = (
             data_copy.groupby(group_cols)[self.colmap["amount"]]
@@ -848,10 +904,21 @@ class TransactionalDetailReader:
 
             if not self.shift_months:
                 # Direct mapping — no shift for any type.
-                # Prior-year December (e.g. Period 12 2025 in a 2026 file) is
-                # kept and written to the "Dec" bucket so it lands in the
-                # "Accrual Reversal Dec" column (col K) of the project template.
-                write_month = self.month_map.get(month_num)
+                # Prior-year December (e.g. Period 12 2025 in a 2026 file) goes to
+                # the "Dec (25)" bucket, same as OpEx.  The template writer falls
+                # back to plain "Dec" if the template has no "Dec (YY)" column.
+                if (month_num == 12 and current_year is not None
+                        and ap_year is not None and ap_year < current_year):
+                    write_month = f"Dec{py_suffix}"
+                else:
+                    write_month = self.month_map.get(month_num)
+            elif type_name == "Actual" and row[_pd_match_col]:
+                # Posting date month == accounting period month → post in that month.
+                if (month_num == 12 and current_year is not None
+                        and ap_year is not None and ap_year < current_year):
+                    write_month = f"Dec{py_suffix}"
+                else:
+                    write_month = self.month_map.get(month_num)
             elif type_name in ("Actual", "ER", "Reclass", "Reversal"):
                 shifted_num = month_num - 1
                 if shifted_num == 0:
@@ -890,6 +957,10 @@ class TransactionalDetailReader:
             # Assign value by type
             if type_name in ["Actual", "ER", "Reclass"]:
                 result[key][write_month]["Actual"] = result[key][write_month].get("Actual", 0) + value
+                if row[_er_ref_col] and type_name == "Actual":
+                    self._er_notes.setdefault(key, {}).setdefault(write_month, []).append(
+                        (float(value), row[_er_ref_col])
+                    )
             elif type_name in ["Accrual", "Reversal"]:
                 result[key][write_month][type_name] = result[key][write_month].get(type_name, 0) + value
 
@@ -924,6 +995,16 @@ class TransactionalDetailReader:
         return result
     
 
+
+    def get_er_notes(self) -> dict:
+        """Expense-report transactions that carry a real PO.
+
+        Returns {(po, cost_center): {month_label: [(amount, er_number), ...]}}.
+        Month labels match those produced by get_transactional_data().
+        """
+        if getattr(self, "_er_notes", None) is None:
+            self.get_transactional_data()
+        return self._er_notes
 
     def get_intl_po_set(self) -> set:
         """Return the set of PO numbers whose country marks them as international.
@@ -987,14 +1068,19 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            month_num, _ = self._parse_ap(raw_month)
+            month_num, _ap_year = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
             # Shift back one month (OpEx only): AP01 → "Dec (YY)", AP02 → Jan, …
-            # Projects (shift_months=False) map directly: Period N → month N.
+            # Projects (shift_months=False) map directly: Period N → month N,
+            # except prior-year December, which goes to "Dec (YY)" like OpEx.
             if not self.shift_months:
-                month_label = self.month_map.get(month_num)
+                if (month_num == 12 and _current_year is not None
+                        and _ap_year is not None and _ap_year < _current_year):
+                    month_label = f"Dec ({str(_current_year - 1)[2:]})"
+                else:
+                    month_label = self.month_map.get(month_num)
             else:
                 shifted_num = month_num - 1
                 if shifted_num == 0:
@@ -1049,14 +1135,19 @@ class TransactionalDetailReader:
                 continue
 
             raw_month = row[self.colmap["month"]]
-            month_num, _ = self._parse_ap(raw_month)
+            month_num, _ap_year = self._parse_ap(raw_month)
             if month_num is None:
                 continue
 
             # Shift back one month (OpEx only): AP01 → "Dec (YY)", AP02 → Jan, …
-            # Projects (shift_months=False) map directly: Period N → month N.
+            # Projects (shift_months=False) map directly: Period N → month N,
+            # except prior-year December, which goes to "Dec (YY)" like OpEx.
             if not self.shift_months:
-                month_label = self.month_map.get(month_num)
+                if (month_num == 12 and _rn_current_year is not None
+                        and _ap_year is not None and _ap_year < _rn_current_year):
+                    month_label = f"Dec ({str(_rn_current_year - 1)[2:]})"
+                else:
+                    month_label = self.month_map.get(month_num)
             else:
                 shifted_num = month_num - 1
                 if shifted_num == 0:

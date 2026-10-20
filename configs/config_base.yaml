@@ -50,7 +50,7 @@ le_file:
 # ============================
 ## Template Writer
 template_writer:
-  output_path: "data/templates/template_AP03.xlsx"
+  output_path: "data/templates/opex_output.xlsx"
   overwrite: False
   dec_acc_reversal_col: "N"
   forecast_source_cols:

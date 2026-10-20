@@ -138,6 +138,9 @@ class TemplateWriter:
         self.overwrite = overwrite
         self.po_column = po_column
         self._pos: dict = {}
+        self._all_pos: dict = {}  # POs placed on any tab (accumulated across tab switches)
+        self._placed_pairs: set = set()  # (P3 ID / cost center, PO) written to a tab
+        self._row_values: dict = {}      # (P3 ID, PO) -> numeric figures on that PO's tab row
         self._transactional_df = None
         self._hierarchy_ids: set = set()  # top-level keys from write_hierarchy (CC or P3 IDs)
         # WBS/Project-Code → UID lookup built from the LE file.
@@ -345,7 +348,8 @@ class TemplateWriter:
             )
         self.sheet = self.wb[tab_name]  # type: ignore[assignment]
 
-        # Reset per-sheet state
+        # Reset per-sheet state (keep running totals across tabs for the Exceptions tab)
+        self._all_pos.update(self._pos)
         self._pos = {}
         self._hierarchy_ids = set()
         self.header_row = self._header_row_config
@@ -1541,6 +1545,12 @@ class TemplateWriter:
                         print(f"PO '{po_number}' not found in template. Skipping.")
                         continue
                     row = pos[po_number]
+                    # Remember that this P3 ID / PO pair is on a tab (used by the
+                    # Exceptions sheet's "On Template" column).
+                    # gross_po_value is only set when transactional data was found for
+                    # this (PO, P3 ID) — i.e. the amounts were really written.
+                    if po.gross_po_value is not None:
+                        self._placed_pairs.add((str(cc_id).strip(), po_number))
 
                     # Cost Center / P3-ID label (skipped for project template — no label column)
                     if _has_cc_label_col:
@@ -1628,6 +1638,7 @@ class TemplateWriter:
                     # Also remap po.reclass_adjustments keys to the same target month.
                     _write_data: dict[str, MonthlyMetrics] = {}
                     _reclass_map: dict[str, list] = {}  # target_month → combined reclass entries
+                    _er_map: dict[str, list] = {}       # target_month → ER transactions on this PO
                     # Build a lookup so suffixed keys ("Nov (25)", "Dec (25)") find the
                     # matching suffixed column, and plain keys find plain columns.
                     # Cross-fallbacks handle mismatches between old and new templates.
@@ -1666,6 +1677,9 @@ class TemplateWriter:
                         for orig_month, entries in po.reclass_adjustments.items():
                             if orig_month == month:
                                 _reclass_map.setdefault(target, []).extend(entries)
+                        for orig_month, entries in po.er_adjustments.items():
+                            if orig_month == month:
+                                _er_map.setdefault(target, []).extend(entries)
                     # Pass 2a — for the project pipeline, clear variance cells for
                     # every month that has NO data so pre-existing formulas don't
                     # show phantom values on rows where nothing was written.
@@ -1741,19 +1755,45 @@ class TemplateWriter:
                                 "\n".join(lines),
                             )
 
+                        # Expense reports that carried a real PO are posted on the PO's
+                        # row: light-green Actual cell plus a note naming the ER(s).
+                        er_entries = _er_map.get(month, [])
+                        if er_entries and actual_col:
+                            actual_cell = self.sheet[f"{actual_col}{row}"]
+                            actual_cell.fill = PatternFill(
+                                start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
+                            )
+                            lines = ["This transaction was an ER (Expense Report):"]
+                            for amt, er_num in er_entries:
+                                sign = "+" if amt >= 0 else "-"
+                                lines.append(f"  {er_num}: {sign}${abs(amt):,.2f}")
+                            actual_cell.comment = _append_comment(
+                                actual_cell.comment, "\n".join(lines)
+                            )
+
                     # Total formula — only when the PO has monthly data
                     if po.monthly_data:
                         self._write_total_formula(row)
+
+                    # Remember the figures actually sitting on this PO's row so the
+                    # Exceptions tab can tell whether a line's own amount shows up.
+                    _vals = set()
+                    for _c in range(1, (self.sheet.max_column or 1) + 1):
+                        if _c == self.po_value_col:
+                            continue  # Invoice Amount is a PO total, not a line
+                        _v = self.sheet.cell(row=row, column=_c).value
+                        if isinstance(_v, (int, float)) and not isinstance(_v, bool):
+                            _vals.add(round(float(_v), 2))
+                    self._row_values[(str(cc_id).strip(), po_number)] = _vals
 
         # After all PO data is written, refresh the summary row formulas so they
         # cover the full data range (rows header_row+1 … last data row).
         self._update_summary_formulas()
 
-        # For project templates: compute and cache the R9 / R10 summary totals
-        # directly as numeric values so they are visible without Excel recalculating
-        # the dynamic-array (FILTER) formulas that openpyxl cannot evaluate.
-        if self.p3_id_column is not None:
-            self._cache_project_summary_totals()
+        # NOTE: _cache_project_summary_totals() is intentionally NOT called — it
+        # replaced the template's R9/R10 FILTER array formulas with hard-coded
+        # numbers.  Template formulas must stay intact; Excel recalculates them
+        # on open (see save()).
 
 
     def _cache_project_summary_totals(self) -> None:
@@ -2066,13 +2106,13 @@ class TemplateWriter:
         (Yes/No) showing whether that PO was placed on any template tab.
 
         OpEx pipeline: only exception-log entries are written, with columns:
-            Cost Center | Accounting Period | WBS | Document Number |
-            Source Row | Amount | GL Line Description | Exception Type | On Template
+            Cost Center | Accounting Period | WBS | Vendor Invoice |
+            Source Row | Amount | GL Line Description | On Template
         """
         ws = self.wb.create_sheet("Exceptions")
 
         transactional_df = transactional_df if transactional_df is not None else self._transactional_df
-        template_pos: set = set(self._pos.keys())
+        template_pos: set = set(self._all_pos.keys()) | set(self._pos.keys())
         _BLANK_FILTER = {'', 'none', 'nan', '#', 'not assigned'}
 
         def _norm(val) -> str:
@@ -2089,12 +2129,10 @@ class TemplateWriter:
 
         if is_project:
             # ── PROJECT PIPELINE ────────────────────────────────────────────
-            # Write every transactional row for the matching P3 IDs, plus an
-            # "On Template" column indicating whether the PO was placed on any
-            # cloned template tab.
-
+            # Every transactional row for the processed P3 IDs, plus an
+            # "On Template" column: Yes only when the row's amounts were written
+            # to the tab associated with the row's own P3 ID.
             if transactional_df is not None and not transactional_df.empty:
-                # P3 IDs that were processed (set by write_hierarchy on each tab).
                 known_p3_ids: set = self._hierarchy_ids if self._hierarchy_ids else {
                     str(e.cost_center).strip()
                     for e in exception_log.entries
@@ -2119,44 +2157,127 @@ class TemplateWriter:
                     'Cost Center*': 'P3 ID',
                     'Cost Center':  'P3 ID',
                     'GL Line Description': 'CO Doc Line Item Txt',
+                    'Document Number / PO#': 'Vendor Invoice',
+                    'Document num/PO#': 'Vendor Invoice',
                 }
 
-                if _cc_col and known_p3_ids:
-                    cc_series = transactional_df[_cc_col].astype(str).str.strip()
-                    mask = cc_series.isin(known_p3_ids)
-                    if _type_col:
-                        mask = mask & (transactional_df[_type_col] != 'Reclass')
+                p3_rows = getattr(exception_log, 'p3_row_indices', set())
+                _cls_cols = [c for c in ('Vendor Invoice #', 'Vendor Invoice', 'Document number',
+                                         'Document Number / PO#', 'Document num/PO#', 'AP Voucher Number')
+                             if c in transactional_df.columns]
+                _desc_col = next((c for c in ('CO Doc Line Item Txt', 'GL Line Description')
+                                  if c in transactional_df.columns), None)
+
+                def _classify(df_row) -> str:
+                    """Reviewer rules: document number prefix (2 = Accrual / Accrual
+                    Reversal, 5 = Vendor Invoice, 9 = Reclass), confirmed against the
+                    CO Doc Line Item Txt description.  Conflicts are flagged."""
+                    prefix = ''
+                    for c in _cls_cols:
+                        v = _norm(df_row[c])
+                        if v:
+                            prefix = v[0]
+                            break
+                    amt = pd.to_numeric(df_row[_amt_col], errors='coerce') if _amt_col else 0
+                    amt = 0 if amt != amt else amt
+                    by_prefix = {
+                        '5': 'Vendor Invoice', '9': 'Reclass',
+                        '2': 'Accrual Reversal' if amt < 0 else 'Accrual',
+                    }.get(prefix)
+
+                    desc = str(df_row[_desc_col]).lower() if _desc_col and df_row[_desc_col] == df_row[_desc_col] else ''
+                    by_desc = None
+                    if 'reversal' in desc:
+                        by_desc = 'Accrual Reversal'
+                    elif 'accrual' in desc:
+                        by_desc = 'Accrual'
+                    elif 'reclass' in desc:
+                        by_desc = 'Reclass'
+                    elif 'invoice' in desc or 'vendor' in desc:
+                        by_desc = 'Vendor Invoice'
+
+                    if by_prefix and by_desc:
+                        same_family = by_prefix == by_desc or {by_prefix, by_desc} <= {'Accrual', 'Accrual Reversal'}
+                        return by_prefix if same_family else 'Double Check'
+                    return by_prefix or by_desc or 'Double Check'
+
+                if (_cc_col and known_p3_ids) or p3_rows:
+                    mask = transactional_df.index.isin(list(p3_rows))
+                    if _cc_col and known_p3_ids:
+                        mask = mask | transactional_df[_cc_col].astype(str).str.strip().isin(known_p3_ids).to_numpy()
                     project_rows = transactional_df[mask]
 
+                    _exc_by_row = {
+                        e.row_index: e.exception_type.value
+                        for e in exception_log.entries
+                        if e.row_index is not None
+                    }
+
                     df_columns = list(project_rows.columns)
-                    visible_headers = [_HEADER_RENAMES.get(c, c) for c in df_columns] + ['On Template']
+                    visible_headers = [_HEADER_RENAMES.get(c, c) for c in df_columns] + ['Exception Type', 'On Template']
 
                     for col_idx, h in enumerate(visible_headers, start=1):
                         cell = ws.cell(row=1, column=col_idx, value=h)
                         cell.font = hdr_font
                         cell.fill = hdr_fill
 
-                    for _, df_row in project_rows.iterrows():
+                    for _idx, df_row in project_rows.iterrows():
                         po_raw  = _norm(df_row[_po_col]) if _po_col else ''
                         po_norm = self._norm_po(po_raw) if po_raw else ''
-                        on_tmpl = 'Yes' if po_norm and po_norm in template_pos else 'No'
+
+                        # "Yes" only when the line shows up on the tab associated with
+                        # its own P3 ID: it was assigned to that P3 ID, its type is a
+                        # written type, its PO row is on that tab, and amounts were
+                        # pulled for it (they come from rows whose Cost Center equals
+                        # the P3 ID).  Anything else - including rows only matched to
+                        # another tab - is "No".
+                        _row_p3 = getattr(exception_log, 'row_p3', {}).get(_idx)
+                        _row_cc = str(df_row[_cc_col]).strip() if _cc_col else ''
+                        _valid_type = (not _type_col) or df_row[_type_col] in (
+                            'Actual', 'Accrual', 'Reversal', 'Reclass', 'ER')
+                        # The line's own amount must also be one of the figures on its
+                        # PO's row on that tab (several lines summed into one cell
+                        # do not show up individually).
+                        _amt_here = pd.to_numeric(df_row[_amt_col], errors='coerce') if _amt_col else float('nan')
+                        _on_row = (
+                            _amt_here == _amt_here
+                            and round(float(_amt_here), 2)
+                            in self._row_values.get((str(_row_p3).strip(), po_norm), set())
+                        )
+                        on_tmpl = (
+                            'Yes' if (_row_p3 is not None and po_norm and _valid_type
+                                      and _row_cc == str(_row_p3).strip()
+                                      and (str(_row_p3).strip(), po_norm) in self._placed_pairs
+                                      and _on_row)
+                            else 'No'
+                        )
 
                         for col_idx, col_name in enumerate(df_columns, start=1):
                             val = df_row[col_name]
                             cell = ws.cell(row=row, column=col_idx, value=val if val == val else None)
                             if col_name == _amt_col and val == val and val is not None:
                                 cell.number_format = '#,##0.00'
-                        ws.cell(row=row, column=len(df_columns) + 1, value=on_tmpl)
+                        _xl_row = df_row.get('excel_row') if 'excel_row' in df_columns else None
+                        if _xl_row is None or _xl_row != _xl_row:
+                            _xl_row = _idx + 2
+                        _category = _classify(df_row)
+                        _logged = _exc_by_row.get(_xl_row) or _exc_by_row.get(_idx + 2)
+                        if _logged in (None, ExceptionType.NOT_WORKED_ON_TEMPLATE.value):
+                            _logged = None
+                        _exc_label = f"{_category} - {_logged}" if (_logged and _logged != _category) else _category
+                        ws.cell(row=row, column=len(df_columns) + 1, value=_exc_label)
+                        ws.cell(row=row, column=len(df_columns) + 2, value=on_tmpl)
                         row += 1
                 else:
-                    visible_headers = [_HEADER_RENAMES.get(c, c) for c in transactional_df.columns] + ['On Template']
+                    visible_headers = [_HEADER_RENAMES.get(c, c) for c in transactional_df.columns] + ['Exception Type', 'On Template']
                     for col_idx, h in enumerate(visible_headers, start=1):
                         cell = ws.cell(row=1, column=col_idx, value=h)
                         cell.font = hdr_font
                         cell.fill = hdr_fill
             else:
-                visible_headers = ['On Template']
-                ws.cell(row=1, column=1, value='On Template').font = hdr_font
+                visible_headers = ['Exception Type', 'On Template']
+                for _ci, _h in enumerate(visible_headers, start=1):
+                    ws.cell(row=1, column=_ci, value=_h).font = hdr_font
 
         else:
             # ── OPEX PIPELINE ────────────────────────────────────────────────
@@ -2186,9 +2307,9 @@ class TemplateWriter:
                 active_entries.append(e)
 
             visible_headers = [
-                'Cost Center', 'Accounting Period', 'WBS',
-                'Document Number', 'Source Row', 'Amount', 'GL Line Description',
-                'Exception Type', 'On Template'
+                ('P3 ID' if is_project else 'Cost Center'), 'Accounting Period', 'WBS',
+                'Vendor Invoice', 'Source Row', 'Amount', 'GL Line Description',
+                'On Template'
             ]
 
             for col_idx, h in enumerate(visible_headers, start=1):
@@ -2219,8 +2340,7 @@ class TemplateWriter:
                     row=row, column=7,
                     value=entry.source_row_data.get('GL Line Description') if entry.source_row_data else None,
                 )
-                ws.cell(row=row, column=8, value=entry.exception_type.value)
-                ws.cell(row=row, column=9, value=_on_tmpl)
+                ws.cell(row=row, column=8, value=_on_tmpl)
                 row += 1
 
         # ── Shared: freeze pane, auto-filter, auto-size ──────────────────────
@@ -2449,6 +2569,9 @@ class TemplateWriter:
     def save(self):
         """Saves the workbook to the output path."""
         try:
+            # openpyxl can't evaluate formulas, so force Excel to recalculate all
+            # of them (including FILTER/array formulas) when the file is opened.
+            self.wb.calculation.fullCalcOnLoad = True
             self.wb.save(self.output_path)
             print(f"Workbook saved to: {self.output_path}")
         except Exception as e:

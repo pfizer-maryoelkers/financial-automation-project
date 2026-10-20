@@ -221,6 +221,7 @@ class PipelineOrchestrator:
             template_pos=template_reader.pos,
             template_rows=template_reader.template_rows,
             intl_po_set=intl_po_set,
+            er_notes=transactional_reader.get_er_notes(),
         )
         self.logger.info(f"Hierarchy built: {len(self.exception_log.entries)} exceptions")
         self._progress(60)
@@ -230,7 +231,7 @@ class PipelineOrchestrator:
         self._progress(65)
 
         output_filename = Path(
-            self.config["template_writer"].get("output_path", "template_output.xlsx")
+            self.config["template_writer"].get("output_path", "opex_output.xlsx")
         ).name
         output_path = Path(file_paths["template"]).parent / output_filename
 

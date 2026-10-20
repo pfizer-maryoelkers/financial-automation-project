@@ -135,6 +135,8 @@ def build_project_hierarchy(
             p3_id = cost_center
         if p3_id:
             rows_by_p3[p3_id].append((row_idx, row))
+            exception_log.p3_row_indices.add(row_idx)
+            exception_log.row_p3[row_idx] = p3_id
 
     # ── Step 1b: Pre-compute best project name per PO from the hierarchy map ─
     # Used to fill project_name on PO objects created via the reclass path

@@ -45,7 +45,7 @@ class TransactionalConfig:
 
 @dataclass
 class WriterConfig:
-    output_path: str = "template_output.xlsx"
+    output_path: str = "opex_output.xlsx"
     overwrite: bool = True   # API always overwrites into the temp dir
     dec_acc_reversal_col: str = "N"
     forecast_source_cols: List[str] = field(default_factory=lambda: [

@@ -47,9 +47,9 @@ forecast_reader:
 # normalised automatically by TransactionalDetailReader.
 transactional_detail_reader:
   file_path: "data/transactional/AP07 2026 Actuals Consolidated File PGS & ES.xlsx"
-  # Period N maps directly to month N in the Consolidated Actuals file
-  # (no shift-back-one like the OpEx TIES file uses).
-  shift_months: false
+  # Same month rules as OpEx: Actual/ER/Reclass/Reversal shift back one period
+  # (AP01 -> Dec (25), AP12 -> Nov (25)); Accruals map directly.
+  shift_months: true
   required_cols:
     - "Amount - BER"
   valid_types:
@@ -76,7 +76,7 @@ transactional_detail_reader:
 # ============================
 ## Template Writer
 template_writer:
-  output_path: "data/templates/P3 Testing.xlsx"
+  output_path: "data/templates/project_output.xlsx"
   overwrite: False
   dec_acc_reversal_col: "N"  # same as OpEx layout
   forecast_source_cols:

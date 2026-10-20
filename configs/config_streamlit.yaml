@@ -31,7 +31,7 @@ transactional_detail_reader:
     req_title: GL Transaction Description
     type: Type
 template_writer:
-  output_path: template_output.xlsx
+  output_path: opex_output.xlsx
   overwrite: false
   dec_acc_reversal_col: N
   forecast_source_cols:

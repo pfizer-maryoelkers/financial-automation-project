@@ -108,6 +108,7 @@ def build_hierarchy(
     template_pos: dict | None = None,
     template_rows: dict | None = None,
     intl_po_set: set | None = None,
+    er_notes: dict | None = None,
 ) -> dict[str, CostCenter]:
     
     # Regex pattern to extract ER numbers (ER followed by digits)
@@ -249,6 +250,15 @@ def build_hierarchy(
                 else:
                     continue
 
+            # Check 1a: PO is already an ER number (set by the transactional reader
+            # from the GL line description) — group under the "ER" bucket so it is
+            # written as an ER row; the real WBS is kept for display.
+            if po and wbs and wbs != "ER" and er_pattern.fullmatch(str(po).strip()):
+                po = str(po).strip().upper()
+                er_real_wbs.setdefault(po, wbs)
+                wbs = "ER"
+                er_extracted_count += 1
+
             # Check 1b: PO exists but looks like a full ER description — extract clean ER number
             # e.g. PO column contains "ER97054 - ARCH & TECH - APP ARCHITECTURE"
             if po and not wbs:
@@ -360,6 +370,12 @@ def build_hierarchy(
                     metrics.accrual = values.get('Accrual', 0.0)
                     metrics.accrual_reversal = values.get('Reversal', 0.0)
             
+            # ER transactions that carry a real PO stay on the PO's row; keep the
+            # ER numbers so the writer can flag the cells.
+            if er_notes and wbs != "ER":
+                for _m, _entries in (er_notes.get(_td_key) or {}).items():
+                    po_obj.er_adjustments[_m] = list(_entries)
+
             # Fill forecast from forecast data (only for non-zero values).
             # International POs shift the forecast month back by 1 (same rule as
             # their transactional data) so Forecast and Actual land in the same column.
