@@ -1,0 +1,10 @@
+[theme]
+base = "light"
+primaryColor = "#0000C9"              # Pfizer Blue 70
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#E8F2FF"  # Pfizer Blue 10
+textColor = "#000067"                 # Pfizer Blue 90
+
+[server]
+# Serves ./static (Pfizer fonts and logo) at /app/static/...
+enableStaticServing = true

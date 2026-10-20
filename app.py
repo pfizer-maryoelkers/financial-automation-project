@@ -11,216 +11,19 @@ from pathlib import Path
 from webapp.streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
 from webapp.streamlit_config import ConfigManager
 from src.common.notices import actuals_file_notice
+from webapp.pfizer_theme import (
+    apply_pfizer_theme, render_footer, render_header, render_template_pill,
+)
 
 # Page configuration
 st.set_page_config(
     page_title="Financial Automation",
-    page_icon="📄",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
 
-# Global typography — Inter for everything, light + dark mode aware
-st.markdown(
-    """
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-
-    /* ── Shared tokens ────────────────────────────────────────────────── */
-    :root {
-        --primary:        #5a8a5e;
-        --primary-dark:   #3d6b41;
-        --primary-light:  #dceedd;
-        --accent-red:     #c0392b;
-        --accent-red-dk:  #a93226;
-
-        /* alert colours — light mode */
-        --success-bg:     #dceedd;
-        --success-fg:     #2d4f30;
-        --success-border: #5a8a5e;
-        --warn-bg:        #faf0d0;
-        --warn-fg:        #5a4a10;
-        --warn-border:    #b89a2a;
-        --info-bg:        #eef1f7;
-        --info-fg:        #2c3a52;
-        --info-border:    #6b7fa0;
-
-        /* file-uploader surface — light mode */
-        --upload-file-bg: #eef1f7;
-        --upload-border:  #8a9bb5;
-        --upload-hover-bg:#eef1f7;
-        --upload-hover-border: #6b7fa0;
-
-        /* toggle-button surface — light mode */
-        --toggle-bg:      #ffffff;
-        --toggle-fg:      #2d4f30;
-
-        /* multiselect hover — light mode */
-        --ms-hover-bg:    #dceedd;
-        --ms-hover-fg:    #2d4f30;
-    }
-
-    /* ── Dark-mode token overrides ────────────────────────────────────── */
-    [data-theme="dark"],
-    @media (prefers-color-scheme: dark) {
-        :root {
-            --success-bg:     #1a3320;
-            --success-fg:     #8ecf94;
-            --success-border: #5a8a5e;
-            --warn-bg:        #2e2500;
-            --warn-fg:        #e0c96a;
-            --warn-border:    #b89a2a;
-            --info-bg:        #1a2030;
-            --info-fg:        #9db4d4;
-            --info-border:    #6b7fa0;
-
-            --upload-file-bg: #1e2630;
-            --upload-border:  #4a5a70;
-            --upload-hover-bg:#232d3a;
-            --upload-hover-border: #6b7fa0;
-
-            --toggle-bg:      #1e2630;
-            --toggle-fg:      #8ecf94;
-
-            --ms-hover-bg:    #1a3320;
-            --ms-hover-fg:    #8ecf94;
-        }
-    }
-
-    /* ── Layout ───────────────────────────────────────────────────────── */
-    .block-container { padding-top: 1.2rem !important; }
-
-    /* ── Typography ───────────────────────────────────────────────────── */
-    html, body, [class*="css"], h2, h3, h4, button, input, label, p {
-        font-family: 'Inter', sans-serif !important;
-        font-size: 15px !important;
-    }
-    h1 { font-family: 'Inter', sans-serif !important; }
-    h2 { font-size: 1.3rem !important; }
-    h3 { font-size: 1.1rem !important; }
-    .stButton > button { font-size: 15px !important; }
-
-    /* ── Primary / download buttons ──────────────────────────────────── */
-    .stButton > button[kind="primary"],
-    [data-testid="stDownloadButton"] > button {
-        background-color: var(--accent-red) !important;
-        border-color:     var(--accent-red) !important;
-        color: #fff !important;
-    }
-    .stButton > button[kind="primary"]:hover,
-    [data-testid="stDownloadButton"] > button:hover {
-        background-color: var(--accent-red-dk) !important;
-        border-color:     var(--accent-red-dk) !important;
-    }
-
-    /* ── Alerts ───────────────────────────────────────────────────────── */
-    [data-testid="stAlert"][kind="success"],
-    div[data-baseweb="notification"][kind="positive"] {
-        background-color: var(--success-bg) !important;
-        border-left-color: var(--success-border) !important;
-        color: var(--success-fg) !important;
-    }
-    [data-testid="stAlert"][kind="success"] svg,
-    div[data-baseweb="notification"][kind="positive"] svg {
-        fill: var(--success-border) !important;
-    }
-
-    [data-testid="stAlert"][kind="warning"],
-    div[data-baseweb="notification"][kind="warning"] {
-        background-color: var(--warn-bg) !important;
-        border-left-color: var(--warn-border) !important;
-        color: var(--warn-fg) !important;
-    }
-    [data-testid="stAlert"][kind="warning"] svg,
-    div[data-baseweb="notification"][kind="warning"] svg {
-        fill: var(--warn-border) !important;
-    }
-
-    [data-testid="stAlert"][kind="info"],
-    div[data-baseweb="notification"][kind="info"] {
-        background-color: var(--info-bg) !important;
-        border-left-color: var(--info-border) !important;
-        color: var(--info-fg) !important;
-    }
-    [data-testid="stAlert"][kind="info"] svg,
-    div[data-baseweb="notification"][kind="info"] svg {
-        fill: var(--info-border) !important;
-    }
-
-    /* ── File uploader ────────────────────────────────────────────────── */
-    [data-testid="stFileUploaderDropzoneInput"] + div button,
-    [data-testid="baseButton-secondary"] {
-        background-color: var(--primary) !important;
-        border-color:     var(--primary) !important;
-        color: #fff !important;
-    }
-    [data-testid="baseButton-secondary"]:hover {
-        background-color: var(--primary-dark) !important;
-        border-color:     var(--primary-dark) !important;
-        color: #fff !important;
-    }
-    [data-testid="stFileUploaderDropzone"] {
-        border-color: var(--upload-border) !important;
-    }
-    [data-testid="stFileUploaderDropzone"]:hover {
-        background-color: var(--upload-hover-bg) !important;
-        border-color:     var(--upload-hover-border) !important;
-    }
-    [data-testid="stFileUploaderFile"] {
-        border-color:     var(--upload-border) !important;
-        background-color: var(--upload-file-bg) !important;
-    }
-    [data-testid="stFileUploaderProgressBar"] > div {
-        background-color: var(--primary) !important;
-    }
-
-    /* ── Multiselect ──────────────────────────────────────────────────── */
-    [data-testid="stMultiSelect"] span[data-baseweb="tag"] {
-        background-color: var(--primary) !important;
-        border-color:     var(--primary) !important;
-        color: #fff !important;
-    }
-    [data-testid="stMultiSelect"] span[data-baseweb="tag"] span[role="presentation"] svg {
-        fill: #fff !important;
-    }
-    [data-testid="stMultiSelect"] li[aria-selected="true"],
-    [data-testid="stMultiSelect"] li:hover {
-        background-color: var(--ms-hover-bg) !important;
-        color:            var(--ms-hover-fg) !important;
-    }
-
-    /* ── Toggle / Add buttons ─────────────────────────────────────────── */
-    div.add-type-toggle .stButton > button {
-        background-color: var(--toggle-bg) !important;
-        border: 1.5px solid var(--primary) !important;
-        color: var(--toggle-fg) !important;
-        font-weight: 500 !important;
-        border-radius: 6px !important;
-    }
-    div.add-type-toggle .stButton > button:hover {
-        background-color: var(--primary-light) !important;
-    }
-    div.add-type-toggle .stButton > button[kind="primary"] {
-        background-color: var(--primary) !important;
-        border-color:     var(--primary) !important;
-        color: #fff !important;
-    }
-    div.add-btn .stButton > button {
-        background-color: var(--primary) !important;
-        border-color:     var(--primary) !important;
-        color: #fff !important;
-    }
-    div.add-btn .stButton > button:hover {
-        background-color: var(--primary-dark) !important;
-        border-color:     var(--primary-dark) !important;
-    }
-
-    /* ── Streamlit accent CSS var ─────────────────────────────────────── */
-    :root { --primary-color: var(--primary) !important; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Pfizer brand styling (fonts, colours, pill buttons, cards)
+apply_pfizer_theme()
 
 # Initialize session state
 if 'temp_dir' not in st.session_state:
@@ -517,18 +320,7 @@ def render_config_section():
 
 
 # Header
-st.markdown(
-    """
-    <h1 style='
-        text-align: center;
-        font-size: 1.4rem !important;
-        font-weight: 700 !important;
-        line-height: 1.2 !important;
-        margin-bottom: 0.2rem;
-    '>Financial Automation Report Generator</h1>
-    """,
-    unsafe_allow_html=True,
-)
+render_header("Financial Automation Report Generator")
 
 # New actuals files are usually posted from the 25th to the end of the month.
 _actuals_notice = actuals_file_notice()
@@ -635,15 +427,7 @@ with up_col3:
 
 # ── Template type banner (full width, below all three upload columns) ─────────
 if template_file is not None and st.session_state.get('template_type'):
-    is_proj = st.session_state.template_type == 'project'
-    banner_color = "#b5651d" if is_proj else "#6b4fa0"
-    banner_label = "📂 Project / P3 Template" if is_proj else "📋 OpEx Template"
-    st.markdown(
-        f'<div style="background:{banner_color};color:#fff;padding:10px 20px;'
-        f'border-radius:6px;font-size:14px;font-weight:600;margin-top:4px;">'
-        f'{banner_label}</div>',
-        unsafe_allow_html=True,
-    )
+    render_template_pill(st.session_state.template_type == 'project')
 
 # ── Optional LE File ──────────────────────────────────────────────────────────
 le_col, = st.columns([1])
@@ -795,11 +579,6 @@ if st.session_state.temp_dir:
     pass
 
 # Footer
-st.divider()
-st.markdown("""
-<div style='text-align: center; opacity: 0.55; padding: 20px;'>
-    <p>Financial Automation Report Generator v1.0</p>
-</div>
-""", unsafe_allow_html=True)
+render_footer("Financial Automation Report Generator v1.0")
 
 # Made with Bob
