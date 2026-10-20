@@ -84,13 +84,52 @@ class TransactionalDetailReader:
         return None
 
 
+    # Header names the pipeline refers to by their standard spelling, in
+    # addition to whatever the config's colmap / required_cols name.
+    _KNOWN_HEADERS = (
+        'GL Posting Date', 'GL Line Description', 'GL Transaction Description',
+        'Description', 'CO Doc Line Item Txt', 'ER Description', 'ER Number',
+        'GL Transaction Amount', 'GL BER Corp Amount', 'Project Name', 'P3 ID',
+        'Cost Center*', 'Vendor Invoice #', 'AP Voucher Number', 'Country',
+        'Legal Entity', 'Vendor Name', 'Cost Element', 'PO Line Item Desc',
+        'WBS Element', 'PO Number', 'Accounting Period', 'Type',
+    )
+
     @staticmethod
-    def _strip_col_headers(df: 'pd.DataFrame') -> 'pd.DataFrame':
-        """Strip leading/trailing whitespace from all column names and
-        collapse any runs of internal whitespace to a single space.
-        This handles column names like 'WBS/Internal Order ' (trailing space)
-        or 'Cost  Center' (double space) that appear in some source files."""
-        df.columns = df.columns.str.strip().str.replace(r'\s+', ' ', regex=True)
+    def _hdr_key(name, loose: bool = False) -> str:
+        """Case- and spacing-insensitive key for matching header names.
+        With ``loose`` a trailing/embedded '*' is ignored as well."""
+        text = str(name).replace('*', ' ') if loose else str(name)
+        return re.sub(r'\s+', ' ', text).strip().lower()
+
+    def _strip_col_headers(self, df: 'pd.DataFrame', loose: bool = False) -> 'pd.DataFrame':
+        """Clean column names so they match wherever they sit in the sheet.
+
+        * strip leading/trailing whitespace and collapse internal runs
+          ('WBS/Internal Order ' / 'Cost  Center' in some source files);
+        * rename a header that differs from a standard name only by case or
+          spacing (e.g. 'PO NUMBER' → 'PO Number') so later lookups find it.
+        * with ``loose`` (applied after the format-specific renames in
+          _normalise_cols) also ignore a '*' — e.g. 'Cost Center' → 'Cost Center*'.
+          This is deliberately NOT done earlier: Consolidated files carry an
+          unusable 'Cost Center' column that must stay unmapped so 'P3 ID' can
+          take its place.
+        """
+        df.columns = df.columns.astype(str).str.strip().str.replace(r'\s+', ' ', regex=True)
+        known = list(self._KNOWN_HEADERS) + [c for c in self.required_cols]
+        known += [v for v in self.colmap.values() if isinstance(v, str)]
+        canon = {}
+        for name in known:
+            canon.setdefault(self._hdr_key(name, loose), name)
+        present = set(df.columns)
+        rename = {}
+        for col in df.columns:
+            if col in present and col not in known:
+                target = canon.get(self._hdr_key(col, loose))
+                if target and target not in present and target not in rename.values():
+                    rename[col] = target
+        if rename:
+            df = df.rename(columns=rename)
         return df
 
     def _parse_ap(self, raw_month) -> 'tuple[int, int] | tuple[None, None]':
@@ -149,7 +188,7 @@ class TransactionalDetailReader:
     def _detect_header_row(self, sheet_name: str) -> int:
         """Return the 0-based header row index for a sheet.
 
-        Scans the first 10 rows (indices 0-9).  For each candidate row the
+        Scans the first 25 rows (indices 0-24).  For each candidate row the
         sheet is read with that row as the header; the column names are stripped
         and checked against the required-column alias list.  Returns the first
         matching row index.
@@ -159,7 +198,7 @@ class TransactionalDetailReader:
 
         Falls back to 0 when nothing matches — the caller surfaces the error.
         """
-        for header in range(10):
+        for header in range(25):
             try:
                 preview = pd.read_excel(
                     self.file_path, sheet_name=sheet_name,
@@ -459,10 +498,13 @@ class TransactionalDetailReader:
             print(f"Loading valid sheets: {valid_sheets}")
 
             raw_dfs = [
-                self._normalise_cols(
-                    self._strip_col_headers(
-                        pd.read_excel(self.file_path, sheet_name=sheet, header=header_map[sheet])
-                    )
+                self._strip_col_headers(
+                    self._normalise_cols(
+                        self._strip_col_headers(
+                            pd.read_excel(self.file_path, sheet_name=sheet, header=header_map[sheet])
+                        )
+                    ),
+                    loose=True,
                 )
                 for sheet in valid_sheets
             ]

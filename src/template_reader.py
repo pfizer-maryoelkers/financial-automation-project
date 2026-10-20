@@ -1,6 +1,8 @@
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
+from src.col_utils import find_header_row, find_label_col, find_po_col
+
 
 class TemplateReader:
     """OpEx template reader.
@@ -43,11 +45,14 @@ class TemplateReader:
         sheet_name = self.sheet.title
         print(f"OpEx TemplateReader: opened sheet '{sheet_name}' from '{file_path}'")
 
-        # Initializing instance variables
-        self.header_row = header_row
-        self.po_col = po_col
+        # Initializing instance variables.  The configured header row / column
+        # letters are defaults: the real positions are found from the labels, so
+        # the template can be re-laid-out without touching the config.
+        self.header_row = find_header_row(self.sheet, header_row)
+        self.po_col = find_po_col(self.sheet, self.header_row, po_col)
         self.po_stop_marker = po_stop_marker
-        self.cost_center_col = cost_center_col
+        self.cost_center_col = find_label_col(
+            self.sheet, "cost center", cost_center_col, max_row=self.header_row)
         self.cost_center_start_row = cost_center_start_row
         self.cost_center_end_row = cost_center_end_row
 

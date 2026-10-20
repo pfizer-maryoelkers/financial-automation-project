@@ -10,6 +10,7 @@ import streamlit as st
 from pathlib import Path
 from streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger, ExcelPreviewHandler
 from streamlit_config import ConfigManager
+from src.notices import actuals_file_notice
 
 # Page configuration
 st.set_page_config(
@@ -528,6 +529,11 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# New actuals files are usually posted from the 25th to the end of the month.
+_actuals_notice = actuals_file_notice()
+if _actuals_notice:
+    st.warning(_actuals_notice, icon="⚠️")
 
 st.divider()
 

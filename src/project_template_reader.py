@@ -1,5 +1,7 @@
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
+
+from src.col_utils import find_po_col, norm as _hdr_norm
 import re
 
 # Month abbreviations used when scanning for metric+month header cells.
@@ -109,7 +111,8 @@ class ProjectTemplateReader:
 
         # Resolve the config sheet name present in this workbook (if any).
         self._config_sheet_name: str | None = next(
-            (s for s in self.CONFIG_SHEET_NAMES if s in self.wb.sheetnames), None
+            (s for s in self.wb.sheetnames
+             if _hdr_norm(s) in {_hdr_norm(n) for n in self.CONFIG_SHEET_NAMES}), None
         )
 
         # Determine which sheet is the master blank template to clone from.
@@ -129,6 +132,9 @@ class ProjectTemplateReader:
         # Dynamically detect the real header row from the template sheet.
         self.header_row = header_row
         self.header_row = self._find_actual_header_row()
+        # Locate the PO / ER column by its header when the configured letter
+        # no longer points at it.
+        self.po_col = find_po_col(self.sheet, self.header_row, self.po_col)
 
         # ── New layout: read P3 ID → tab name from the config sheet ──────
         if self._config_sheet_name is not None:
@@ -183,16 +189,26 @@ class ProjectTemplateReader:
         # Locate the header row by scanning CONFIG_P3_COL for the label.
         # Fall back to CONFIG_START_ROW if not found.
         start_row = self.CONFIG_START_ROW
-        for r in range(1, max_row + 1):
-            val = ws[f"{self.CONFIG_P3_COL}{r}"].value
-            if val is not None and "enter all your p3" in str(val).strip().lower():
-                start_row = r + 1
+        p3_col, tab_col = self.CONFIG_P3_COL, self.CONFIG_TAB_COL
+        found_label = False
+        # The label can be in any column / row; the P3 IDs sit under it with the
+        # tab names in the next column to the right.
+        from openpyxl.utils import get_column_letter
+        for r in range(1, min(max_row, 60) + 1):
+            for c in range(1, min(ws.max_column or 10, 20) + 1):
+                val = ws.cell(row=r, column=c).value
+                if val is not None and "enter all your p3" in str(val).strip().lower():
+                    start_row = r + 1
+                    p3_col, tab_col = get_column_letter(c), get_column_letter(c + 1)
+                    found_label = True
+                    break
+            if found_label:
                 break
 
         row = start_row
         while row <= max_row:
-            p3_val  = ws[f"{self.CONFIG_P3_COL}{row}"].value
-            tab_val = ws[f"{self.CONFIG_TAB_COL}{row}"].value
+            p3_val  = ws[f"{p3_col}{row}"].value
+            tab_val = ws[f"{tab_col}{row}"].value
             p3_text  = str(p3_val).strip()  if p3_val  is not None else ""
             tab_text = str(tab_val).strip() if tab_val is not None else ""
             if not p3_text:

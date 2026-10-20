@@ -1,4 +1,6 @@
 
+import re
+
 import pandas as pd
 
 # Month abbreviation → full name prefix used in FTotal column names
@@ -21,13 +23,34 @@ class ForecastReader:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    _PO_ALIASES = ("po #", "po#", "po number", "po no", "po num", "po")
+
     def _normalise_po_col(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Rename a bare 'PO#' column (no space) to self.po_col ('PO #') so
-        downstream logic only needs to check one name."""
-        alt = "PO#"
-        if self.po_col not in df.columns and alt in df.columns:
-            df = df.rename(columns={alt: self.po_col})
-        return df
+        """Standardise column names so they are found wherever they sit.
+
+        * strips / collapses whitespace in every header;
+        * renames any PO header spelled differently ('PO#', 'po #', 'PO Number')
+          to self.po_col ('PO #');
+        * renames '<month> - FTotal' headers regardless of case / spacing
+          ('jan 2026 -ftotal') to the standard '<month> - FTotal';
+        * renames 'ForecastTotalFee' regardless of case.
+        """
+        df.columns = [re.sub(r"\s+", " ", str(c)).strip() for c in df.columns]
+        rename = {}
+        if self.po_col not in df.columns:
+            for c in df.columns:
+                if c.lower() in self._PO_ALIASES:
+                    rename[c] = self.po_col
+                    break
+        for c in df.columns:
+            m = re.fullmatch(r"(?i)(.*?)\s*-\s*ftotal", c)
+            if m and m.group(1).strip():
+                std = f"{m.group(1).strip()} - FTotal"
+                if std != c and std not in df.columns:
+                    rename[c] = std
+            elif c.lower() == "forecasttotalfee" and c != "ForecastTotalFee":
+                rename[c] = "ForecastTotalFee"
+        return df.rename(columns=rename) if rename else df
 
     def _billing_month_label(self, xls: pd.ExcelFile, sheet: str) -> str | None:
         """Try to read the billing-period month label from the sheet metadata rows.
@@ -44,7 +67,7 @@ class ForecastReader:
         Returns a label like 'Feb 2026' or None if it cannot be determined.
         """
         try:
-            meta = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=5)
+            meta = pd.read_excel(xls, sheet_name=sheet, header=None, nrows=20)
         except Exception:
             return None
 
@@ -119,14 +142,19 @@ class ForecastReader:
             return None
 
         for sheet in xls.sheet_names:
-            try:
-                df = pd.read_excel(xls, sheet_name=sheet)
-            except Exception:
-                continue
-
-            df = self._normalise_po_col(df)
-
-            if self.po_col not in df.columns:
+            # The header row can sit below title / billing-period rows, so try
+            # the first rows in turn until one contains a PO column.
+            df = None
+            for header_row in range(15):
+                try:
+                    cand = pd.read_excel(xls, sheet_name=sheet, header=header_row)
+                except Exception:
+                    break
+                cand = self._normalise_po_col(cand)
+                if self.po_col in cand.columns:
+                    df = cand
+                    break
+            if df is None:
                 continue
 
             # Case 1: already has per-month FTotal columns

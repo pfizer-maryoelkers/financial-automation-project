@@ -39,6 +39,98 @@ def _copy_fill(f: PatternFill) -> PatternFill:
     )
 
 
+def _le_norm(val) -> str:
+    """Normalise an LE header cell: lower-case, collapse whitespace, drop '*'."""
+    return re.sub(r"\s+", " ", str(val).replace("*", " ")).strip().lower() if val is not None else ""
+
+
+def _le_cc_text(val) -> str:
+    """Cost-center cell → clean text (numeric 2329947.0 → '2329947')."""
+    if isinstance(val, float) and val.is_integer():
+        val = int(val)
+    return str(val).strip()
+
+
+def _read_le_erp(le_path: str, max_header_scan: int = 60) -> dict:
+    """Read the 'ERP' tab of an LE workbook without assuming a fixed layout.
+
+    Only the ERP tab is used.  The header row is located by scanning the top of
+    the sheet for the row that holds a 'Cost Center' header (so it can move),
+    and every column is found by its header text (case / spacing / trailing '*'
+    insensitive) rather than by position, so columns can be added, removed or
+    reordered between LE versions.  The sheet contains several side-by-side
+    sub-tables that repeat header names; the first (leftmost) match wins.
+
+    Returns a dict with:
+        rows      list of row tuples below the header
+        cols      {'uid','cc','desc','proj','le0'} → 0-based index or None
+        le_cols   [(label, index)] for 'LE<n> Final Submission' columns, by n
+        headers   {normalised header: first index}
+    """
+    wb = load_workbook(le_path, read_only=True, data_only=True)
+    try:
+        sheet = next((n for n in wb.sheetnames if n.strip().lower() == "erp"), None)
+        if sheet is None:
+            raise ValueError(
+                f"Expected a sheet named 'ERP' in the LE file '{le_path}'. "
+                f"Available sheets: {wb.sheetnames}"
+            )
+        ws = wb[sheet]
+        all_rows = list(ws.iter_rows(values_only=True))
+    finally:
+        wb.close()
+
+    header_idx = None
+    for i, row in enumerate(all_rows[:max_header_scan]):
+        if any(_le_norm(v) in ("cost center", "cost centre") for v in row):
+            header_idx = i
+            break
+    if header_idx is None:
+        raise ValueError(
+            f"Could not find a 'Cost Center' header in the first {max_header_scan} rows "
+            f"of the 'ERP' sheet in '{le_path}'."
+        )
+
+    headers: dict[str, int] = {}
+    for idx, val in enumerate(all_rows[header_idx]):
+        key = _le_norm(val)
+        if key and key not in headers:
+            headers[key] = idx
+
+    def first(*names):
+        for n in names:
+            if n in headers:
+                return headers[n]
+        return None
+
+    uid = first("uid")
+    if uid is None:  # fall back to any header that starts with 'uid' (e.g. 'uid2')
+        uid = next((i for k, i in headers.items() if k.startswith("uid")), None)
+
+    le0 = next((i for k, i in headers.items() if re.fullmatch(r"(\d{4} )?le0", k)), None)
+    if le0 is None:
+        le0 = next((i for k, i in headers.items() if "le0" in k and "submission" not in k), None)
+
+    le_cols: dict[int, tuple[str, int]] = {}
+    for k, i in headers.items():
+        m = re.fullmatch(r"(?:\d{4} )?le(\d+)(?: final submission)?", k)
+        if m and int(m.group(1)) >= 1 and int(m.group(1)) not in le_cols:
+            le_cols[int(m.group(1))] = (f"LE{int(m.group(1))}", i)
+
+    return {
+        "rows": all_rows[header_idx + 1:],
+        "cols": {
+            "uid": uid,
+            "cc": first("cost center", "cost centre"),
+            "desc": first("description"),
+            "proj": first("project code"),
+            "le0": le0,
+        },
+        "le_cols": [le_cols[n] for n in sorted(le_cols)],
+        "headers": headers,
+    }
+
+
 def _append_comment(existing_comment: Comment | None, new_text: str) -> Comment:
     """Preserve any existing note/comment text and append the new text.
 
@@ -174,11 +266,60 @@ class TemplateWriter:
         self.po_value_col = self._get_po_value_col()
         self.po_total_col = self._get_po_total_col()
         self.req_title_cols = self._get_req_title_cols()
+        self._detect_header_columns()
+
+    def _detect_header_columns(self) -> None:
+        """Locate the descriptive columns by header text on the current sheet.
+
+        Header matching ignores case, line breaks and extra spaces, so a column
+        is found wherever it sits.  The old fixed positions (Vendor E, WBS F,
+        G/L G) are kept only as fallbacks for templates whose header row is
+        missing or unlabeled.
+        """
         self.project_name_col = self._get_col_by_header("project name")
         self.po_status_col = self._get_col_by_header("po status")
-        self.legal_entity_col = self._get_col_by_header("legal entity")
-        self.country_col = self._get_col_by_header("country")
         self.uid_col = self._get_col_by_header("uid")
+        self.legal_entity_col = (
+            self._find_header_col(exact=("le", "legal entity"), contains=("legal entity",))
+        )
+        self.country_col = self._find_header_col(exact=("country",), contains=("country",))
+        self.vendor_col = self._find_header_col(
+            exact=("vendor name", "vendor"), contains=("vendor name", "vendor"), default=5)
+        self.wbs_col_pos = self._find_header_col(
+            exact=("wbs", "wbs element", "wbs code"), contains=("wbs",), default=6)
+        self.gl_col = self._find_header_col(
+            exact=("g/l account", "gl account", "cost element"),
+            contains=("g/l account", "gl account"), default=7)
+        # PO / ER number column: trust the configured letter only when its header
+        # still looks like a PO column; otherwise use whichever column has one.
+        cfg_idx = column_index_from_string(self.po_column)
+        cfg_hdr = self._hdr_text(cfg_idx)
+        if not ("po" in cfg_hdr.split() or "po number" in cfg_hdr or "po/er" in cfg_hdr or "er number" in cfg_hdr):
+            found = self._find_header_col(
+                exact=("po number", "po number/er number", "po", "po #", "po#"),
+                contains=("po number", "po/er", "er number"))
+            if found is not None:
+                self.po_column = get_column_letter(found)
+        self.po_col_idx = column_index_from_string(self.po_column)
+
+    @staticmethod
+    def _norm_hdr(val) -> str:
+        return re.sub(r"\s+", " ", str(val).replace("*", " ")).strip().lower() if val is not None else ""
+
+    def _hdr_text(self, col: int) -> str:
+        return self._norm_hdr(self.sheet.cell(row=self.header_row, column=col).value)
+
+    def _find_header_col(self, exact=(), contains=(), default=None):
+        """First column in the header row whose normalised text equals one of
+        ``exact``, else contains one of ``contains``; ``default`` when absent."""
+        headers = [(c, self._hdr_text(c)) for c in range(1, (self.sheet.max_column or 200) + 1)]
+        for c, h in headers:
+            if h and h in exact:
+                return c
+        for c, h in headers:
+            if h and any(k in h for k in contains):
+                return c
+        return default
 
     # ------------------------------------------------------------------
     # LE UID map (OpEx pipeline)
@@ -202,49 +343,36 @@ class TemplateWriter:
         Args:
             le_path: Absolute path to the ERP LE .xlsx file.
         """
-        from openpyxl import load_workbook as _lw
-        le_wb = _lw(le_path, read_only=True, data_only=True)
-        if "ERP" not in le_wb.sheetnames:
-            le_wb.close()
-            print(f"WARNING: load_uid_map — 'ERP' sheet not found in '{le_path}'. UID column will not be populated.")
+        try:
+            le = _read_le_erp(le_path)
+        except ValueError as exc:
+            print(f"WARNING: load_uid_map — {exc} UID column will not be populated.")
             return
-        le_ws = le_wb["ERP"]
 
-        HEADER_ROW = 7
-        header_values = list(le_ws.iter_rows(
-            min_row=HEADER_ROW, max_row=HEADER_ROW, values_only=True
-        ))[0]
-        col_idx: dict[str, int] = {}
-        for i, val in enumerate(header_values):
-            if val is not None:
-                key = str(val).strip()
-                if key not in col_idx:
-                    col_idx[key] = i  # 0-based, keep first occurrence
-
-        uid_col = col_idx.get("UID")
-        cc_col  = col_idx.get("Cost Center*")
+        uid_col = le["cols"]["uid"]
+        cc_col  = le["cols"]["cc"]
         if uid_col is None or cc_col is None:
-            le_wb.close()
             print(
-                f"WARNING: load_uid_map — 'UID' or 'Cost Center*' column not found in "
-                f"LE file '{le_path}'. UID column will not be populated."
+                f"WARNING: load_uid_map — 'UID' or 'Cost Center' column not found in the "
+                f"'ERP' sheet of '{le_path}'. UID column will not be populated."
             )
             return
 
         uid_map: dict[str, str] = {}
-        for row in le_ws.iter_rows(min_row=HEADER_ROW + 1, values_only=True):
+        for row in le["rows"]:
+            if max(uid_col, cc_col) >= len(row):
+                continue
             uid_val = row[uid_col]
             cc_val  = row[cc_col]
             if uid_val is None or cc_val is None:
                 continue
             uid_str = str(uid_val).strip()
             # A single cell can hold multiple cost centers separated by ";"
-            for cc in str(cc_val).split(";"):
+            for cc in _le_cc_text(cc_val).split(";"):
                 cc_key = cc.strip()
                 if cc_key and cc_key not in uid_map:
                     uid_map[cc_key] = uid_str
 
-        le_wb.close()
         self._uid_map = uid_map
         print(f"load_uid_map: built UID map with {len(uid_map)} cost center(s) from LE file.")
 
@@ -363,11 +491,7 @@ class TemplateWriter:
         self.po_value_col = self._get_po_value_col()
         self.po_total_col = self._get_po_total_col()
         self.req_title_cols     = self._get_req_title_cols()
-        self.project_name_col   = self._get_col_by_header("project name")
-        self.po_status_col      = self._get_col_by_header("po status")
-        self.legal_entity_col   = self._get_col_by_header("legal entity")
-        self.country_col        = self._get_col_by_header("country")
-        self.uid_col            = self._get_col_by_header("uid")
+        self._detect_header_columns()
         print(f"  Writer switched to sheet '{tab_name}' (header row {self.header_row}).")
 
     @staticmethod
@@ -939,7 +1063,7 @@ class TemplateWriter:
         # Use configured p3_id_column when available (project template), otherwise
         # fall back to column J (index 10) used by the OpEx template.
         cc_col_idx = self.p3_id_column if self.p3_id_column else 10
-        wbs_col_idx = 6  # Column F
+        wbs_col_idx = self.wbs_col_pos  # WBS column (found by header)
         max_col = self.sheet.max_column or 1
 
         # Determine whether a dedicated CC / P3-ID label column exists in the data rows.
@@ -1042,7 +1166,7 @@ class TemplateWriter:
                 self.sheet.cell(row=_target_row, column=po_col_idx, value=_po_num)
                 # Vendor Name (col E)
                 if _po_obj.vendor_name is not None:
-                    self.sheet.cell(row=_target_row, column=5, value=_po_obj.vendor_name)
+                    self.sheet.cell(row=_target_row, column=self.vendor_col, value=_po_obj.vendor_name)
                 # WBS (col F)
                 _wbs_to_write = _po_obj.real_wbs if (_wbs_code == "ER" and _po_obj.real_wbs) else _wbs_code
                 self.sheet.cell(row=_target_row, column=wbs_col_idx, value=_wbs_to_write)
@@ -1157,7 +1281,7 @@ class TemplateWriter:
                 self.sheet.insert_rows(insert_at)
                 # Columns whose values are written by the pipeline — don't
                 # copy formulas into these or the pipeline value gets clobbered.
-                _pipeline_cols: set[int] = {po_col_idx, wbs_col_idx, 5, 7}  # PO, WBS, Vendor, GL
+                _pipeline_cols: set[int] = {po_col_idx, wbs_col_idx, self.vendor_col, self.gl_col}  # PO, WBS, Vendor, GL
                 for _mc in self.column_map.values():
                     for _cl in _mc.values():
                         _pipeline_cols.add(column_index_from_string(_cl))
@@ -1204,7 +1328,7 @@ class TemplateWriter:
 
                 vendor_val = po_vendor_map.get(po_number)
                 if vendor_val is not None:
-                    self.sheet.cell(row=insert_at, column=5, value=vendor_val)
+                    self.sheet.cell(row=insert_at, column=self.vendor_col, value=vendor_val)
                 # Write the CC / P3-ID label only when a dedicated label column exists
                 # (controlled by _has_cc_label_col set above the loop).
                 if _has_cc_label_col:
@@ -1214,7 +1338,7 @@ class TemplateWriter:
                 if self.p3_id_column is None:  # OpEx only
                     gl_val = po_gl_map.get(po_number)
                     if gl_val is not None:
-                        self.sheet.cell(row=insert_at, column=7, value=gl_val)
+                        self.sheet.cell(row=insert_at, column=self.gl_col, value=gl_val)
                     le_val = po_le_map.get(po_number)
                     if le_val is not None and self.legal_entity_col is not None:
                         self.sheet.cell(row=insert_at, column=self.legal_entity_col, value=le_val)
@@ -1389,7 +1513,7 @@ class TemplateWriter:
             self.sheet.insert_rows(insert_at)
 
             # Columns the pipeline writes data into — skip formula copy for these
-            _er_pipeline_cols: set[int] = {po_col_idx, 6, 5}  # ER/PO, WBS, Vendor
+            _er_pipeline_cols: set[int] = {po_col_idx, self.wbs_col_pos, self.vendor_col}  # ER/PO, WBS, Vendor
             for _mc in self.column_map.values():
                 for _cl in _mc.values():
                     _er_pipeline_cols.add(column_index_from_string(_cl))
@@ -1429,11 +1553,11 @@ class TemplateWriter:
 
             # Write ER number into the PO column and WBS into column F
             self.sheet.cell(row=insert_at, column=po_col_idx, value=er)
-            self.sheet.cell(row=insert_at, column=6, value=er_wbs_map.get(er, "ER"))
+            self.sheet.cell(row=insert_at, column=self.wbs_col_pos, value=er_wbs_map.get(er, "ER"))
             # Write Vendor Name into column E
             vendor_val = er_vendor_map.get(er)
             if vendor_val is not None:
-                self.sheet.cell(row=insert_at, column=5, value=vendor_val)
+                self.sheet.cell(row=insert_at, column=self.vendor_col, value=vendor_val)
             # Write Cost Center / P3-ID label only when a dedicated column exists.
             cc_val = er_cc_map.get(er)
             if cc_val is not None and _er_has_cc_col:
@@ -1442,7 +1566,7 @@ class TemplateWriter:
                 # Write G/L Account into column G
                 gl_val = er_gl_map.get(er)
                 if gl_val is not None:
-                    self.sheet.cell(row=insert_at, column=7, value=gl_val)
+                    self.sheet.cell(row=insert_at, column=self.gl_col, value=gl_val)
                 # Write LE
                 le_val = er_le_map.get(er)
                 if le_val is not None and self.legal_entity_col is not None:
@@ -1560,7 +1684,7 @@ class TemplateWriter:
 
                     # Vendor name (col E) — also skip "not assigned" placeholder
                     if po.vendor_name is not None:
-                        vendor_cell = self.sheet.cell(row=row, column=5)
+                        vendor_cell = self.sheet.cell(row=row, column=self.vendor_col)
                         existing = vendor_cell.value
                         if not (not self.overwrite and isinstance(existing, str) and existing.startswith('=')):
                             existing_str = str(existing).strip() if existing is not None else ""
@@ -1569,26 +1693,26 @@ class TemplateWriter:
 
                     # WBS code (col F) — use real_wbs for ER rows when available
                     wbs_to_write = po.real_wbs if (wbs_code == "ER" and po.real_wbs) else wbs_code
-                    wbs_cell = self.sheet.cell(row=row, column=6)
+                    wbs_cell = self.sheet.cell(row=row, column=self.wbs_col_pos)
                     if self._should_write(wbs_cell.value):
                         wbs_cell.value = wbs_to_write
 
                     if self.p3_id_column is None:  # OpEx only
                         # G/L Account (col G)
                         if po.gl_account is not None:
-                            gl_cell = self.sheet.cell(row=row, column=7)
+                            gl_cell = self.sheet.cell(row=row, column=self.gl_col)
                             if self._should_write(gl_cell.value):
                                 gl_cell.value = po.gl_account
 
-                        # Legal Entity (col I)
-                        if po.legal_entity is not None:
-                            le_cell = self.sheet.cell(row=row, column=9)
+                        # Legal Entity (column found by its header)
+                        if po.legal_entity is not None and self.legal_entity_col is not None:
+                            le_cell = self.sheet.cell(row=row, column=self.legal_entity_col)
                             if self._should_write(le_cell.value):
                                 le_cell.value = po.legal_entity
 
-                        # Country (col J)
-                        if po.country is not None:
-                            country_cell = self.sheet.cell(row=row, column=10)
+                        # Country (column found by its header)
+                        if po.country is not None and self.country_col is not None:
+                            country_cell = self.sheet.cell(row=row, column=self.country_col)
                             if self._should_write(country_cell.value):
                                 country_cell.value = po.country
 
@@ -2406,63 +2530,25 @@ class TemplateWriter:
             le_path:       Absolute path to the ERP LE .xlsx file.
             cost_centers:  List of cost-center strings to filter on (from UI selection).
         """
-        # ── Load LE workbook (read-only, cached values only) ─────────────────
-        le_wb = load_workbook(le_path, read_only=True, data_only=True)
-        if "ERP" not in le_wb.sheetnames:
-            le_wb.close()
+        # ── Read the ERP tab (header row / columns located by name) ──────────
+        le = _read_le_erp(le_path)
+        cols = le["cols"]
+        if cols["cc"] is None:
             raise ValueError(
-                f"Expected a sheet named 'ERP' in the LE file '{le_path}'. "
-                f"Available sheets: {le_wb.sheetnames}"
-            )
-        le_ws = le_wb["ERP"]
-
-        # ── Discover column indices from the header row (row 7) ──────────────
-        HEADER_ROW = 7
-        # Build column index map from the header row.
-        # The ERP sheet contains multiple side-by-side sub-tables that each
-        # repeat the same header names (e.g. "Cost Center*") at different column
-        # positions.  We must keep only the FIRST occurrence of each header name
-        # so that the required columns point to the leftmost (primary) sub-table.
-        col_idx: dict[str, int] = {}
-        header_values = list(le_ws.iter_rows(
-            min_row=HEADER_ROW, max_row=HEADER_ROW, values_only=True
-        ))[0]
-        for i, val in enumerate(header_values):
-            if val is not None:
-                key = str(val).strip()
-                if key not in col_idx:   # keep first occurrence only
-                    col_idx[key] = i  # 0-based
-
-        # Required columns (must exist) and optional LE submission columns.
-        # UID is optional — absent in older LE file versions — so we degrade
-        # gracefully when it is not found rather than raising.
-        REQUIRED_COLS = {
-            "Cost Center*":  "Cost Center",
-            "Description*":  "Description",
-            "Project Code*": "Project Code",
-            "2026 LE0":      "LE0",
-        }
-        # LE2–LE4 columns are included when present; absence is not an error
-        OPTIONAL_LE_COLS = [
-            ("LE2 Final Submission", "LE2"),
-            ("LE3 Final Submission", "LE3"),
-            ("LE4 Final Submission", "LE4"),
-        ]
-        missing = [k for k in REQUIRED_COLS if k not in col_idx]
-        if missing:
-            le_wb.close()
-            raise ValueError(
-                f"LE file is missing expected columns: {missing}. "
-                f"Found headers: {list(col_idx.keys())}"
+                f"LE file is missing a 'Cost Center' column on the ERP sheet. "
+                f"Found headers: {list(le['headers'].keys())}"
             )
 
-        uid_col  = col_idx.get("UID")          # None when column absent
-        cc_col   = col_idx["Cost Center*"]
-        desc_col = col_idx["Description*"]
-        proj_col = col_idx["Project Code*"]
-        le0_col  = col_idx["2026 LE0"]
-        # Collect indices for any optional LE columns that are present
-        optional_le = [(label, col_idx[src]) for src, label in OPTIONAL_LE_COLS if src in col_idx]
+        uid_col  = cols["uid"]      # None when column absent
+        cc_col   = cols["cc"]
+        desc_col = cols["desc"]
+        proj_col = cols["proj"]
+        le0_col  = cols["le0"]
+        # Any 'LE<n> Final Submission' columns present (LE2, LE3, LE4, LE5 …)
+        optional_le = le["le_cols"]
+
+        def _cell(row, idx):
+            return row[idx] if idx is not None and idx < len(row) else None
 
         # Normalise the filter set for fast lookup
         cc_filter = {str(c).strip() for c in cost_centers}
@@ -2470,26 +2556,25 @@ class TemplateWriter:
         # ── Collect matching rows ─────────────────────────────────────────────
         # Each tuple: (uid, cost_center, description, project_code, le0, *optional_le_vals)
         budget_rows: list[tuple] = []
-        for row in le_ws.iter_rows(min_row=HEADER_ROW + 1, values_only=True):
-            raw_cc = row[cc_col]
-            if raw_cc is None:
+        for row in le["rows"]:
+            raw_cc = _cell(row, cc_col)
+            if raw_cc is None or not str(raw_cc).strip():
                 continue
             # A cell may contain multiple cost centers separated by ";"
-            cell_ccs = [c.strip() for c in str(raw_cc).split(";")]
+            cc_text = _le_cc_text(raw_cc)
+            cell_ccs = [c.strip() for c in cc_text.split(";")]
             if cc_filter and not any(c in cc_filter for c in cell_ccs):
                 continue
-            uid_val = row[uid_col] if uid_col is not None else None
-            optional_vals = tuple(row[idx] for _, idx in optional_le)
+            uid_val = _cell(row, uid_col)
+            optional_vals = tuple(_cell(row, idx) for _, idx in optional_le)
             budget_rows.append((
                 str(uid_val).strip() if uid_val is not None else "",
-                str(raw_cc).strip(),
-                row[desc_col] or "",
-                row[proj_col] or "",
-                row[le0_col],
+                cc_text,
+                _cell(row, desc_col) or "",
+                _cell(row, proj_col) or "",
+                _cell(row, le0_col),
                 *optional_vals,
             ))
-
-        le_wb.close()
 
         # ── Create / overwrite the Budget sheet ──────────────────────────────
         # Position at index 1 so it sits immediately after the first (main) tab
