@@ -897,6 +897,14 @@ class TransactionalDetailReader:
         else:
             data_copy[_pd_match_col] = False
 
+        # International POs (Country = India / IN) are pushed back two months
+        # where domestic POs are pushed back one.
+        _intl_col = "_is_intl_po"
+        _intl_pos = self.get_intl_po_set()
+        data_copy[_intl_col] = (
+            data_copy[self.colmap["po"]].astype(str).str.strip().isin(_intl_pos)
+        )
+
         # Group by PO / Month / Type / Cost Center / WBS
         group_cols = [
             self.colmap["po"],
@@ -906,6 +914,7 @@ class TransactionalDetailReader:
             self.colmap["wbs"],
             _pd_match_col,
             _er_ref_col,
+            _intl_col,
         ]
         grouped = (
             data_copy.groupby(group_cols)[self.colmap["amount"]]
@@ -962,11 +971,16 @@ class TransactionalDetailReader:
                 else:
                     write_month = self.month_map.get(month_num)
             elif type_name in ("Actual", "ER", "Reclass", "Reversal"):
-                shifted_num = month_num - 1
-                if shifted_num == 0:
+                # Domestic POs shift back one period, international POs two.
+                _n_back = 2 if row[_intl_col] else 1
+                shifted_num = month_num - _n_back
+                if shifted_num == -1:
+                    # International AP01 → prior-year November, e.g. "Nov (25)"
+                    write_month = f"Nov{py_suffix}" if py_suffix else "Nov"
+                elif shifted_num == 0:
                     # AP01 → prior-year December, e.g. "Dec (25)"
                     write_month = f"Dec{py_suffix}" if py_suffix else "Dec"
-                elif shifted_num == 11:
+                elif shifted_num == 11 and _n_back == 1:
                     # AP12 → prior-year November, e.g. "Nov (25)"
                     write_month = f"Nov{py_suffix}" if py_suffix else "Nov"
                 else:
@@ -1167,6 +1181,7 @@ class TransactionalDetailReader:
             reclass_po_rows[self.colmap["amount"]], errors='coerce'
         ).fillna(0.0)
 
+        _rn_intl_pos = self.get_intl_po_set()
         _rn_parsed_years = reclass_po_rows[self.colmap["month"]].apply(lambda v: self._parse_ap(v)[1])
         _rn_current_year = int(_rn_parsed_years.dropna().max()) if not _rn_parsed_years.dropna().empty else None
 
@@ -1191,9 +1206,13 @@ class TransactionalDetailReader:
                 else:
                     month_label = self.month_map.get(month_num)
             else:
-                shifted_num = month_num - 1
-                if shifted_num == 0:
-                    py = (_rn_current_year - 1) if _rn_current_year else None
+                # Same rule as get_transactional_data: international POs two back.
+                _n_back = 2 if po in _rn_intl_pos else 1
+                shifted_num = month_num - _n_back
+                py = (_rn_current_year - 1) if _rn_current_year else None
+                if shifted_num == -1:
+                    month_label = f"Nov ({str(py)[2:]})" if py else "Nov"
+                elif shifted_num == 0:
                     month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
                 else:
                     month_label = self.month_map.get(shifted_num)
