@@ -243,4 +243,4 @@ tools/                        One-off maintenance scripts
 
 Internal Pfizer project. All rights reserved.
 
-**Last updated:** October 2026 · **Maintained by:** Pfizer Financial Automation Team
+**Last updated:** October 2026 · **Maintained by:** Mary Oelkers
