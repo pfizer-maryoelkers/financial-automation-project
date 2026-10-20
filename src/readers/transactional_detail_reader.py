@@ -1,5 +1,9 @@
 
 import pandas as pd
+
+from src.common.fast_excel import enable_fast_excel, read_excel_cached
+
+enable_fast_excel()  # ~2-3x faster .xlsx reading, identical data
 import re
 
 class TransactionalDetailReader:
@@ -501,7 +505,7 @@ class TransactionalDetailReader:
                 self._strip_col_headers(
                     self._normalise_cols(
                         self._strip_col_headers(
-                            pd.read_excel(self.file_path, sheet_name=sheet, header=header_map[sheet])
+                            read_excel_cached(self.file_path, sheet, header_map[sheet])
                         )
                     ),
                     loose=True,

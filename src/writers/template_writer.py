@@ -566,6 +566,37 @@ class TemplateWriter:
                 return col
         return None
 
+    _SINGLE_ROW_REF = re.compile(r"(?<![A-Za-z_!'])\$?([A-Z]{1,3})\$?(\d+)(?![\d(])")
+
+    def _heal_row_formulas(self) -> None:
+        """Repair row-relative formulas left pointing at the wrong row.
+
+        openpyxl's insert_rows() moves cells down but does NOT update the formulas
+        in them, so a template row such as ``=P65-Q65`` pushed down five rows to
+        row 70 keeps referring to row 65 and silently shows another PO's variance.
+        Any formula below the header whose cell references all sit on one single
+        row other than its own is re-based onto its own row (relative references
+        only; absolute references and header/summary references are left alone).
+        """
+        ws = self.sheet
+        healed = 0
+        for r in range(self.header_row + 1, (ws.max_row or 0) + 1):
+            for c in range(1, (ws.max_column or 0) + 1):
+                cell = ws.cell(row=r, column=c)
+                v = cell.value
+                if not (isinstance(v, str) and v.startswith("=")) or "!" in v:
+                    continue
+                rows = {int(m.group(2)) for m in self._SINGLE_ROW_REF.finditer(v)}
+                if len(rows) != 1:
+                    continue
+                r0 = next(iter(rows))
+                if r0 != r and r0 > self.header_row:
+                    col = get_column_letter(c)
+                    cell.value = Translator(v, origin=f"{col}{r0}").translate_formula(f"{col}{r}")
+                    healed += 1
+        if healed:
+            print(f"Re-based {healed} row formula(s) that pointed at the wrong row after row insertion.")
+
     def _shift_comments(self, insert_at: int, count: int = 1) -> None:
         """Shift all cell comments on the active sheet down by `count` rows for
         every row whose row-index is >= insert_at.
@@ -1382,6 +1413,7 @@ class TemplateWriter:
             print(f"Inserted {len(inserted)} PO row(s): {inserted}")
         else:
             print("No additional PO rows needed.")
+        self._heal_row_formulas()
         self._pos.update(pos)
         return pos
 
@@ -1594,6 +1626,7 @@ class TemplateWriter:
             insert_at += 1  # next ER goes after the one just inserted
 
         print(f"Inserted {len(er_numbers)} ER row(s) into template: {er_numbers}")
+        self._heal_row_formulas()
         self._pos = pos
         return pos
 

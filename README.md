@@ -1,413 +1,246 @@
 ﻿# Financial Automation Project
 
-> **An end-to-end ETL pipeline for automating financial data processing with comprehensive exception tracking and data quality validation.**
+Fills a Pfizer financial spreadsheet template from vendor forecasts, transactional detail (actuals) files and, optionally, an LE budget file. It writes the populated workbook plus exception reports that show what could not be placed.
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/downloads/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-1.52.0-FF4B4B.svg)](https://streamlit.io)
-[![License](https://img.shields.io/badge/License-Pfizer_Internal-green.svg)](LICENSE)
-
----
-
-##  Table of Contents
-
-- [Overview](#overview)
-- [Key Features](#key-features)
-- [Quick Start](#quick-start)
-- [Architecture](#architecture)
-- [Documentation](#documentation)
-- [Project Structure](#project-structure)
-- [Key Outputs](#key-outputs)
-- [Support](#support)
+[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Streamlit](https://img.shields.io/badge/Streamlit-1.52-FF4B4B.svg)](https://streamlit.io)
+[![License](https://img.shields.io/badge/License-Pfizer_Internal-green.svg)](#license)
 
 ---
 
-##  Overview
+## Contents
 
-The Financial Automation Project automates the process of populating a Financial Spreadsheet Template with:
-- **Forecast data** from vendor files
-- **Actual data** from TIES transactional detail files
-- **Comprehensive exception tracking** for data quality validation
+- [What it does](#what-it-does)
+- [Quick start](#quick-start)
+- [The two pipelines](#the-two-pipelines)
+- [How transactions are placed](#how-transactions-are-placed)
+- [Input files and flexible columns](#input-files-and-flexible-columns)
+- [Outputs](#outputs)
+- [Configuration](#configuration)
+- [Streamlit app](#streamlit-app)
+- [Project structure](#project-structure)
+- [Deployment notes](#deployment-notes)
+- [Troubleshooting](#troubleshooting)
 
-This system eliminates manual data entry, reduces errors, and provides detailed audit trails and exception reports for financial analysis.
+---
 
-### What It Does
+## What it does
 
 ```mermaid
 graph LR
-    A[Vendor Forecasts] --> D[ETL Pipeline]
-    B[TIES Transactions] --> D
-    C[Template] --> D
-    D --> E[Populated Template]
-    D --> F[Exception Reports]
-    D --> G[Audit Trails]
+    A[Template] --> P[Pipeline]
+    B[Transactional detail file] --> P
+    C[Vendor forecast files] --> P
+    D[LE file - optional] --> P
+    P --> E[Populated workbook]
+    P --> F[Exceptions tab]
+    P --> G[Budget tab]
 ```
 
----
-
-##  Key Features
-
-###  Automated Data Processing
-- **Multi-source integration**: Combines vendor forecasts and transactional data
-- **Intelligent parsing**: Automatically detects valid sheets and data structures
-- **Duplicate handling**: Manages duplicate POs across multiple forecast files
-
-###  User-Friendly Interface
-- **Streamlit Web UI**: Easy-to-use interface for file uploads and report generation
-- **Cost Center Filtering**: Process specific cost centers or all at once
-- **Live Preview**: View generated reports before downloading
-- **Configuration Management**: Adjust settings through the UI
-
-###  Comprehensive Exception Tracking
-- **5 Exception Types**: Missing WBS, Missing PO, Duplicates, and more
-- **Detailed Logging**: Full source row context for every exception
-- **Summary Reports**: Executive overview of data quality issues
-- **Interactive Filtering**: Filter exceptions by month, type, or cost center
-
-###  Complete Audit Trail
-- **Forecast Source Data**: Track all forecast values to source
-- **Transaction Source Data**: Complete transactional detail audit
-- **Exception Reports**: Detailed and summary views
-
-###  Flexible Configuration
-- **YAML-based**: Easy-to-modify configuration files
-- **Multiple Environments**: Support for different file formats and structures
-- **Validation**: Built-in configuration validation
+- **Reads** a template, the transactional detail (actuals) file, vendor forecast files and, optionally, the LE file's ERP tab.
+- **Builds** a Cost Center (or P3 ID) → WBS → PO hierarchy and places Forecast, Actual, Accrual and Accrual Reversal values by month.
+- **Reports** every transaction it could not place cleanly on an Exceptions tab.
+- **Finds columns by header text**, not by position, so moved or reordered columns still work.
 
 ---
 
-##  Quick Start
+## Quick start
 
-### Prerequisites
+**Requirements:** Python 3.10 or newer (tested on 3.11) and `pip`.
 
-- Python 3.9 or higher
-- pip package manager
+```bash
+git clone https://github.com/pfizer-maryoelkers/financial-automation-project
+cd financial-automation-project
+pip install -r requirements.txt
+```
 
-### Installation
+Run everything from the project root.
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd financial-automation-project
-   ```
-
-2. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### Usage Options
-
-#### Option 1: Streamlit Web UI (Recommended)
+### Streamlit app (recommended)
 
 ```bash
 streamlit run app.py
 ```
 
-Then:
-1. Upload your template file
-2. Upload transactional detail file (TIES)
-3. Upload one or more forecast files
-4. (Optional) Select specific cost centers to process
-5. Configure settings if needed
-6. Click "Generate Report"
-7. Preview and download your report
+1. Upload the template, the transactional detail file and any vendor forecast files. Add the LE file for OpEx if you want the Budget tab and UIDs.
+2. The app detects whether the template is **OpEx** or **Project** and shows it in a banner.
+3. Click **Generate Report**, then download the workbook.
 
-#### Option 2: Command Line
+### Command line
 
 ```bash
-python -m cli.run                              # auto-detects OpEx vs project template
-python -m cli.main                             # OpEx only
-python -m cli.project                          # project (P3 ID) only
+python -m cli.run                              # auto-detects OpEx vs project from the template
+python -m cli.main                             # OpEx only        (configs/config_base.yaml)
+python -m cli.project                          # project only     (configs/config_project.yaml)
 python -m cli.run configs/config_project.yaml  # explicit config
 ```
 
-Run these from the project root. Configure the matching file in `configs/` with
-your file paths first.
+Set the file paths in the matching file under `configs/` first.
 
----
+### API
 
-##  Architecture
-
-The system follows an **ETL (Extract, Transform, Load)** architecture:
-
-```mermaid
-graph TD
-    subgraph Extract
-        A[ForecastReader] --> D[Raw Data]
-        B[TransactionalDetailReader] --> D
-        C[TemplateReader] --> D
-    end
-    
-    subgraph Transform
-        D --> E[build_hierarchy]
-        E --> F[Validate & Track Exceptions]
-    end
-    
-    subgraph Load
-        F --> G[TemplateWriter]
-        G --> H[Populated Template]
-        G --> I[Source Data Sheets]
-        G --> J[Exception Reports]
-    end
+```bash
+uvicorn api.main:app --reload --port 8000
 ```
 
-### Core Components
-
-| Component | Purpose |
-|-----------|---------|
-| **ForecastReader** | Reads vendor forecast files and extracts monthly forecast data |
-| **TransactionalDetailReader** | Processes TIES files, categorizes transactions (Actual/Accrual/Reversal) |
-| **TemplateReader** | Extracts cost centers and PO structure from template |
-| **build_hierarchy** | Builds Cost Center  WBS  PO hierarchy with exception tracking |
-| **TemplateWriter** | Generates output workbook with data and reports |
-
-For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+See [docs/README_API.md](docs/README_API.md).
 
 ---
 
-##  Documentation
+## The two pipelines
 
-### For End Users
-- **[User Guide](docs/USER_GUIDE.md)** - Complete guide for using the system
-  - Streamlit UI walkthrough
-  - Understanding outputs
-  - Exception reports
-  - Best practices
+| | **OpEx** | **Project (CapEx)** |
+|---|---|---|
+| Grouped by | Cost center → WBS → PO | P3 ID → WBS → PO |
+| Template | One main sheet with a cost-center list | A config sheet (`Insert P3 HERE` or `Enter All Your P3 IDs`) plus a blank `Project Template` sheet |
+| Output | The template, populated | One tab per P3 ID, cloned from the blank template |
+| Config | `configs/config_base.yaml` | `configs/config_project.yaml` |
+| LE file | Optional: fills UIDs and adds a Budget tab | Not used |
 
-### For Administrators
-- **[Configuration Guide](docs/CONFIGURATION.md)** - Complete configuration reference
-  - All parameters explained
-  - Configuration examples
-  - Validation rules
-
-### For Developers
-- **[Architecture Guide](docs/ARCHITECTURE.md)** - System design and components
-  - ETL pipeline details
-  - Component interactions
-  - Data models
-  
-- **[API Reference](docs/API_REFERENCE.md)** - Complete API documentation
-  - All classes and methods
-  - Code examples
-  - Extension guide
-
-### For Operations
-- **[Deployment Guide](docs/DEPLOYMENT.md)** - Deployment and troubleshooting
-  - Local and Azure deployment
-  - Power Automate integration
-  - Troubleshooting guide
-  - FAQ
+`detect_template_type` chooses the pipeline from the template, so `python -m cli.run` and the Streamlit app need no extra setting.
 
 ---
 
-##  Project Structure
+## How transactions are placed
+
+Transactions are classified by the document-number prefix (2 = accrual or reversal, 5 = vendor invoice, 9 = reclass), confirmed against the line description.
+
+**Which month a row lands in (OpEx; the project config uses the same rule)**
+
+| Row | Rule |
+|---|---|
+| Actual, Reversal, Reclass, ER | Period N goes in month N−1. AP01 goes in the prior-year December column, for example `Dec (25)`. |
+| Accrual | Direct. AP02 goes in Feb. |
+| **Weekly vendors** (Actual with a GL Posting Date) | If the GL Posting Date month equals the Accounting Period month, post in that month with no shift. Otherwise use the Actual rule above. |
+| **International POs** (Country India / IN) | Actual, Reversal, Reclass and ER go back **two** months instead of one. Their **forecast** also moves back one month. Accruals are unchanged. |
+
+**Expense reports (ER)**
+- A line whose description holds an ER number (for example `ER91389 - SECURITY - SECURITY`) becomes its own PO-style row, with the ER number in the PO column and its transactions beside it. This works on blank and filled templates.
+- If the ER line already carries a real `95…` PO, it stays on that PO's row. The Actual cell is filled light green and carries a note saying the transaction was an ER.
+
+**Reclass without a `95…` PO** is treated as a PO row with ` RC` appended.
+
+---
+
+## Input files and flexible columns
+
+| File | Used for |
+|---|---|
+| Template (`.xlsx`) | The structure that gets filled. |
+| Transactional detail (`.xlsx`) | Actuals, accruals, reversals, reclass and ER lines. |
+| Vendor forecast (`.xlsx`, optional) | Monthly forecast by PO (`... - FTotal` columns). |
+| LE file (`.xlsx`, optional, OpEx) | **ERP tab only**: UID by cost center and the Budget tab (LE0, LE2, LE3, LE4 ...). |
+
+Columns are matched by **header text**. Matching ignores capitalisation, extra spaces, line breaks and a trailing `*`, and the header row can sit anywhere near the top of the sheet. A column can move or be reordered and the tool still finds it. The shared helper is `src/common/col_utils.py`.
+
+Limits:
+- A header that is **renamed** (for example "Cost Center*" to "CC") will not match. Add the new name to the reader's alias list.
+- Some anchors must stay as they are: the "Previous Period Invoices" marker in column A, the "Contact for PO/ER" label, and the sheet names `ERP` and `Insert P3 HERE` / `Enter All Your P3 IDs`.
+
+---
+
+## Outputs
+
+The workbook contains:
+
+1. **The populated template** (or one tab per P3 ID), including ER rows and light-green ER notes.
+2. **Budget** (OpEx with an LE file): UID, cost center, description, project code, LE0 and every LE column found, with totals.
+3. **Exception_Data** (hidden): raw exception rows for formulas.
+4. **Exceptions**: the exception report.
+
+**Exception types:** `Reclass`, `Unmatched Transaction`, `Not Worked on Template`, `Unmatched P3 ID`, `Double Check`, `MISSING_PO`, `DUPLICATE_PO`, `DUPLICATE_WBS`.
+
+**On Template column (project Exceptions tab)**
+- **Yes**: the line's amount appears as its own figure on its PO's row on its P3 ID's tab.
+- **No**: it does not. That includes lines with no PO and lines whose amount was added into a total with other lines for the same PO, month and type.
+
+---
+
+## Configuration
+
+Settings live in `configs/`:
+
+| File | Purpose |
+|---|---|
+| `config_base.yaml` | OpEx pipeline: file paths, column map, valid types, writer settings |
+| `config_project.yaml` | Project pipeline: P3 template, `shift_months`, column map |
+| `config_streamlit.yaml` | Created by the app when you save settings |
+
+Key sections: `template` (header row, PO column, stop marker), `forecast_reader`, `transactional_detail_reader` (`colmap`, `valid_types`, `required_cols`), `le_file`, `template_writer`.
+
+---
+
+## Streamlit app
+
+- **Look:** follows the Pfizer brand: Blue 70 and Blue 90, Pfizer Tomorrow and Diatype fonts, pill buttons, with the spiral after the title and the white logo in the footer. Styling is in `webapp/pfizer_theme.py`. Logos and fonts are embedded in the page, so they show however the app is launched.
+- **Month-end banner:** from the 25th through the end of each month (February ends on the 28th), a warning reads "The most up to date actuals file might be AP10 - please double check your team's activity." The AP number follows the calendar month. To preview it early, set `ACTUALS_NOTICE_TEST_DATE=2026-10-26` before starting the app.
+- **Theme config:** `.streamlit/config.toml` sets the light theme.
+
+---
+
+## Project structure
 
 ```
-financial-automation-project/
+app.py                        Streamlit entry point
+requirements.txt
+.streamlit/config.toml        Streamlit theme
+static/                       Pfizer logos and fonts
+configs/                      YAML configuration
+data/                         Sample inputs, templates and LE files
+docs/                         API notes and the architecture diagram
 
- README.md                          # This file
- requirements.txt                   # Python dependencies
- .gitignore                         # Git ignore rules
+webapp/                       Streamlit support code
+  streamlit_backend.py        Pipeline orchestration for the UI
+  streamlit_config.py         Settings management for the UI
+  pfizer_theme.py             Pfizer styling, header, footer, template banner
 
- app.py                             # Streamlit entry point (run: streamlit run app.py)
+api/                          FastAPI service
+  main.py  backend.py  config.py
 
- webapp/                            # Streamlit support code
-    streamlit_backend.py           # Pipeline orchestration for the UI
-    streamlit_config.py            # Configuration management for the UI
+cli/                          Command-line entry points
+  run.py                      Auto-detects OpEx vs project
+  main.py                     OpEx
+  project.py                  Project (P3 ID)
 
- api/                               # FastAPI service (run: uvicorn api.main:app)
-    main.py                        # App and endpoints
-    backend.py                     # Pipeline orchestrator
-    config.py                      # Config loading
+src/
+  models.py                   Data models and exception types
+  readers/                    transactional_detail_reader, forecast_reader,
+                              template_reader, project_template_reader
+  writers/                    template_writer (workbook, Exceptions, Budget tab)
+  pipeline/                   utils (OpEx hierarchy), project_utils (project hierarchy)
+  common/                     col_utils (find columns by header), notices (banner)
 
- cli/                               # Command-line entry points
-    run.py                         # Auto-detects OpEx vs project
-    main.py                        # OpEx pipeline
-    project.py                     # Project (P3 ID) pipeline
-
- src/                               # Core source code
-    models.py                      # Data models and exceptions
-    readers/                       # Input readers
-       transactional_detail_reader.py
-       forecast_reader.py
-       template_reader.py          # OpEx template
-       project_template_reader.py  # Project template
-    writers/
-       template_writer.py          # Output workbook writer (also LE / Budget tab)
-    pipeline/                      # Hierarchy building
-       utils.py                    # OpEx hierarchy + config helpers
-       project_utils.py            # Project hierarchy
-    common/
-       col_utils.py                # Find columns by header text
-       notices.py                  # Front-end notices (month-end actuals banner)
-
- tools/                             # One-off maintenance scripts
-    rebuild_p3_template.py
-
- configs/                           # Configuration files
-    config_base.yaml               # Base configuration
-    config_streamlit.yaml          # Streamlit-specific config (created by UI)
-
- data/                              # Sample data (not in repo)
-    (sample inputs / templates / LE files)
-
- notebooks/                         # Jupyter notebooks for exploration
-    exploring_data.ipynb
-    template_reader.ipynb
-    test_new_inputs.ipynb
-
- docs/                              # Comprehensive documentation
-     ARCHITECTURE.md                # System architecture and design
-     USER_GUIDE.md                  # End user documentation
-     CONFIGURATION.md               # Configuration reference
-     API_REFERENCE.md               # Developer API documentation
-     DEPLOYMENT.md                  # Deployment and operations guide
+tools/                        One-off maintenance scripts
 ```
 
 ---
 
-##  Key Outputs
+## Deployment notes
 
-The pipeline generates a comprehensive Excel workbook with multiple sheets:
-
-### 1. Main Template (Populated)
-- Forecast, Actual, Accrual, and Reversal data for each PO
-- Organized by Cost Center  WBS  PO hierarchy
-- Monthly breakdown (Jan-Dec)
-
-### 2. Forecast Source Data
-- Complete audit trail for all forecast values
-- Links back to source files
-- Filterable and sortable
-
-### 3. Transactions Source Data
-- Complete audit trail for all transactional data
-- All TIES columns preserved
-- Filterable by PO, month, type, etc.
-
-### 4. Exceptions (Detailed)
-- Row-by-row exception log
-- Full source context for each exception
-- Visible columns: Cost Center, Month, WBS, PO, Exception Type, Source Row, Amount, Type
-- Hidden columns: Complete source row data (expandable)
-
-### 5. Exceptions Summary
-- Executive overview of data quality
-- Exception counts by type (with percentages)
-- Exception breakdown by cost center
-- Interactive month filter
+- **Entry point:** `app.py` at the repository root. Keep `static/` and `.streamlit/` with the code.
+- **Slimmer install:** `requirements.txt` pins many packages the app does not need (Jupyter and others). A hosted build only needs `streamlit`, `pandas`, `openpyxl`, `PyYAML`, `numpy` and `python-dateutil`. Add `fastapi`, `uvicorn` and `python-multipart` only for the API.
+- **Data sensitivity:** uploads contain financial transaction data. Do not host the app on a public service without IT security approval. The repo also holds Pfizer brand fonts and logos.
+- **No persistence:** uploads and outputs live in a temporary folder, so download the workbook right after each run.
+- **Speed:** large transactional files use a faster Excel reader (`src/common/fast_excel.py`), and the parsed file is cached in the system temp folder (`financial_automation_cache`, cleared after 7 days). The first run of a file takes longest; running the same file again is much faster. The cache is keyed on the file's contents, so an edited file is always re-read.
+- **Large uploads:** the default limit is 200 MB per file. Raise `server.maxUploadSize` in `.streamlit/config.toml` if needed.
 
 ---
 
-##  Exception Types
+## Troubleshooting
 
-The system tracks five types of data quality exceptions:
-
-| Exception Type | Description | Priority |
-|----------------|-------------|----------|
-| **MISSING_WBS_AND_PO** | Both WBS code and PO number are missing | Highest |
-| **MISSING_WBS** | WBS code is missing | High |
-| **MISSING_PO** | PO number is missing | High |
-| **DUPLICATE_WBS** | WBS code appears under multiple cost centers | Medium |
-| **DUPLICATE_PO** | PO appears under multiple WBS/cost center combinations | Medium |
-
-For detailed exception documentation, see [docs/USER_GUIDE.md#exception-system](docs/USER_GUIDE.md#exception-system).
+| Issue | What to check |
+|---|---|
+| "No valid sheets found" | The file needs a period column (`Accounting Period`, `Fiscal Year/Period`, `Period` or `Month`), a PO column and an amount column. |
+| A column is not found | Check the header text. Spacing, case and `*` don't matter, but a renamed header does. |
+| LE file not read | Needs an `ERP` tab with a `Cost Center` header in the top 60 rows. |
+| Logo or fonts missing | Restart the app and press Ctrl+F5. Make sure `static/` was deployed. |
+| Generate Report is greyed out | Upload a template first. |
+| Wrong month for a transaction | See [How transactions are placed](#how-transactions-are-placed). Check the GL Posting Date, the Country (international POs) and the period. |
 
 ---
 
-##  Power Automate Integration
+## License
 
-The system integrates with Power Automate for end-to-end automation:
+Internal Pfizer project. All rights reserved.
 
-1. **User submits Microsoft Form** with file uploads
-2. **Power Automate** converts files to base64 and calls Python pipeline (Azure-hosted)
-3. **Pipeline processes** files and returns completed workbook
-4. **Power Automate** uploads result to OneDrive/SharePoint
-5. **User receives** notification with file link
-
-For integration details, see [docs/DEPLOYMENT.md#power-automate-integration](docs/DEPLOYMENT.md#power-automate-integration).
-
----
-
-##  Configuration
-
-The system uses YAML configuration files for flexibility:
-
-- **`configs/config_base.yaml`** - Default configuration
-- **`configs/config_streamlit.yaml`** - UI-created configuration (overrides base)
-
-Key configuration sections:
-- Template structure (header rows, columns, markers)
-- Forecast reader (file paths, column mappings)
-- Transactional detail reader (required columns, validation rules, column mappings)
-- Template writer (output settings, source columns)
-
-For complete configuration documentation, see [docs/CONFIGURATION.md](docs/CONFIGURATION.md).
-
----
-
-##  Data Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant UI as Streamlit UI
-    participant Pipeline
-    participant Readers
-    participant Transform
-    participant Writer
-    
-    User->>UI: Upload Files
-    UI->>Pipeline: Start Processing
-    Pipeline->>Readers: Load Data
-    Readers-->>Pipeline: Raw Data
-    Pipeline->>Transform: Build Hierarchy
-    Transform-->>Pipeline: Validated Hierarchy + Exceptions
-    Pipeline->>Writer: Generate Output
-    Writer-->>Pipeline: Excel Workbook
-    Pipeline-->>UI: Completed Report
-    UI-->>User: Download + Preview
-```
-
----
-
-##  Support
-
-### Getting Help
-
-- **User Issues**: See [docs/USER_GUIDE.md](docs/USER_GUIDE.md)
-- **Configuration Issues**: See [docs/CONFIGURATION.md](docs/CONFIGURATION.md)
-- **Technical Issues**: See [docs/DEPLOYMENT.md#troubleshooting](docs/DEPLOYMENT.md#troubleshooting)
-- **Development Questions**: See [docs/API_REFERENCE.md](docs/API_REFERENCE.md)
-
-### Common Issues
-
-| Issue | Solution |
-|-------|----------|
-| File not loading | Check file format and required columns |
-| Configuration errors | Validate YAML syntax and required fields |
-| Missing data | Check exception reports for data quality issues |
-| Performance issues | Process fewer cost centers at once |
-
-For detailed troubleshooting, see [docs/DEPLOYMENT.md#troubleshooting](docs/DEPLOYMENT.md#troubleshooting).
-
----
-
-##  License
-
-Internal Pfizer project - All rights reserved
-
----
-
-##  Next Steps
-
-1. **New Users**: Start with the [User Guide](docs/USER_GUIDE.md)
-2. **Administrators**: Review the [Configuration Guide](docs/CONFIGURATION.md)
-3. **Developers**: Check out the [Architecture Guide](docs/ARCHITECTURE.md) and [API Reference](docs/API_REFERENCE.md)
-4. **Operations**: See the [Deployment Guide](docs/DEPLOYMENT.md)
-
----
-
-**Last Updated**: June 2026  
-**Version**: 1.0  
-**Maintained by**: Pfizer Financial Automation Team
+**Last updated:** October 2026 · **Maintained by:** Pfizer Financial Automation Team

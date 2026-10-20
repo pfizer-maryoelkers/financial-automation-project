@@ -3,6 +3,10 @@ import re
 
 import pandas as pd
 
+from src.common.fast_excel import enable_fast_excel
+
+enable_fast_excel()  # ~2-3x faster .xlsx reading, identical data
+
 # Month abbreviation → full name prefix used in FTotal column names
 _MONTH_ABBR = {
     1: "Jan", 2: "Feb", 3: "March", 4: "April",
