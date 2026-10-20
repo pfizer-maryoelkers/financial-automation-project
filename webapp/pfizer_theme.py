@@ -5,9 +5,27 @@ Fonts and logos live in ./static and are served by Streamlit at /app/static/
 (enabled in .streamlit/config.toml).
 """
 
+import base64
+import functools
+import re
+from pathlib import Path
+
 import streamlit as st
 
-_STATIC = "/app/static"
+# Logos and fonts are embedded straight into the page as data URIs, so they show
+# up no matter how the app is launched or hosted (no dependence on Streamlit's
+# static file serving, the working directory or a URL prefix).
+_STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
+
+
+@functools.lru_cache(maxsize=None)
+def _data_uri(relative_path: str, mime: str) -> str:
+    """Base64 data URI for a file under ./static ('' if the file is missing)."""
+    try:
+        raw = (_STATIC_DIR / relative_path).read_bytes()
+    except OSError:
+        return ""
+    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
 
 _CSS = """
 <style>
@@ -227,7 +245,12 @@ div.add-type-toggle .stButton > button, div.add-btn .stButton > button {
 
 def apply_pfizer_theme() -> None:
     """Inject the Pfizer brand CSS (fonts, colours, pill buttons, cards)."""
-    st.markdown(_CSS.replace("__S__", _STATIC), unsafe_allow_html=True)
+    css = re.sub(
+        r"__S__/fonts/([\w-]+\.woff2)",
+        lambda m: _data_uri(f"fonts/{m.group(1)}", "font/woff2"),
+        _CSS,
+    )
+    st.markdown(css, unsafe_allow_html=True)
 
 
 def render_header(title: str, tagline: str = "") -> None:
@@ -239,7 +262,7 @@ def render_header(title: str, tagline: str = "") -> None:
             <div style="text-align:center;">
                 <h1 class="pf-title">{title}</h1>{tag}
             </div>
-            <img src="{_STATIC}/Pfizer_Spiral_Color.png" alt="Pfizer" />
+            <img src="{_data_uri('Pfizer_Spiral_Small.png', 'image/png')}" alt="Pfizer" />
         </div>
         """,
         unsafe_allow_html=True,
@@ -271,7 +294,7 @@ def render_footer(text: str) -> None:
     st.markdown(
         f"""
         <div class="pf-footer">
-            <img src="{_STATIC}/Pfizer_Logo_White_RGB.png" alt="Pfizer" />
+            <img src="{_data_uri('Pfizer_Logo_White_Small.png', 'image/png')}" alt="Pfizer" />
             <p>{text}</p>
         </div>
         """,
