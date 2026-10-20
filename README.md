@@ -92,7 +92,7 @@ See [docs/README_API.md](docs/README_API.md).
 | | **OpEx** | **Project (CapEx)** |
 |---|---|---|
 | Grouped by | Cost center → WBS → PO | P3 ID → WBS → PO |
-| Template | One main sheet with a cost-center list | A config sheet (`Insert P3 HERE` or `Enter All Your P3 IDs`) plus a blank `Project Template` sheet |
+| Template | One main sheet with a cost-center list | A config sheet where you list P3 IDs (`Insert P3 ID HERE`, `Insert P3 HERE` or `Enter All Your P3 IDs` - any "Insert/Enter ... P3" name works) plus a blank `Project Template` sheet |
 | Output | The template, populated | One tab per P3 ID, cloned from the blank template |
 | Config | `configs/config_base.yaml` | `configs/config_project.yaml` |
 | LE file | Optional: fills UIDs and adds a Budget tab | Not used |
@@ -135,7 +135,7 @@ Columns are matched by **header text**. Matching ignores capitalisation, extra s
 
 Limits:
 - A header that is **renamed** (for example "Cost Center*" to "CC") will not match. Add the new name to the reader's alias list.
-- Some anchors must stay as they are: the "Previous Period Invoices" marker in column A, the "Contact for PO/ER" label, and the sheet names `ERP` and `Insert P3 HERE` / `Enter All Your P3 IDs`.
+- Some anchors must stay as they are: the "Previous Period Invoices" marker in column A, the "Contact for PO/ER" label, and the sheet name `ERP`, a P3 config sheet whose name starts with "Insert" or "Enter" and contains "P3", and the sheet `Project Template`.
 
 ---
 
@@ -235,6 +235,8 @@ tools/                        One-off maintenance scripts
 | LE file not read | Needs an `ERP` tab with a `Cost Center` header in the top 60 rows. |
 | Logo or fonts missing | Restart the app and press Ctrl+F5. Make sure `static/` was deployed. |
 | Generate Report is greyed out | Upload a template first. |
+| "No cost centers were found" | OpEx template: list your cost centers in column A under the "Cost Center" header, above the "EXPENSE" row. |
+| "No P3 IDs were found" | Project template: on the P3 config sheet list each P3 ID in column A with a tab name in column B. |
 | Wrong month for a transaction | See [How transactions are placed](#how-transactions-are-placed). Check the GL Posting Date, the Country (international POs) and the period. |
 
 ---

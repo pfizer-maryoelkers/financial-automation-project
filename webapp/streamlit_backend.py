@@ -287,6 +287,12 @@ class PipelineOrchestrator:
             cost_center_start_row=self.config['template']['cost_center_start_row']
         )
         self.logger.info(f"Loaded template: {len(template_reader.cost_centers)} cost centers")
+        if not template_reader.cost_centers:
+            raise ValueError(
+                "No cost centers were found in the OpEx template. List your cost centers in "
+                "column A, under the 'Cost Center' header at the top of the template sheet "
+                "(one per row, above the 'EXPENSE' row), then run again."
+            )
         self._update_progress(40)
 
         cost_centers_to_process = template_reader.cost_centers
@@ -453,6 +459,12 @@ class PipelineOrchestrator:
             self.logger.info(f"New multi-tab format: {len(p3_tab_map)} P3 ID(s) found in config sheet")
         else:
             self.logger.info(f"Legacy single-sheet format: {len(template_reader.p3_wbs_map)} P3 IDs found")
+            if not template_reader.p3_wbs_map:
+                raise ValueError(
+                    "No P3 IDs were found in the project template. On the 'Insert P3 ID HERE' "
+                    "sheet, list each P3 ID in column A (under the 'P3 ID' header) with the tab "
+                    "name you want in column B, then run again."
+                )
         self._update_progress(40)
 
         # ── NEW MULTI-TAB PATH ────────────────────────────────────────────────
@@ -492,8 +504,8 @@ class PipelineOrchestrator:
                 # Clone the master blank template sheet for this P3 ID.
                 template_writer.clone_template_sheet(tab_name)
 
-                # Write the P3 ID into B2 (the "corner" identifier cell).
-                template_writer.sheet["B2"] = p3_id
+                # Write the P3 ID under the template's "P3 ID" header.
+                template_writer.set_p3_id_cell(p3_id)
 
                 # Build hierarchy for this single P3 ID only.
                 exception_log = ExceptionLog()

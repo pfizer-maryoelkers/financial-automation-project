@@ -111,10 +111,9 @@ def main():
             # copies the master blank template, and switches the writer to it.
             template_writer.clone_template_sheet(tab_name)
 
-            # Write the P3 ID into B2 on the cloned tab — this is the "corner"
-            # cell that identifies the P3 ID for this sheet, replacing the old
-            # workflow of typing it in manually.
-            template_writer.sheet["B2"] = p3_id
+            # Write the P3 ID under the template's "P3 ID" header on the cloned tab
+            # (column A or B depending on the template version).
+            template_writer.set_p3_id_cell(p3_id)
 
             # ── 2b: Build hierarchy for this single P3 ID ────────────────
             exception_log = ExceptionLog()

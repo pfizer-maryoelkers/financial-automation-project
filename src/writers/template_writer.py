@@ -285,6 +285,9 @@ class TemplateWriter:
         self.country_col = self._find_header_col(exact=("country",), contains=("country",))
         self.vendor_col = self._find_header_col(
             exact=("vendor name", "vendor"), contains=("vendor name", "vendor"), default=5)
+        # OpEx "Cost Center" label column (J in the older template, K in the newer one)
+        self.cc_label_col = self._find_header_col(
+            exact=("cost center",), contains=("cost center",), default=10)
         self.wbs_col_pos = self._find_header_col(
             exact=("wbs", "wbs element", "wbs code"), contains=("wbs",), default=6)
         self.gl_col = self._find_header_col(
@@ -567,6 +570,29 @@ class TemplateWriter:
         return None
 
     _SINGLE_ROW_REF = re.compile(r"(?<![A-Za-z_!'])\$?([A-Z]{1,3})\$?(\d+)(?![\d(])")
+
+    def _drop_sheets(self, name_pattern: str) -> None:
+        """Delete sheets whose whole name matches ``name_pattern`` (case-insensitive).
+
+        A template saved from an earlier run still carries its old Exception_Data /
+        Exceptions sheets; remove them so the new ones are not renamed
+        'Exception_Data2' and the stale copies do not stay in the workbook.
+        """
+        rx = re.compile(name_pattern, re.IGNORECASE)
+        for name in list(self.wb.sheetnames):
+            if rx.fullmatch(name) and name != self.sheet.title:
+                del self.wb[name]
+
+    def set_p3_id_cell(self, p3_id: str) -> None:
+        """Write this tab's P3 ID under the template's 'P3 ID' header.
+
+        The header sits in column B in older templates and column A in newer ones,
+        so it is found by text; falls back to B2 when the template has no such header.
+        """
+        from src.common.col_utils import find_p3_id_cell
+        pos = find_p3_id_cell(self.sheet)
+        row, col = pos if pos else (2, 2)
+        self.sheet.cell(row=row, column=col).value = p3_id
 
     def _heal_row_formulas(self) -> None:
         """Repair row-relative formulas left pointing at the wrong row.
@@ -1093,7 +1119,7 @@ class TemplateWriter:
         po_col_idx = column_index_from_string(self.po_column)
         # Use configured p3_id_column when available (project template), otherwise
         # fall back to column J (index 10) used by the OpEx template.
-        cc_col_idx = self.p3_id_column if self.p3_id_column else 10
+        cc_col_idx = self.p3_id_column if self.p3_id_column else self.cc_label_col
         wbs_col_idx = self.wbs_col_pos  # WBS column (found by header)
         max_col = self.sheet.max_column or 1
 
@@ -1491,7 +1517,7 @@ class TemplateWriter:
         max_col = self.sheet.max_column or 1
 
         # Reuse the same CC-label-column logic as insert_missing_po_rows.
-        _er_cc_col_idx = self.p3_id_column if self.p3_id_column else 10
+        _er_cc_col_idx = self.p3_id_column if self.p3_id_column else self.cc_label_col
         _er_data_cols: set[int] = set()
         for _mc in self.column_map.values():
             for _cl in _mc.values():
@@ -1679,7 +1705,7 @@ class TemplateWriter:
                     self.sheet.cell(row=_r, column=_vi).value = None
 
         # Determine the CC/P3-ID label column, and whether one exists at all.
-        _cc_write_col = self.p3_id_column if self.p3_id_column else 10
+        _cc_write_col = self.p3_id_column if self.p3_id_column else self.cc_label_col
         _wh_data_cols: set[int] = set()
         for _mc in self.column_map.values():
             for _cl in _mc.values():
@@ -2266,6 +2292,7 @@ class TemplateWriter:
             Cost Center | Accounting Period | WBS | Vendor Invoice |
             Source Row | Amount | GL Line Description | On Template
         """
+        self._drop_sheets(r"Exceptions\d*")
         ws = self.wb.create_sheet("Exceptions")
 
         transactional_df = transactional_df if transactional_df is not None else self._transactional_df
@@ -2514,6 +2541,7 @@ class TemplateWriter:
 
     def write_exception_data_sheet(self, exception_log):
         """Write raw exception data to hidden sheet for formula reference"""
+        self._drop_sheets(r"Exception_Data\d*")
         ws = self.wb.create_sheet("Exception_Data")
 
         # Exclude reclasses and deduplicate by row_index

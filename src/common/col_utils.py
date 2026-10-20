@@ -62,3 +62,34 @@ def find_label_col(ws, label: str, default_letter: str, max_row: int, max_col: i
             if label in norm(ws.cell(row=r, column=c).value):
                 return get_column_letter(c)
     return default_letter
+
+
+_P3_CONFIG_SHEET = re.compile(r"^(insert|enter|add|list) .*p3")
+
+
+def is_p3_config_sheet_name(name) -> bool:
+    """True for the sheet where the user lists their P3 IDs - whatever it is called:
+    'Insert P3 HERE', 'Insert P3 ID HERE', 'Enter All Your P3 IDs' ..."""
+    return bool(_P3_CONFIG_SHEET.match(norm(name)))
+
+
+def is_p3_config_label(value) -> bool:
+    """True for the header over the P3 ID list: 'P3 ID', 'P3 IDs', 'Enter All Your P3 IDs',
+    'Insert P3 HERE' ... (an actual P3 ID such as P325-0016261 does not match)."""
+    t = norm(value)
+    return (
+        t in ("p3 id", "p3 ids", "p3id", "p3 id's")
+        or t.startswith("enter all your p3")
+        or t.startswith("insert p3")
+    )
+
+
+def find_p3_id_cell(ws, max_row: int = 8, max_col: int = 12):
+    """(row, col) of the cell just under the 'P3 ID' header at the top of a P3 tab,
+    where that tab's P3 ID is written.  The header's column differs between template
+    versions (B in one, A in another), so it is found by its text; None if absent."""
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            if norm(ws.cell(row=r, column=c).value) == "p3 id":
+                return r + 1, c
+    return None

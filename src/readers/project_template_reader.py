@@ -1,7 +1,9 @@
 from openpyxl import load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
-from src.common.col_utils import find_po_col, norm as _hdr_norm
+from src.common.col_utils import (
+    find_po_col, is_p3_config_label, is_p3_config_sheet_name, norm as _hdr_norm,
+)
 import re
 
 # Month abbreviations used when scanning for metric+month header cells.
@@ -112,7 +114,8 @@ class ProjectTemplateReader:
         # Resolve the config sheet name present in this workbook (if any).
         self._config_sheet_name: str | None = next(
             (s for s in self.wb.sheetnames
-             if _hdr_norm(s) in {_hdr_norm(n) for n in self.CONFIG_SHEET_NAMES}), None
+             if _hdr_norm(s) in {_hdr_norm(n) for n in self.CONFIG_SHEET_NAMES}
+             or is_p3_config_sheet_name(s)), None
         )
 
         # Determine which sheet is the master blank template to clone from.
@@ -197,7 +200,7 @@ class ProjectTemplateReader:
         for r in range(1, min(max_row, 60) + 1):
             for c in range(1, min(ws.max_column or 10, 20) + 1):
                 val = ws.cell(row=r, column=c).value
-                if val is not None and "enter all your p3" in str(val).strip().lower():
+                if val is not None and is_p3_config_label(val):
                     start_row = r + 1
                     p3_col, tab_col = get_column_letter(c), get_column_letter(c + 1)
                     found_label = True

@@ -34,10 +34,14 @@ def detect_template_type(file_path: str) -> str:
     _p3_pattern = _re.compile(r'^P\d+-\d+$', _re.IGNORECASE)
     _config_sheet_names = {"insert p3 here", "enter all your p3 ids"}
 
+    from src.common.col_utils import is_p3_config_sheet_name
+
     wb = load_workbook(file_path, read_only=True, data_only=True)
 
-    # Signal 1 — config sheet present (new multi-tab project format)
-    if any(s.strip().lower() in _config_sheet_names for s in wb.sheetnames):
+    # Signal 1 — config sheet present (new multi-tab project format).  The sheet
+    # can be called 'Insert P3 HERE', 'Insert P3 ID HERE', 'Enter All Your P3 IDs'...
+    if any(s.strip().lower() in _config_sheet_names or is_p3_config_sheet_name(s)
+           for s in wb.sheetnames):
         wb.close()
         return "project"
 
