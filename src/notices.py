@@ -23,7 +23,9 @@ def actuals_file_notice(today: date | None = None) -> str | None:
             today = date.fromisoformat(override) if override else date.today()
         except ValueError:
             today = date.today()
-    last_day = calendar.monthrange(today.year, today.month)[1]
+    # February always ends on the 28th (even in a leap year); every other month
+    # ends on its own last day (30 or 31).
+    last_day = 28 if today.month == 2 else calendar.monthrange(today.year, today.month)[1]
     if not (ACTUALS_WINDOW_START_DAY <= today.day <= last_day):
         return None
     return (
