@@ -224,8 +224,7 @@ def build_hierarchy(
                 )
                 continue
 
-            # Check 0b: Reclass rows — log as exceptions, but keep going so the PO
-            # (or the cost center's "NO PO" row) still gets built.  The amount is
+            # Check 0b: Reclass rows — log as exceptions then skip. Their amount is
             # already folded into the PO's Actual total inside get_transactional_data().
             if trans_type == "Reclass":
                 exception_log.log(
@@ -239,6 +238,7 @@ def build_hierarchy(
                     transaction_type=trans_type,
                     source_row_data=source_row_data
                 )
+                continue
 
             # Check 1: Both WBS and PO missing (highest priority)
             # Special case: Try to extract ER number from any description column.
@@ -252,7 +252,8 @@ def build_hierarchy(
                     wbs = "ER"    # Special WBS code for expense reports
                     er_extracted_count += 1
                     # Continue processing with extracted ER as PO
-                # else: no PO, WBS or ER — falls through to the "NO PO" row below
+                else:
+                    continue
 
             # Check 1a: PO is already an ER number (set by the transactional reader
             # from the GL line description) — group under the "ER" bucket so it is
@@ -283,12 +284,8 @@ def build_hierarchy(
                 # so the data is visible even though no WBS code was found.
                 wbs = "NO_WBS"
             
-            # No PO at all: every transaction of a listed cost center must still be
-            # on the template, so they are gathered on one "NO PO (<cost center>)" row.
-            # The transactional data keys these rows by the '#' placeholder PO.
-            _no_po_row = not po
-            if _no_po_row:
-                po = f"NO PO ({cc_id})"
+            if not po:
+                continue
 
             # Check 3: Duplicate WBS (WBS owned by multiple cost centers)
             # Log ALL occurrences of duplicate WBS codes as exceptions
@@ -361,7 +358,7 @@ def build_hierarchy(
             # Fill MonthlyMetrics from transactional data.
             # Look up by (po, cost_center) first so a PO shared across multiple
             # cost centers only pulls in transactions for the current cost center.
-            po_lookup = "#" if _no_po_row else (str(po).strip().upper() if wbs == "ER" and po else po)
+            po_lookup = str(po).strip().upper() if wbs == "ER" and po else po
             _td_key = (po_lookup, cc_id)
             po_data = transactional_data.get(_td_key) or transactional_data.get(po_lookup)
             if po_data:
