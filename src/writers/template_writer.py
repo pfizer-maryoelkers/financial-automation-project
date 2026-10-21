@@ -1,5 +1,6 @@
 from collections import defaultdict
 from copy import copy
+import os
 import re
 
 import pandas as pd
@@ -51,7 +52,24 @@ def _le_cc_text(val) -> str:
     return str(val).strip()
 
 
+_LE_CACHE: dict = {}
+
+
 def _read_le_erp(le_path: str, max_header_scan: int = 60) -> dict:
+    """Cached wrapper: load_uid_map and write_budget_sheet both read the same
+    LE file in one run, so parse it once (keyed on path + mtime + size)."""
+    try:
+        st = os.stat(le_path)
+        key = (str(le_path), st.st_mtime_ns, st.st_size, max_header_scan)
+    except OSError:
+        return _read_le_erp_uncached(le_path, max_header_scan)
+    if key not in _LE_CACHE:
+        _LE_CACHE.clear()  # keep only the most recent LE file in memory
+        _LE_CACHE[key] = _read_le_erp_uncached(le_path, max_header_scan)
+    return _LE_CACHE[key]
+
+
+def _read_le_erp_uncached(le_path: str, max_header_scan: int = 60) -> dict:
     """Read the 'ERP' tab of an LE workbook without assuming a fixed layout.
 
     Only the ERP tab is used.  The header row is located by scanning the top of

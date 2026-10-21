@@ -189,7 +189,7 @@ class TransactionalDetailReader:
         month, _ = self._parse_ap(raw_month)
         return month
 
-    def _detect_header_row(self, sheet_name: str) -> int:
+    def _detect_header_row(self, sheet_name: str, xls=None) -> int:
         """Return the 0-based header row index for a sheet.
 
         Scans the first 25 rows (indices 0-24).  For each candidate row the
@@ -202,10 +202,13 @@ class TransactionalDetailReader:
 
         Falls back to 0 when nothing matches — the caller surfaces the error.
         """
+        # Reuse an already-open ExcelFile so the workbook (zip + shared strings)
+        # is parsed once instead of once per candidate header row.
+        source = xls if xls is not None else self.file_path
         for header in range(25):
             try:
                 preview = pd.read_excel(
-                    self.file_path, sheet_name=sheet_name,
+                    source, sheet_name=sheet_name,
                     header=header, nrows=5
                 )
             except Exception:
@@ -457,8 +460,8 @@ class TransactionalDetailReader:
             valid_sheets = []
             header_map: dict[str, int] = {}
             for sheet in xls.sheet_names:
-                header = self._detect_header_row(sheet)
-                preview = pd.read_excel(self.file_path, sheet_name=sheet, header=header, nrows=5)
+                header = self._detect_header_row(sheet, xls)
+                preview = pd.read_excel(xls, sheet_name=sheet, header=header, nrows=5)
                 preview = self._strip_col_headers(preview)
                 if self._sheet_has_required_cols(preview):
                     valid_sheets.append(sheet)
@@ -469,8 +472,8 @@ class TransactionalDetailReader:
                 sheet_diagnostics = []
                 for sheet in xls.sheet_names:
                     try:
-                        hdr = self._detect_header_row(sheet)
-                        preview = pd.read_excel(self.file_path, sheet_name=sheet, header=hdr, nrows=5)
+                        hdr = self._detect_header_row(sheet, xls)
+                        preview = pd.read_excel(xls, sheet_name=sheet, header=hdr, nrows=5)
                         preview = self._strip_col_headers(preview)
                         # Find which required columns were missing
                         cols = set(preview.columns)

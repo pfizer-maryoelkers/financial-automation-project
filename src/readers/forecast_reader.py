@@ -151,12 +151,16 @@ class ForecastReader:
             df = None
             for header_row in range(15):
                 try:
-                    cand = pd.read_excel(xls, sheet_name=sheet, header=header_row)
+                    # Cheap probe first: only the full sheet is read once the
+                    # header row is known (instead of up to 15 full reads).
+                    probe = pd.read_excel(xls, sheet_name=sheet, header=header_row, nrows=5)
                 except Exception:
                     break
-                cand = self._normalise_po_col(cand)
-                if self.po_col in cand.columns:
-                    df = cand
+                probe = self._normalise_po_col(probe)
+                if self.po_col in probe.columns:
+                    df = self._normalise_po_col(
+                        pd.read_excel(xls, sheet_name=sheet, header=header_row)
+                    )
                     break
             if df is None:
                 continue
@@ -208,6 +212,9 @@ class ForecastReader:
         """
         import pandas as pd
         po_col = self.po_col
+        # Fast path: nothing to expand → skip the per-row Python loop entirely.
+        if not df[po_col].astype(str).str.contains('/', regex=False).any():
+            return df.reset_index(drop=True)
         rows = []
         for _, row in df.iterrows():
             raw = str(row[po_col]).strip()
