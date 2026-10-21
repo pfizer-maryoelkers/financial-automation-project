@@ -1718,12 +1718,6 @@ class TemplateWriter:
             )
         )
 
-        # A PO shared by several cost centers sits on one row.  Remember what was
-        # already written there so later cost centers add to it rather than leaving
-        # a mix of the two cost centers' figures.
-        _written_months: dict[str, dict[str, MonthlyMetrics]] = {}
-        _written_gross: dict[str, float] = {}
-
         for cc_id, cost_center in hierarchy.items():
             for wbs_code, wbs in cost_center.wbs_codes.items():
                 for po_number, po in wbs.pos.items():
@@ -1796,10 +1790,8 @@ class TemplateWriter:
                     # accrual-only POs so the cell is not misleadingly shown as 0.
                     if self.po_value_col is not None:
                         gross_cell = self.sheet.cell(row=row, column=self.po_value_col)
-                        _gross = (po.gross_po_value or 0) + _written_gross.get(po_number, 0)
-                        _written_gross[po_number] = _gross
-                        if _gross != 0:
-                            gross_cell.value = round(_gross, 2)
+                        if po.gross_po_value is not None and po.gross_po_value != 0:
+                            gross_cell.value = round(po.gross_po_value, 2)
                         else:
                             gross_cell.value = None
 
@@ -1871,20 +1863,6 @@ class TemplateWriter:
                         for orig_month, entries in po.er_adjustments.items():
                             if orig_month == month:
                                 _er_map.setdefault(target, []).extend(entries)
-                    # Shared PO already written for an earlier cost center: add that
-                    # cost center's figures in and re-write those months' cells.
-                    _prior = _written_months.get(po_number, {})
-                    for _m, _pm in _prior.items():
-                        if _m not in _write_data:
-                            _write_data[_m] = MonthlyMetrics()
-                        _cur = _write_data[_m]
-                        _cur.actual           = (_cur.actual           or 0) + (_pm.actual           or 0)
-                        _cur.accrual          = (_cur.accrual          or 0) + (_pm.accrual          or 0)
-                        _cur.accrual_reversal = (_cur.accrual_reversal or 0) + (_pm.accrual_reversal or 0)
-                        _cur.forecast         = (_cur.forecast         or 0) + (_pm.forecast         or 0)
-                    _rewrite_months = set(_prior)
-                    _written_months[po_number] = _write_data
-
                     # Pass 2a — for the project pipeline, clear variance cells for
                     # every month that has NO data so pre-existing formulas don't
                     # show phantom values on rows where nothing was written.
@@ -1915,7 +1893,7 @@ class TemplateWriter:
                             # Skip zero/None to avoid polluting blank cells with 0.
                             if not self.overwrite and (value is None or value == 0):
                                 continue
-                            if month in _rewrite_months or self._should_write(cell.value):
+                            if self._should_write(cell.value):
                                 cell.value = value
 
                         actual_col  = month_cols.get('Actual')

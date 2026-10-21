@@ -153,9 +153,8 @@ def build_hierarchy(
     duplicate_wbs_codes = {wbs for wbs, ccs in wbs_to_cost_centers.items() if len(ccs) > 1}
 
     # Step 3: Track seen POs and WBS codes for processing
-    seen_pos = {}  # po -> (cost_center, wbs) of the first occurrence (for exception logging)
-    seen_pos_in_cc = set()  # (po, cost_center) already built — skips repeats inside one cost center
-    forecast_assigned = set()  # POs whose forecast is already on a row (forecast is per PO, not per cost center)
+    seen_pos = {}  # po -> (cost_center, wbs)
+    seen_wbs = {}  # wbs -> cost_center (for tracking first occurrence)
     er_extracted_count = 0
 
     # Step 4: Build hierarchy
@@ -301,12 +300,13 @@ def build_hierarchy(
                     transaction_type=trans_type,
                     source_row_data=source_row_data
                 )
-                # Every cost center keeps its own rows for a shared WBS, so the
-                # data for all of them appears on the template.
+                # Still process first occurrence in hierarchy, skip subsequent ones
+                if wbs in seen_wbs and seen_wbs[wbs] != cc_id:
+                    continue  # Skip this occurrence - first is canonical
+            
+            seen_wbs[wbs] = cc_id
 
             # Check 4: Duplicate PO
-            # A PO shared by two cost centers is logged, but is kept under each
-            # cost center; only a repeat inside the same cost center is skipped.
             already_seen = po in seen_pos
             if already_seen:
                 prev_cc, prev_wbs = seen_pos[po]
@@ -323,11 +323,10 @@ def build_hierarchy(
                         source_row_data=source_row_data
                     )
 
-            if (po, cc_id) in seen_pos_in_cc:
-                continue  # Same cost center repeating a PO - first occurrence is canonical
+            if already_seen:
+                continue  # Skip regardless - first occurrence is canonical
 
-            seen_pos_in_cc.add((po, cc_id))
-            seen_pos.setdefault(po, (cc_id, wbs))
+            seen_pos[po] = (cc_id, wbs)
 
             # Build WBS and PO objects if not already seen
             if wbs not in cost_center.wbs_codes:
@@ -384,8 +383,7 @@ def build_hierarchy(
             # Fill forecast from forecast data (only for non-zero values).
             # International POs shift the forecast month back by 1 (same rule as
             # their transactional data) so Forecast and Actual land in the same column.
-            if po in forecast_data and po not in forecast_assigned:
-                forecast_assigned.add(po)
+            if po in forecast_data:
                 is_intl_po = bool(intl_po_set and str(po).strip() in intl_po_set)
                 for month, values in forecast_data[po].items():
                     fc_value = values.get('Forecast', 0.0)
