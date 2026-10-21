@@ -42,6 +42,54 @@ if 'template_type' not in st.session_state:
 st.session_state.app_config = ConfigManager.load_config()
 
 
+@st.cache_data(show_spinner=False, max_entries=4)
+def _analyse_template(data: bytes, header_row, po_col, po_stop_marker,
+                      cost_center_col, cost_center_start_row):
+    """Return (template_type, identifiers) for an uploaded template.
+
+    Cached by file content and settings, so uploading the other files (which
+    reruns the script) does not re-parse an unchanged template.
+    """
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+        tmp_file.write(data)
+        tmp_path = tmp_file.name
+    try:
+        from src.pipeline.utils import detect_template_type
+        ttype = detect_template_type(tmp_path)
+
+        if ttype == 'project':
+            from src.readers.project_template_reader import ProjectTemplateReader
+            from src.pipeline.utils import load_config as _load_proj_cfg
+            _pcfg = _load_proj_cfg('configs/config_project.yaml')['template']
+            temp_reader = ProjectTemplateReader(
+                file_path=tmp_path,
+                header_row=_pcfg['header_row'],
+                po_col=_pcfg['po_col'],
+                po_stop_marker=_pcfg.get('po_stop_marker', 'Previous Period Invoices'),
+                wbs_col=_pcfg.get('wbs_col', 'A'),
+                p3_id_col=_pcfg.get('p3_id_col', 'B'),
+                wbs_start_row=_pcfg.get('wbs_start_row', 2),
+                template_sheet_name=_pcfg.get('template_sheet_name'),
+            )
+            # New multi-tab format: p3_tab_map has the P3 IDs from the config sheet.
+            # Legacy format: fall back to p3_wbs_map keys.
+            identifiers = list(temp_reader.p3_tab_map.keys() or temp_reader.p3_wbs_map.keys())
+        else:
+            from src.readers.template_reader import TemplateReader
+            temp_reader = TemplateReader(
+                file_path=tmp_path,
+                header_row=header_row,
+                po_col=po_col,
+                po_stop_marker=po_stop_marker,
+                cost_center_col=cost_center_col,
+                cost_center_start_row=cost_center_start_row,
+            )
+            identifiers = list(temp_reader.cost_centers)
+        return ttype, identifiers
+    finally:
+        os.unlink(tmp_path)
+
+
 def render_config_section():
     """Render configuration settings section"""
     
@@ -270,53 +318,26 @@ with up_col1:
         label_visibility="collapsed"
     )
 
-    # Detect template type and extract identifiers when template is uploaded
+    # Detect template type and extract identifiers when template is uploaded.
+    # Streamlit reruns this script on every upload, so the (slow) template parse
+    # is cached on the file's content + template settings and runs once per template.
     if template_file is not None:
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
-                tmp_file.write(template_file.getvalue())
-                tmp_path = tmp_file.name
-
-            from src.pipeline.utils import detect_template_type
-            ttype = detect_template_type(tmp_path)
-            st.session_state.template_type = ttype
             app_config = st.session_state.app_config
-
-            if ttype == 'project':
-                from src.readers.project_template_reader import ProjectTemplateReader
-                from src.pipeline.utils import load_config as _load_proj_cfg
-                _pcfg = _load_proj_cfg('configs/config_project.yaml')['template']
-                temp_reader = ProjectTemplateReader(
-                    file_path=tmp_path,
-                    header_row=_pcfg['header_row'],
-                    po_col=_pcfg['po_col'],
-                    po_stop_marker=_pcfg.get('po_stop_marker', 'Previous Period Invoices'),
-                    wbs_col=_pcfg.get('wbs_col', 'A'),
-                    p3_id_col=_pcfg.get('p3_id_col', 'B'),
-                    wbs_start_row=_pcfg.get('wbs_start_row', 2),
-                    template_sheet_name=_pcfg.get('template_sheet_name'),
-                )
-                # New multi-tab format: p3_tab_map has the P3 IDs from the config sheet.
-                # Legacy format: fall back to p3_wbs_map keys.
-                identifiers = list(temp_reader.p3_tab_map.keys() or temp_reader.p3_wbs_map.keys())
-            else:
-                from src.readers.template_reader import TemplateReader
-                temp_reader = TemplateReader(
-                    file_path=tmp_path,
-                    header_row=app_config.template.header_row,
-                    po_col=app_config.template.po_col,
-                    po_stop_marker=app_config.template.po_stop_marker,
-                    cost_center_col=app_config.template.cost_center_col,
-                    cost_center_start_row=app_config.template.cost_center_start_row,
-                )
-                identifiers = temp_reader.cost_centers
+            ttype, identifiers = _analyse_template(
+                template_file.getvalue(),
+                app_config.template.header_row,
+                app_config.template.po_col,
+                app_config.template.po_stop_marker,
+                app_config.template.cost_center_col,
+                app_config.template.cost_center_start_row,
+            )
+            st.session_state.template_type = ttype
 
             prev = st.session_state.extracted_cost_centers
             if set(identifiers) != set(prev):
                 st.session_state.extracted_cost_centers = identifiers
                 st.session_state.selected_cost_centers = list(identifiers)
-
-            os.unlink(tmp_path)
 
         except Exception as e:
             st.error(f"Error reading template: {str(e)}")
