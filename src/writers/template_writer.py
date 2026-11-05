@@ -2298,7 +2298,8 @@ class TemplateWriter:
     def write_exception_sheet(self, exception_log, transactional_df=None):
         """Write the Exceptions sheet.
 
-        Shows all exceptions in a single unified flat table starting at Row 1,
+        Only lines that are NOT on the template ("On Template" = No) are listed.
+        Shows the exceptions in a single unified flat table starting at Row 1,
         with auto-filter across all columns, freeze panes at Row 2, and auto-fitted
         column widths, exactly matching the formatting of the other source tabs.
 
@@ -2453,6 +2454,8 @@ class TemplateWriter:
                                       and _on_row)
                             else 'No'
                         )
+                        if on_tmpl == 'Yes':
+                            continue
 
                         for col_idx, col_name in enumerate(df_columns, start=1):
                             val = df_row[col_name]
@@ -2530,6 +2533,9 @@ class TemplateWriter:
                 else:
                     _on_tmpl = 'Yes' if _po_val and _po_val in template_pos else 'No'
 
+                if _on_tmpl == 'Yes':
+                    continue
+
                 ws.cell(row=row, column=1, value=entry.cost_center)
                 ws.cell(row=row, column=2, value=entry.month)
                 ws.cell(row=row, column=3, value=entry.wbs)
@@ -2547,7 +2553,10 @@ class TemplateWriter:
 
         # ── Shared: freeze pane, auto-filter, auto-size ──────────────────────
         ws.freeze_panes = "A2"
-        ws.auto_filter.ref = f"A1:{get_column_letter(len(visible_headers))}{row - 1}"
+        # A filter over a header-only range (every line was on the template) makes
+        # Excel report the file as corrupt, so only add it when there are data rows.
+        if row > 2:
+            ws.auto_filter.ref = f"A1:{get_column_letter(len(visible_headers))}{row - 1}"
         for ci in range(1, len(visible_headers) + 1):
             letter = get_column_letter(ci)
             max_len = len(str(visible_headers[ci - 1]))
