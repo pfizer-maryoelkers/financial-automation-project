@@ -342,6 +342,9 @@ def build_hierarchy(
                     real_wbs=er_real_wbs.get(po) if wbs == "ER" else None,
                 )
             po_obj = cost_center.wbs_codes[wbs].pos[po]
+            _cat = source_row_data.get('Account*')
+            if po_obj.expense_category is None and isinstance(_cat, str) and _cat.strip() not in ('', '#'):
+                po_obj.expense_category = _cat.strip()
             # Backfill any fields that were None on the first row but have a real value now
             if po_obj.vendor_name is None and vendor_name is not None:
                 po_obj.vendor_name = vendor_name

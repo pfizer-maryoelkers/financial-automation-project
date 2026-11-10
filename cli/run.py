@@ -89,7 +89,7 @@ def _run_opex(config: dict) -> None:
     print("Step 3: Writing template output\n")
     pos = template_writer.insert_missing_po_rows(hierarchy, pos=template_reader.pos, exception_log=exception_log)
     pos = template_writer.insert_er_rows(hierarchy, pos=pos)
-    template_writer.write_hierarchy(hierarchy, pos=pos)
+    template_writer.write_hierarchy(hierarchy, pos=pos, exception_log=exception_log)
 
     print("Step 4: Writing exception reports\n")
     exception_log.summary()
@@ -174,7 +174,7 @@ def _run_project(config: dict) -> None:
         blank_po_rows=template_reader.blank_po_rows,
         exception_log=exception_log,
     )
-    template_writer.write_hierarchy(hierarchy, pos=pos)
+    template_writer.write_hierarchy(hierarchy, pos=pos, exception_log=exception_log)
 
     print("Step 4: Writing exception reports\n")
     exception_log.summary()

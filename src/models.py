@@ -26,6 +26,7 @@ class PO:
     req_title: Optional[str] = None
     real_wbs: Optional[str] = None  # Actual WBS from transactional file when PO is an ER
     project_name: Optional[str] = None
+    expense_category: Optional[str] = None  # transactional 'Account*' text; used to pick the LE UID
 @dataclass
 class WBSCode:
     wbs_code: str
@@ -57,6 +58,7 @@ class ExceptionType(Enum):
     NOT_WORKED_ON_TEMPLATE = "Not Worked on Template"
     UNMATCHED_P3 = "Unmatched P3 ID"
     DOUBLE_CHECK = "Double Check"
+    UID_NOT_MATCHED = "UID Not Matched"
 @dataclass
 class ExceptionEntry:
     exception_type: ExceptionType

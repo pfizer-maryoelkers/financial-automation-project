@@ -45,6 +45,27 @@ def _le_norm(val) -> str:
     return re.sub(r"\s+", " ", str(val).replace("*", " ")).strip().lower() if val is not None else ""
 
 
+def _category_key(val) -> str:
+    """Expense category text → comparable key ('Travel & Entertainment' == 'TRAVEL AND ENTERTAINMENT')."""
+    if val is None:
+        return ""
+    return re.sub(r"[^a-z0-9]", "", str(val).lower().replace("&", "and"))
+
+
+def _desc_match(a, b) -> bool:
+    """True when two descriptions plainly refer to the same thing."""
+    if not a or not b:
+        return False
+    ta = re.findall(r"[a-z0-9]+", str(a).lower())
+    tb = re.findall(r"[a-z0-9]+", str(b).lower())
+    if not ta or not tb:
+        return False
+    sa, sb = " ".join(ta), " ".join(tb)
+    if len(sa) >= 5 and len(sb) >= 5 and (sa in sb or sb in sa):
+        return True
+    return len(set(ta) & set(tb)) / min(len(set(ta)), len(set(tb))) >= 0.6
+
+
 def _le_cc_text(val) -> str:
     """Cost-center cell → clean text (numeric 2329947.0 → '2329947')."""
     if isinstance(val, float) and val.is_integer():
@@ -214,6 +235,18 @@ class TemplateWriter:
         template_sheet_name: str | None = None,
     ):
         self.wb = load_workbook(file_path)
+        # Values cached in the template for formulas that point at other workbooks,
+        # keyed by (sheet, formula) so they survive row insertions (see save()).
+        self._external_cache: dict = {}
+        if self.wb._external_links:
+            _ext_ref = re.compile(r"\[\d+\]")
+            _vals = load_workbook(file_path, data_only=True)
+            for _ws in self.wb.worksheets:
+                for _row in _ws.iter_rows():
+                    for _c in _row:
+                        if isinstance(_c.value, str) and _c.value.startswith('=') and _ext_ref.search(_c.value):
+                            self._external_cache[(_ws.title, _c.value)] = _vals[_ws.title][_c.coordinate].value
+            _vals.close()
         self._file_path = file_path          # kept for clone operations
         self._header_row_config = header_row  # original config value, used as fallback
         self._p3_id_column_raw = p3_id_column
@@ -256,6 +289,7 @@ class TemplateWriter:
         # WBS/Project-Code → UID lookup built from the LE file.
         # Populated by load_uid_map(); empty dict = no LE file provided.
         self._uid_map: dict[str, str] = {}
+        self._le_uid_rows: list[dict] = []
 
         # Dynamically locate the header row by scanning the sheet; the config
         # value is only used as a fallback when no header marker is found.
@@ -379,23 +413,74 @@ class TemplateWriter:
             )
             return
 
-        uid_map: dict[str, str] = {}
-        for row in le["rows"]:
-            if max(uid_col, cc_col) >= len(row):
-                continue
-            uid_val = row[uid_col]
-            cc_val  = row[cc_col]
-            if uid_val is None or cc_val is None:
-                continue
-            uid_str = str(uid_val).strip()
-            # A single cell can hold multiple cost centers separated by ";"
-            for cc in _le_cc_text(cc_val).split(";"):
-                cc_key = cc.strip()
-                if cc_key and cc_key not in uid_map:
-                    uid_map[cc_key] = uid_str
+        headers = le["headers"]
+        cat_col = headers.get("expense category")
+        po_col = headers.get("2026 purchase order") or next(
+            (i for k, i in headers.items() if "purchase order" in k and "prior" not in k), None)
+        desc_col = le["cols"]["desc"]
+        proj_col = le["cols"]["proj"]
 
-        self._uid_map = uid_map
-        print(f"load_uid_map: built UID map with {len(uid_map)} cost center(s) from LE file.")
+        def _cell(row, idx):
+            return row[idx] if idx is not None and idx < len(row) else None
+
+        records: list[dict] = []
+        for row in le["rows"]:
+            uid_val = _cell(row, uid_col)
+            if uid_val is None or not str(uid_val).strip():
+                continue
+            cc_val = _cell(row, cc_col)
+            po_val = _cell(row, po_col)
+            proj_val = _cell(row, proj_col)
+            records.append({
+                "uid": str(uid_val).strip(),
+                # A single cell can hold several cost centers / POs (";", "," or newline)
+                "ccs": {c for c in re.split(r"[;,\s]+", _le_cc_text(cc_val)) if c} if cc_val is not None else set(),
+                "pos": {self._norm_po(p) for p in re.split(r"[;,\s]+", str(po_val)) if p.strip()}
+                       if po_val is not None else set(),
+                "wbs": str(proj_val).strip().lower() if proj_val is not None else "",
+                "category": _category_key(_cell(row, cat_col)),
+                "desc": _cell(row, desc_col),
+            })
+
+        self._le_uid_rows = records
+        self._uid_map = {}  # cost center -> first UID (kept for callers that only need that)
+        for rec in records:
+            for cc in rec["ccs"]:
+                self._uid_map.setdefault(cc, rec["uid"])
+        print(f"load_uid_map: loaded {len(records)} LE row(s) covering {len(self._uid_map)} cost center(s).")
+
+    def _resolve_uid(self, cc_id, wbs_code, po_number, po) -> str | None:
+        """Pick the LE UID for a PO row, or None when it cannot be told apart.
+
+        Candidates are the LE rows whose Project Code equals the WBS (falling back to
+        rows listing the cost center when the WBS matches nothing).  A single
+        candidate is used as is.  Several are narrowed, in turn, by the PO number,
+        the expense category (LE 'Expense Category' vs the transactional 'Account*'),
+        the cost center and the description; a step is only applied when it leaves
+        at least one candidate.  Still ambiguous, or nothing found -> None.
+        """
+        rows = self._le_uid_rows
+        wbs_key = str(po.real_wbs if (wbs_code == "ER" and po.real_wbs) else wbs_code).strip().lower()
+        cc_key = str(cc_id).strip()
+
+        cands = [r for r in rows if wbs_key and r["wbs"] == wbs_key] or \
+                [r for r in rows if cc_key in r["ccs"]]
+        if len({r["uid"] for r in cands}) <= 1:
+            return cands[0]["uid"] if cands else None
+
+        steps = (
+            lambda r: self._norm_po(po_number) in r["pos"],
+            lambda r: bool(po.expense_category) and r["category"] == _category_key(po.expense_category),
+            lambda r: cc_key in r["ccs"],
+            lambda r: _desc_match(po.req_title, r["desc"]),
+        )
+        for keep in steps:
+            narrowed = [r for r in cands if keep(r)]
+            if narrowed:
+                cands = narrowed
+            if len({r["uid"] for r in cands}) == 1:
+                return cands[0]["uid"]
+        return None
 
     # ------------------------------------------------------------------
     # Per-tab sheet management (project pipeline)
@@ -1682,7 +1767,7 @@ class TemplateWriter:
                 return get_column_letter(col)
         return None
 
-    def write_hierarchy(self, hierarchy: dict, pos: dict[str, int]):
+    def write_hierarchy(self, hierarchy: dict, pos: dict[str, int], exception_log=None):
         '''
         Writes hierarchy to template.
         Iterates CostCenter -> WBSCode -> PO and writes MonthlyMetrics to correct cells.
@@ -1796,12 +1881,21 @@ class TemplateWriter:
                         # UID (col H, or whichever column has "UID" in its header)
                         # Match against the cost center (cc_id) that owns this PO
                         # — the LE file's 'Cost Center*' column holds the same IDs.
-                        if self.uid_col is not None and self._uid_map:
-                            uid_val = self._uid_map.get(str(cc_id).strip())
+                        if self.uid_col is not None and self._le_uid_rows:
+                            uid_val = self._resolve_uid(cc_id, wbs_code, po_number, po)
                             if uid_val:
                                 uid_cell = self.sheet.cell(row=row, column=self.uid_col)
                                 if self._should_write(uid_cell.value):
                                     uid_cell.value = uid_val
+                            elif exception_log is not None:
+                                exception_log.log(
+                                    ExceptionType.UID_NOT_MATCHED,
+                                    po=po_number,
+                                    wbs=wbs_code,
+                                    cost_center=cc_id,
+                                    amount=po.gross_po_value or 0.0,
+                                    source_row_data={'GL Line Description': po.req_title},
+                                )
 
                     # PO total (Invoice Amount = sum of Actual/ER rows for this PO).
                     # Only write when there is real invoiced spend; leave blank for
@@ -2514,7 +2608,7 @@ class TemplateWriter:
             visible_headers = [
                 ('P3 ID' if is_project else 'Cost Center'), 'Accounting Period', 'WBS',
                 'Vendor Invoice', 'Source Row', 'Amount', 'GL Line Description',
-                'On Template'
+                'On Template', 'Exception Type'
             ]
 
             for col_idx, h in enumerate(visible_headers, start=1):
@@ -2533,9 +2627,11 @@ class TemplateWriter:
                 else:
                     _on_tmpl = 'Yes' if _po_val and _po_val in template_pos else 'No'
 
-                if _on_tmpl == 'Yes':
+                # A UID that could not be matched is listed even though the PO is on the template.
+                if _on_tmpl == 'Yes' and entry.exception_type != ExceptionType.UID_NOT_MATCHED:
                     continue
 
+                ws.cell(row=row, column=9, value=entry.exception_type.value)
                 ws.cell(row=row, column=1, value=entry.cost_center)
                 ws.cell(row=row, column=2, value=entry.month)
                 ws.cell(row=row, column=3, value=entry.wbs)
@@ -2575,7 +2671,8 @@ class TemplateWriter:
         filtered_entries = []
         seen_rows = set()
         for e in exception_log.entries:
-            if e.exception_type == ExceptionType.RECLASS:
+            # UID problems are not transactions; keep them out of the formula data.
+            if e.exception_type in (ExceptionType.RECLASS, ExceptionType.UID_NOT_MATCHED):
                 continue
             row_key = e.row_index if e.row_index is not None else id(e)
             if row_key in seen_rows:
@@ -2739,9 +2836,36 @@ class TemplateWriter:
         for i, width in enumerate(col_widths, start=1):
             ws.column_dimensions[get_column_letter(i)].width = min(width + 4, 60)
 
+    def _strip_unsafe_parts(self) -> None:
+        """Remove parts openpyxl cannot round-trip so Excel opens the file cleanly.
+
+        - External workbook links: formulas that point at another workbook
+          ("[1]Sheet!A1") are replaced by the value the template had cached, and the
+          link parts are dropped.  Otherwise Excel reports "External formula
+          reference ... repaired".
+        - Drawings: openpyxl drops shapes and re-serialises charts/pictures, which
+          Excel reports as "Drawing shape ... repaired".  They are removed.
+        """
+        if self.wb._external_links:
+            ext_ref = re.compile(r"\[\d+\]")
+            for ws in self.wb.worksheets:
+                for row in ws.iter_rows():
+                    for cell in row:
+                        v = cell.value
+                        if isinstance(v, str) and v.startswith('=') and ext_ref.search(v):
+                            cell.value = self._external_cache.get(
+                                (ws.title, v),
+                                next((x for (_t, f), x in self._external_cache.items() if f == v), None),
+                            )
+            self.wb._external_links = []
+        for ws in self.wb.worksheets:
+            ws._charts = []
+            ws._images = []
+
     def save(self):
         """Saves the workbook to the output path."""
         try:
+            self._strip_unsafe_parts()
             # openpyxl can't evaluate formulas, so force Excel to recalculate all
             # of them (including FILTER/array formulas) when the file is opened.
             self.wb.calculation.fullCalcOnLoad = True
