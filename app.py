@@ -11,7 +11,7 @@ from pathlib import Path
 from webapp.streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger
 from webapp.streamlit_config import ConfigManager
 from webapp.errors import TROUBLESHOOTING, explain_error
-from webapp.docs_view import render_docs
+from webapp.docs_view import GUIDES, render_doc_buttons, render_doc_switcher, render_guide
 from src.common.notices import actuals_file_notice
 from webapp.pfizer_theme import (
     apply_pfizer_theme, render_footer, render_header, render_template_pill,
@@ -302,12 +302,14 @@ if 'view' not in st.session_state:
     st.session_state.view = 'main'
 
 if st.session_state.view == 'docs':
-    render_header("Documentation")
+    _doc = st.session_state.get('doc', 'user')
+    render_header(GUIDES[_doc][0])
     if st.button("Back to the report generator", icon=":material/arrow_back:"):
         st.session_state.view = 'main'
         st.rerun()
+    render_doc_switcher(_doc)
     st.divider()
-    render_docs()
+    render_guide(_doc)
     render_footer("Financial Automation Report Generator v1.0")
     st.stop()
 
@@ -318,10 +320,6 @@ render_header("Financial Automation Report Generator")
 _actuals_notice = actuals_file_notice()
 if _actuals_notice:
     st.warning(_actuals_notice, icon="⚠️")
-
-if st.button("Documentation: user guide, technical guide and governance", icon=":material/menu_book:"):
-    st.session_state.view = 'docs'
-    st.rerun()
 
 st.divider()
 
@@ -560,6 +558,10 @@ if st.session_state.temp_dir:
     # Note: Streamlit doesn't have a reliable session end callback
     # Temp files will be cleaned up by OS eventually
     pass
+
+# Documentation buttons
+st.divider()
+render_doc_buttons()
 
 # Footer
 render_footer("Financial Automation Report Generator v1.0")
