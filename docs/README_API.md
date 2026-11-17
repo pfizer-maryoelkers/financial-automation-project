@@ -76,9 +76,9 @@ offering a download link.
   "output_filename": "template_output.xlsx",
   "execution_time_seconds": 12.4,
   "exceptions": {
-    "counts": { "MISSING_PO": 3 },
+    "counts": { "Missing PO": 3 },
     "total": 3,
-    "percentages": { "MISSING_PO": 100.0 }
+    "percentages": { "Missing PO": 100.0 }
   },
   "logs": [
     { "level": "INFO", "timestamp": "14:03:01", "message": "Pipeline starting..." }

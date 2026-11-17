@@ -12,6 +12,7 @@ from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
 from src.models import CostCenter, WBSCode, PO, MonthlyMetrics, ExceptionLog, ExceptionType
+from src.writers.threaded_comments import read_threads, restore_threads, thread_key
 
 
 def _copy_color(c: Color) -> Color:
@@ -238,6 +239,7 @@ class TemplateWriter:
         # Values cached in the template for formulas that point at other workbooks,
         # keyed by (sheet, formula) so they survive row insertions (see save()).
         self._external_cache: dict = {}
+        self._threads = read_threads(file_path)  # modern comments openpyxl would drop
         if self.wb._external_links:
             _ext_ref = re.compile(r"\[\d+\]")
             _vals = load_workbook(file_path, data_only=True)
@@ -2465,6 +2467,10 @@ class TemplateWriter:
                 _desc_col = next((c for c in ('CO Doc Line Item Txt', 'GL Line Description')
                                   if c in transactional_df.columns), None)
 
+                _hash_desc_cols = [c for c in ('CO Doc Line Item Txt', 'GL Line Description',
+                                               'GL Transaction Description', 'Description')
+                                   if c in transactional_df.columns]
+
                 def _classify(df_row) -> str:
                     """Reviewer rules: document number prefix (2 = Accrual / Accrual
                     Reversal, 5 = Vendor Invoice, 9 = Reclass), confirmed against the
@@ -2550,6 +2556,8 @@ class TemplateWriter:
                         )
                         if on_tmpl == 'Yes':
                             continue
+                        if any(str(df_row[c]).strip() == '#' for c in _hash_desc_cols):
+                            continue
 
                         for col_idx, col_name in enumerate(df_columns, start=1):
                             val = df_row[col_name]
@@ -2598,6 +2606,11 @@ class TemplateWriter:
             seen_rows = set()
             for e in exception_log.entries:
                 if e.amount is None:
+                    continue
+                if e.source_row_data and any(
+                    str(e.source_row_data.get(k) or '').strip() == '#'
+                    for k in ('GL Line Description', 'GL Transaction Description', 'Description')
+                ):
                     continue
                 row_key = e.row_index if e.row_index is not None else id(e)
                 if row_key in seen_rows:
@@ -2858,6 +2871,14 @@ class TemplateWriter:
                                 next((x for (_t, f), x in self._external_cache.items() if f == v), None),
                             )
             self.wb._external_links = []
+        # Named ranges that point into a removed external workbook ("[1]Sheet!$A$1")
+        # or at a deleted sheet/range (#REF!) are invalid; Excel drops them with a
+        # repair prompt, so drop them here.
+        bad_name = re.compile(r"\[\d+\]|#REF!")
+        for scope in [self.wb] + list(self.wb.worksheets):
+            for name, dn in list(scope.defined_names.items()):
+                if bad_name.search(dn.attr_text or ""):
+                    del scope.defined_names[name]
         for ws in self.wb.worksheets:
             ws._charts = []
             ws._images = []
@@ -2869,7 +2890,23 @@ class TemplateWriter:
             # openpyxl can't evaluate formulas, so force Excel to recalculate all
             # of them (including FILTER/array formulas) when the file is opened.
             self.wb.calculation.fullCalcOnLoad = True
+            # Notes that came from threaded comments, by their current cell.
+            wanted = {}
+            if self._threads:
+                for ws in self.wb.worksheets:
+                    for row in ws.iter_rows():
+                        for cell in row:
+                            key = thread_key(cell.comment.author) if cell.comment else None
+                            if key in self._threads["threads"]:
+                                wanted.setdefault(ws.title, []).append((cell.coordinate, key))
             self.wb.save(self.output_path)
+            print(
+                f"Threaded comments: {len(self._threads.get('threads', {}))} thread(s) in the template, "
+                f"{sum(len(v) for v in wanted.values())} matched to a note in the output."
+            )
+            if wanted:
+                n = restore_threads(self.output_path, self._threads, wanted)
+                print(f"Restored {n} threaded comment(s).")
             print(f"Workbook saved to: {self.output_path}")
         except Exception as e:
             raise IOError(

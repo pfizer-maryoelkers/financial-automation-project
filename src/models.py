@@ -50,9 +50,9 @@ class P3ID:
 ## Building Exceptions Log
 
 class ExceptionType(Enum):
-    MISSING_PO = "MISSING_PO"
-    DUPLICATE_PO = "DUPLICATE_PO"
-    DUPLICATE_WBS = "DUPLICATE_WBS"
+    MISSING_PO = "Missing PO"
+    DUPLICATE_PO = "Duplicate PO"
+    DUPLICATE_WBS = "Duplicate WBS"
     RECLASS = "Reclass"
     UNMATCHED_TRANSACTION = "Unmatched Transaction"
     NOT_WORKED_ON_TEMPLATE = "Not Worked on Template"

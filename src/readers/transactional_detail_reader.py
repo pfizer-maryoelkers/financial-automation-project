@@ -960,7 +960,11 @@ class TransactionalDetailReader:
             py = (current_year - 1) if current_year else None
             py_suffix = f" ({str(py)[2:]})" if py else ""
 
-            if not self.shift_months:
+            # Expense reports (type ER, or an Actual that carries an ER reference
+            # because it was posted on a real PO) stay in their own accounting period.
+            is_er = type_name == "ER" or bool(row[_er_ref_col])
+
+            if not self.shift_months or is_er:
                 # Direct mapping — no shift for any type.
                 # Prior-year December (e.g. Period 12 2025 in a 2026 file) goes to
                 # the "Dec (25)" bucket, same as OpEx.  The template writer falls

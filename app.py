@@ -10,6 +10,7 @@ import streamlit as st
 from pathlib import Path
 from webapp.streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger
 from webapp.streamlit_config import ConfigManager
+from webapp.errors import TROUBLESHOOTING, explain_error
 from src.common.notices import actuals_file_notice
 from webapp.pfizer_theme import (
     apply_pfizer_theme, render_footer, render_header, render_template_pill,
@@ -303,6 +304,9 @@ _actuals_notice = actuals_file_notice()
 if _actuals_notice:
     st.warning(_actuals_notice, icon="⚠️")
 
+st.page_link("pages/Documentation.py", label="Documentation: user guide, technical guide and governance",
+             icon=":material/menu_book:")
+
 st.divider()
 
 # ── Three-column uploader row ─────────────────────────────────────────────────
@@ -340,7 +344,13 @@ with up_col1:
                 st.session_state.selected_cost_centers = list(identifiers)
 
         except Exception as e:
-            st.error(f"Error reading template: {str(e)}")
+            problem, fix = explain_error(e)
+            st.error(f"**Could not read the template.** {problem}")
+            if fix:
+                st.info(f"**How to fix it:** {fix}")
+            else:
+                st.caption("Check that the file is the .xlsx template and that its header row, PO column "
+                           "and cost center settings match the app settings.")
 
     if template_file is None:
         st.info("Template Forecast File Required")
@@ -406,6 +416,8 @@ generate_button = st.button(
     disabled=not all_files_uploaded or st.session_state.processing,
     use_container_width=True
 )
+if not all_files_uploaded:
+    st.caption("Upload a template first — Generate Report stays grey until a template is added.")
 
 # Process pipeline when button is clicked
 if generate_button:
@@ -483,9 +495,15 @@ if generate_button:
                     st.info(f"[{timestamp}] {message}")
     
     except Exception as e:
-        st.error(f"Error generating report: {str(e)}")
-        st.exception(e)
-    
+        progress_container.empty()
+        problem, fix = explain_error(e)
+        st.error(f"**Could not generate the report.** {problem}")
+        if fix:
+            st.info(f"**How to fix it:** {fix}")
+        with st.expander("Technical details", expanded=fix is None):
+            st.code(str(e))
+            st.exception(e)
+
     finally:
         st.session_state.processing = False
 
@@ -516,6 +534,10 @@ if st.session_state.output_path:
     else:
         st.error("Could not read output file for download.")
     
+
+with st.expander("Troubleshooting"):
+    for _seen, _do in TROUBLESHOOTING:
+        st.markdown(f"**{_seen}** — {_do}")
 
 # Cleanup temp files on session end (best effort)
 if st.session_state.temp_dir:

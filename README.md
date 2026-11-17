@@ -148,7 +148,7 @@ The workbook contains:
 3. **Exception_Data** (hidden): raw exception rows for formulas.
 4. **Exceptions**: the exception report.
 
-**Exception types:** `Reclass`, `Unmatched Transaction`, `Not Worked on Template`, `Unmatched P3 ID`, `Double Check`, `MISSING_PO`, `DUPLICATE_PO`, `DUPLICATE_WBS`.
+**Exception types:** `Reclass`, `Unmatched Transaction`, `Not Worked on Template`, `Unmatched P3 ID`, `Double Check`, `Missing PO`, `Duplicate PO`, `Duplicate WBS`.
 
 **On Template column (project Exceptions tab)**
 - **Yes**: the line's amount appears as its own figure on its PO's row on its P3 ID's tab.
