@@ -11,6 +11,7 @@ from pathlib import Path
 from webapp.streamlit_backend import FileHandler, PipelineOrchestrator, StreamlitLogger
 from webapp.streamlit_config import ConfigManager
 from webapp.errors import TROUBLESHOOTING, explain_error
+from webapp.docs_view import render_docs
 from src.common.notices import actuals_file_notice
 from webapp.pfizer_theme import (
     apply_pfizer_theme, render_footer, render_header, render_template_pill,
@@ -296,6 +297,20 @@ def render_config_section():
                 )
 
 
+# Documentation view (a button toggles it, so no separate page is needed)
+if 'view' not in st.session_state:
+    st.session_state.view = 'main'
+
+if st.session_state.view == 'docs':
+    render_header("Documentation")
+    if st.button("Back to the report generator", icon=":material/arrow_back:"):
+        st.session_state.view = 'main'
+        st.rerun()
+    st.divider()
+    render_docs()
+    render_footer("Financial Automation Report Generator v1.0")
+    st.stop()
+
 # Header
 render_header("Financial Automation Report Generator")
 
@@ -304,8 +319,9 @@ _actuals_notice = actuals_file_notice()
 if _actuals_notice:
     st.warning(_actuals_notice, icon="⚠️")
 
-st.page_link("pages/Documentation.py", label="Documentation: user guide, technical guide and governance",
-             icon=":material/menu_book:")
+if st.button("Documentation: user guide, technical guide and governance", icon=":material/menu_book:"):
+    st.session_state.view = 'docs'
+    st.rerun()
 
 st.divider()
 
