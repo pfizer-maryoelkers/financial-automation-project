@@ -962,7 +962,8 @@ class TransactionalDetailReader:
 
             # Expense reports (type ER, or an Actual that carries an ER reference
             # because it was posted on a real PO) stay in their own accounting period.
-            is_er = type_name == "ER" or bool(row[_er_ref_col])
+            # Reclasses likewise stay in the accounting period they were posted in.
+            is_er = type_name in ("ER", "Reclass") or bool(row[_er_ref_col])
 
             if not self.shift_months or is_er:
                 # Direct mapping — no shift for any type.
@@ -1142,19 +1143,12 @@ class TransactionalDetailReader:
             # Shift back one month (OpEx only): AP01 → "Dec (YY)", AP02 → Jan, …
             # Projects (shift_months=False) map directly: Period N → month N,
             # except prior-year December, which goes to "Dec (YY)" like OpEx.
-            if not self.shift_months:
-                if (month_num == 12 and _current_year is not None
-                        and _ap_year is not None and _ap_year < _current_year):
-                    month_label = f"Dec ({str(_current_year - 1)[2:]})"
-                else:
-                    month_label = self.month_map.get(month_num)
+            # Reclasses stay in their own accounting period for OpEx too (no shift).
+            if (month_num == 12 and _current_year is not None
+                    and _ap_year is not None and _ap_year < _current_year):
+                month_label = f"Dec ({str(_current_year - 1)[2:]})"
             else:
-                shifted_num = month_num - 1
-                if shifted_num == 0:
-                    py = (_current_year - 1) if _current_year else None
-                    month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
-                else:
-                    month_label = self.month_map.get(shifted_num)
+                month_label = self.month_map.get(month_num)
             if not month_label:
                 continue
 
@@ -1210,23 +1204,13 @@ class TransactionalDetailReader:
             # Shift back one month (OpEx only): AP01 → "Dec (YY)", AP02 → Jan, …
             # Projects (shift_months=False) map directly: Period N → month N,
             # except prior-year December, which goes to "Dec (YY)" like OpEx.
-            if not self.shift_months:
-                if (month_num == 12 and _rn_current_year is not None
-                        and _ap_year is not None and _ap_year < _rn_current_year):
-                    month_label = f"Dec ({str(_rn_current_year - 1)[2:]})"
-                else:
-                    month_label = self.month_map.get(month_num)
+            # Reclasses stay in their own accounting period for OpEx too (no shift),
+            # matching get_transactional_data.
+            if (month_num == 12 and _rn_current_year is not None
+                    and _ap_year is not None and _ap_year < _rn_current_year):
+                month_label = f"Dec ({str(_rn_current_year - 1)[2:]})"
             else:
-                # Same rule as get_transactional_data: international POs two back.
-                _n_back = 2 if po in _rn_intl_pos else 1
-                shifted_num = month_num - _n_back
-                py = (_rn_current_year - 1) if _rn_current_year else None
-                if shifted_num == -1:
-                    month_label = f"Nov ({str(py)[2:]})" if py else "Nov"
-                elif shifted_num == 0:
-                    month_label = f"Dec ({str(py)[2:]})" if py else "Dec"
-                else:
-                    month_label = self.month_map.get(shifted_num)
+                month_label = self.month_map.get(month_num)
 
             po_key = po
             if po_key not in result and po_key.replace('.', '', 1).replace('-', '', 1).isdigit():
